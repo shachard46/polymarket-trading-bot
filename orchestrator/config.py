@@ -15,6 +15,7 @@ from config.trading_constants import (
 # DLQ path is exercised in CI without a live gateway; "live" calls the SDK.
 RUNNER_MODE_ENV = "OPENCLAW_ORCHESTRATOR_MODE"
 RUNNER_MODE_STUB = "stub"
+RUNNER_MODE_STUB_ERROR = "stub_error"
 RUNNER_MODE_LIVE = "live"
 
 
@@ -30,6 +31,7 @@ __all__ = [
     "PIPELINE_INTERVAL_SEC",
     "RUNNER_MODE_ENV",
     "RUNNER_MODE_STUB",
+    "RUNNER_MODE_STUB_ERROR",
     "RUNNER_MODE_LIVE",
     "runner_mode",
 ]

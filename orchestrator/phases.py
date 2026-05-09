@@ -13,13 +13,13 @@ A phase:
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Any
 
 from obsidian_utils import ObsidianManager, VaultWriteError
 from orchestrator import scraper
 from orchestrator.config import PAPER_TRADE_MODE
 from orchestrator.dead_letter import quarantine_market
+from orchestrator.scraper import MarketRow
 from orchestrator.parse import (
     AgentOutputParseError,
     agent_error_reason,
@@ -35,10 +35,6 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-
-def _active_research_path(vault: ObsidianManager, market_id: str) -> Path:
-    return vault._dirs["active"] / f"{market_id}.md"  # noqa: SLF001
 
 
 def _run_structured_agent(
@@ -67,12 +63,16 @@ def _run_structured_agent(
 # ---------------------------------------------------------------------------
 
 
-def phase1_data_ingestion(vault: ObsidianManager) -> list[str]:
+def phase1_data_ingestion(vault: ObsidianManager) -> list[MarketRow]:
     """Query polymarket-scraper for high-delta / new markets."""
     log.info("[PHASE 1] Data ingestion")
-    target_market_ids = scraper.fetch_target_market_ids()
-    log.info("[PHASE 1] target_market_ids=%r", target_market_ids)
-    return target_market_ids
+    target_markets = scraper.fetch_target_markets()
+    log.info(
+        "[PHASE 1] target_markets count=%d ids=%r",
+        len(target_markets),
+        [m.market_id for m in target_markets],
+    )
+    return target_markets
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +82,7 @@ def phase1_data_ingestion(vault: ObsidianManager) -> list[str]:
 
 def phase2_quantitative_routing(
     vault: ObsidianManager,
-    target_market_ids: list[str],
+    target_markets: list[MarketRow],
     runner: AgentRunner = spawn_agent,
 ) -> list[dict[str, Any]]:
     """Filter markets through the (re-)Evaluator's quantitative skill."""
@@ -90,12 +90,13 @@ def phase2_quantitative_routing(
     limit = scraper.trends_limit_for_filters()
     passed: list[dict[str, Any]] = []
 
-    for market_id in target_market_ids:
+    for market in target_markets:
+        market_id = market.market_id
         try:
-            historic = list(reversed(scraper.get_market_trends(market_id, limit)))
+            historic = scraper.get_market_trends(market_id, limit)
             role = (
                 "re_evaluator"
-                if _active_research_path(vault, market_id).exists()
+                if vault.active_research_path(market_id).exists()
                 else "evaluator"
             )
             payload = {"market_id": market_id, "historic_market_data": historic}
@@ -103,6 +104,10 @@ def phase2_quantitative_routing(
             parsed, reason = _run_structured_agent(runner, role, payload)
             if reason:
                 quarantine_market(vault, market_id, reason, parsed or payload)
+                continue
+
+            if not parsed.get("passed"):
+                log.info("Market %s did not pass quantitative filters", market_id)
                 continue
 
             try:
@@ -116,19 +121,9 @@ def phase2_quantitative_routing(
                 )
                 continue
 
-            if not parsed.get("passed"):
-                log.info("Market %s did not pass quantitative filters", market_id)
-                continue
-
-            passed.append(
-                {
-                    "market_id": market_id,
-                    "market_title": f"Market {market_id}",
-                    "market_description": "",
-                    "market_data": {},
-                    "evaluator_output": parsed,
-                }
-            )
+            row = market.model_dump()
+            row["evaluator_output"] = parsed
+            passed.append(row)
         except Exception as exc:  # noqa: BLE001 — pipeline continues per market
             quarantine_market(
                 vault, market_id, f"phase2 exception: {exc!r}", {"exception": repr(exc)}
@@ -220,8 +215,17 @@ def _research_market(
         )
         return None
 
+    if research.market_id is not None and research.market_id != market_id:
+        quarantine_market(
+            vault,
+            market_id,
+            f"deep researcher returned mismatched market_id: {research.market_id!r}",
+            research.frontmatter,
+        )
+        return None
+
     payload = {
-        "market_id": research.market_id or market_id,
+        "market_id": market_id,
         "estimated_p": research.estimated_p,
         "error": None,
     }
@@ -302,8 +306,7 @@ def phase5_resolution_and_post_mortem(
 ) -> None:
     """Resolved markets → ``04_Post_Mortems/`` → analyst appends analysis."""
     log.info("[PHASE 5] Resolution & post-mortem")
-    trades_dir: Path = vault._dirs["trades"]  # noqa: SLF001
-    for trade_path in sorted(trades_dir.glob("*.json")):
+    for trade_path in vault.iter_open_trades():
         market_id = trade_path.stem
         resolution = scraper.fetch_resolution(market_id)
         if resolution is None:
@@ -315,7 +318,7 @@ def phase5_resolution_and_post_mortem(
             log.warning("No active research file to move for %s", market_id)
             continue
 
-        post_md = vault._dirs["post_mortem"] / f"{market_id}.md"  # noqa: SLF001
+        post_md = vault.post_mortem_path(market_id)
         payload = {
             "market_id": market_id,
             "original_research": post_md.read_text(encoding="utf-8"),
@@ -336,6 +339,13 @@ def phase5_resolution_and_post_mortem(
                 f"post-mortem append validation failed: {exc.cause}",
                 parsed,
             )
+            continue
+
+        # Archive so subsequent ticks don't re-resolve already-analysed markets.
+        try:
+            vault.archive_trade(market_id)
+        except FileNotFoundError:
+            log.warning("Trade log already archived for %s", market_id)
 
 
 # ---------------------------------------------------------------------------
@@ -349,10 +359,9 @@ def phase6_macro_learning_loop(
 ) -> None:
     """Aggregate post-mortems → Overseer → overwrite ``active_directives.md``."""
     log.info("[PHASE 6] Macro-learning loop (Overseer)")
-    post_dir: Path = vault._dirs["post_mortem"]  # noqa: SLF001
     batch = [
         {"market_id": p.stem, "content": p.read_text(encoding="utf-8")}
-        for p in sorted(post_dir.glob("*.md"))
+        for p in vault.iter_post_mortems()
     ]
     payload = {
         "post_mortems": batch,
@@ -361,12 +370,22 @@ def phase6_macro_learning_loop(
     parsed, reason = _run_structured_agent(runner, "overseer", payload)
     if reason:
         log.error("Overseer failed: %s", reason)
+        vault.write_error_log(
+            "__overseer__",
+            parsed or payload,
+            f"overseer rejected: {reason}",
+        )
         return
 
     try:
         vault.write_directives(parsed)
     except VaultWriteError as exc:
         log.error("Directives validation failed: %s", exc.cause)
+        vault.write_error_log(
+            "__overseer__",
+            parsed,
+            f"directives validation failed: {exc.cause}",
+        )
 
 
 __all__ = [

@@ -12,6 +12,8 @@ from typing import Any
 
 import yaml
 
+from orchestrator.schema_validation import build_model, is_markdown_output
+
 _AGENTS_MD = "AGENTS.md"
 _AGENT_YAML = "agent.yaml"
 _SKIP_DIR_PREFIXES = ("_", ".")
@@ -46,12 +48,17 @@ def load_agents_from_dir(agents_root: Path | None = None) -> dict[str, dict[str,
             )
 
         system_prompt = md_path.read_text(encoding="utf-8").strip()
+        in_schema: Any = meta.get("input_schema") or {}
         out_schema: Any = meta.get("output_schema", {})
 
         agents[role] = {
             "system_prompt": system_prompt,
-            "input_schema": meta.get("input_schema") or {},
+            "input_schema": in_schema,
             "output_schema": out_schema,
+            # Pre-built validators applied by ``orchestrator.runner.spawn_agent``.
+            "input_model": build_model(f"{role.title()}Input", in_schema),
+            "output_model": build_model(f"{role.title()}Output", out_schema),
+            "output_is_markdown": is_markdown_output(out_schema),
             "workspace_path": str(child.resolve()),
             "openclaw": {
                 "openclaw_agent_id": meta.get("openclaw_agent_id"),

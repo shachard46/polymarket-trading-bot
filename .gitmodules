@@ -1,0 +1,3 @@
+[submodule "skills/market-scraper"]
+	path = skills/market-scraper
+	url = git@github.com:shachard46/market-scraper.git

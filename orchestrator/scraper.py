@@ -21,6 +21,8 @@ import shutil
 import subprocess
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from orchestrator.config import FILTERS
 
 log = logging.getLogger(__name__)
@@ -109,6 +111,76 @@ def _run_poly_scan(*args: str) -> Any | None:
 
 
 # ---------------------------------------------------------------------------
+# Hub-side payload models
+# ---------------------------------------------------------------------------
+
+
+# Snapshot fields the Orchestrator promises to forward to downstream agents.
+# Sourced from polymarket-scraper's `get_open_markets` (joined with the latest
+# market_change row). Anything missing here is the scraper's fault, not the
+# spoke's — agents must never re-fetch.
+_MARKET_DATA_FIELDS: tuple[str, ...] = (
+    "yes_price",
+    "no_price",
+    "volume",
+    "liquidity",
+    "last_trade_price",
+    "midpoint",
+    "spread",
+    "end_date",
+    "days_to_resolution",
+)
+
+
+class MarketRow(BaseModel):
+    """Hub-validated row carrying every field downstream spokes need.
+
+    Constructed by the Orchestrator from `poly-scan get_open_markets`. The
+    Briefer reads `market_title` + `market_description`; the Executioner
+    reads `market_data` (q, V, L, ...).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    market_id: str
+    market_title: str
+    market_description: str = ""
+    market_data: dict[str, Any] = Field(default_factory=dict)
+
+
+def _market_row_from_scraper(row: dict[str, Any]) -> MarketRow | None:
+    """Project a raw scraper market dict into a validated :class:`MarketRow`.
+
+    Returns ``None`` if the row lacks a usable ``market_id`` or ``question``.
+    """
+    market_id = row.get("market_id")
+    if not isinstance(market_id, str) or not market_id:
+        return None
+
+    title = row.get("question") or row.get("market_title") or ""
+    if not isinstance(title, str) or not title.strip():
+        # No human-readable title means the Briefer would hallucinate against
+        # an empty string — drop the market upstream rather than poisoning
+        # the qualitative pipeline.
+        return None
+
+    description = row.get("description") or row.get("market_description") or ""
+    if not isinstance(description, str):
+        description = str(description)
+
+    market_data = {
+        key: row[key] for key in _MARKET_DATA_FIELDS if key in row and row[key] is not None
+    }
+
+    return MarketRow(
+        market_id=market_id,
+        market_title=title,
+        market_description=description,
+        market_data=market_data,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -135,27 +207,31 @@ def get_market_trends(market_id: str, limit: int) -> list[dict[str, Any]]:
     return list(reversed(data))
 
 
-def fetch_target_market_ids() -> list[str]:
-    """Return market ids of open markets to feed the quantitative pipeline.
+def fetch_target_markets() -> list[MarketRow]:
+    """Return validated open-market rows to feed the quantitative pipeline.
 
     The orchestrator pulls the freshest open markets (the CLI orders by
     most-recently-changed first) and lets phase 2 apply the deterministic
     quant filters. Limit is configurable via ``OPENCLAW_INGEST_LIMIT``.
+
+    Each row carries the title, description, and latest market snapshot —
+    everything downstream agents need. Rows missing identity or title are
+    dropped so the Briefer never receives a placeholder string.
     """
     limit = _ingest_limit()
     data = _run_poly_scan("get_open_markets", "--limit", str(limit))
     if not isinstance(data, list):
         return []
 
-    ids: list[str] = []
-    for row in data:
-        if not isinstance(row, dict):
+    rows: list[MarketRow] = []
+    for raw in data:
+        if not isinstance(raw, dict):
             continue
-        market_id = row.get("market_id")
-        if isinstance(market_id, str) and market_id:
-            ids.append(market_id)
-    log.info("Ingested %d candidate market_ids", len(ids))
-    return ids
+        row = _market_row_from_scraper(raw)
+        if row is not None:
+            rows.append(row)
+    log.info("Ingested %d candidate markets", len(rows))
+    return rows
 
 
 def fetch_resolution(market_id: str) -> dict[str, Any] | None:
@@ -182,8 +258,9 @@ def fetch_resolution(market_id: str) -> dict[str, Any] | None:
 
 
 __all__ = [
+    "MarketRow",
     "trends_limit_for_filters",
     "get_market_trends",
-    "fetch_target_market_ids",
+    "fetch_target_markets",
     "fetch_resolution",
 ]

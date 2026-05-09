@@ -95,12 +95,53 @@ class PostMortemPayload(BaseModel):
     error: Optional[str] = None
 
 
+# Headers the seed directives ship with and the Overseer must keep
+# producing — see ``_build_seed_directives`` and docs/01_architecture.md §3.
+_REQUIRED_DIRECTIVE_HEADERS: tuple[str, ...] = (
+    "## Research Protocol",
+    "## Filter Weightings",
+    "## Risk Constraints",
+    "## Output Requirements",
+)
+
+
 class DirectivesPayload(BaseModel):
-    """Overseer output — used to overwrite 00_System/active_directives.md."""
+    """Overseer output — used to overwrite 00_System/active_directives.md.
+
+    The ``new_directives_markdown`` blob is structurally validated:
+
+    - It must start with a YAML frontmatter block parseable as a mapping.
+    - It must contain every header in ``_REQUIRED_DIRECTIVE_HEADERS`` so the
+      Deep Researcher prompt template stays stable across learning loops.
+
+    A free-form Overseer reply that drops one of these headers is treated
+    as a contract violation, not a successful update — the Hub keeps the
+    prior directives in place rather than poisoning every downstream agent.
+    """
 
     new_directives_markdown: str
     rationale: str
     error: Optional[str] = None
+
+    @field_validator("new_directives_markdown")
+    @classmethod
+    def _validate_structure(cls, value: str) -> str:
+        # Local import avoids a top-level cycle with the orchestrator package.
+        from orchestrator.research import parse_deep_researcher_frontmatter
+
+        try:
+            parse_deep_researcher_frontmatter(value)
+        except ValueError as exc:
+            raise ValueError(
+                f"new_directives_markdown is missing or has invalid YAML frontmatter: {exc}"
+            ) from exc
+
+        missing = [h for h in _REQUIRED_DIRECTIVE_HEADERS if h not in value]
+        if missing:
+            raise ValueError(
+                f"new_directives_markdown is missing required headers: {missing!r}"
+            )
+        return value
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +149,15 @@ class DirectivesPayload(BaseModel):
 # ---------------------------------------------------------------------------
 
 _DIRECTIVES_FILENAME = "active_directives.md"
+
+
+def _dlq_timestamp() -> str:
+    """Return a filesystem-safe UTC timestamp suffix for DLQ artifacts.
+
+    ISO 8601 with ``:`` would be illegal on Windows, so we collapse the
+    time portion to a continuous digit string with microsecond resolution.
+    """
+    return datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
 
 
 def _dump_frontmatter(data: dict, body: str = "") -> str:
@@ -441,15 +491,67 @@ class ObsidianManager:
         Path
             Absolute path of the written error file.
         """
+        suffix = _dlq_timestamp()
         error_record = {
             "market_id": market_id,
             "logged_at": datetime.now(tz=timezone.utc).isoformat(),
             "reason": reason,
             "payload": payload,
         }
-        dest = self._dirs["errors"] / f"{market_id}.json"
+        dest = self._dirs["errors"] / f"{market_id}__{suffix}.json"
         dest.write_text(json.dumps(error_record, indent=2), encoding="utf-8")
         return dest
+
+    def iter_error_logs(self, market_id: str) -> list[Path]:
+        """Return every DLQ artifact recorded for ``market_id``, oldest-first."""
+        return sorted(self._dirs["errors"].glob(f"{market_id}__*.json"))
+
+    # ------------------------------------------------------------------
+    # Trade archival (phase 5)
+    # ------------------------------------------------------------------
+
+    @property
+    def _trades_archive_dir(self) -> Path:
+        archive = self._dirs["trades"] / "_resolved"
+        archive.mkdir(parents=True, exist_ok=True)
+        return archive
+
+    def active_research_path(self, market_id: str) -> Path:
+        """Return the path where active research for ``market_id`` lives."""
+        return self._dirs["active"] / f"{market_id}.md"
+
+    def post_mortem_path(self, market_id: str) -> Path:
+        """Return the path where the post-mortem report for ``market_id`` lives."""
+        return self._dirs["post_mortem"] / f"{market_id}.md"
+
+    def iter_post_mortems(self) -> list[Path]:
+        """Return every post-mortem markdown file in ``04_Post_Mortems/``."""
+        return sorted(self._dirs["post_mortem"].glob("*.md"))
+
+    def iter_open_trades(self) -> list[Path]:
+        """Return trade JSON files that have not yet been archived.
+
+        Used by phase 5 to limit ``poly-scan get_market`` calls to markets
+        that are still pending resolution. Archived trades live under
+        ``03_Trades/_resolved/`` and are skipped.
+        """
+        return sorted(p for p in self._dirs["trades"].glob("*.json") if p.is_file())
+
+    def archive_trade(self, market_id: str) -> Path:
+        """Move ``03_Trades/{market_id}.json`` to ``03_Trades/_resolved/``.
+
+        Called after the Post-Mortem Analyst successfully appends its
+        analysis. Subsequent phase 5 ticks then skip this market, avoiding
+        a polynomial blow-up of scraper calls against historical trades.
+        """
+        src = self._dirs["trades"] / f"{market_id}.json"
+        if not src.exists():
+            raise FileNotFoundError(f"No trade log to archive for {market_id}: {src}")
+        dst = self._trades_archive_dir / src.name
+        if dst.exists():
+            dst = self._trades_archive_dir / f"{src.stem}__{_dlq_timestamp()}{src.suffix}"
+        shutil.move(str(src), str(dst))
+        return dst
 
     # ------------------------------------------------------------------
     # File movement (orchestrator state transitions)
@@ -518,6 +620,11 @@ class ObsidianManager:
             )
 
         dst_file = dst_dir / src_file.name
+        # DLQ moves must never overwrite a prior failure's artifact for the
+        # same market; suffix with a UTC timestamp on collision.
+        if dst_dir_key == "errors" and dst_file.exists():
+            stem, ext = src_file.stem, src_file.suffix
+            dst_file = dst_dir / f"{stem}__{_dlq_timestamp()}{ext}"
         shutil.move(str(src_file), str(dst_file))
         return dst_file
 
