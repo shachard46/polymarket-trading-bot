@@ -1,0 +1,18 @@
+id: executioner
+openclaw_agent_id: openclaw-polymarket-executioner
+description: Deterministic executor; calculate_trade_allocation then optional execute_polymarket_trade.
+model: null
+tools:
+  allow:
+    - calculate_trade_allocation
+    - execute_polymarket_trade
+input_schema:
+  market_id: string
+  p_value: float
+  market_data: dict
+output_schema:
+  market_id: string
+  allocation_usd: float
+  executed: boolean
+  transaction_hash: "string | null"
+  error: "string | null"

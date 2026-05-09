@@ -1,0 +1,13 @@
+id: overseer
+openclaw_agent_id: openclaw-polymarket-overseer
+description: Macro-learner; rewrites active_directives.md from post-mortem batch.
+model: null
+tools:
+  allow: []
+input_schema:
+  post_mortems: list[dict]
+  current_directives: string
+output_schema:
+  new_directives_markdown: string
+  rationale: string
+  error: "string | null"

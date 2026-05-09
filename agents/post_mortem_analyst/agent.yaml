@@ -1,0 +1,15 @@
+id: post_mortem_analyst
+openclaw_agent_id: openclaw-polymarket-post-mortem
+description: Retrospective analyst; no tools; JSON output only.
+model: null
+tools:
+  allow: []
+input_schema:
+  market_id: string
+  original_research: string
+  execution_log: string
+  resolution_data: dict
+output_schema:
+  market_id: string
+  post_mortem_analysis: string
+  error: "string | null"
