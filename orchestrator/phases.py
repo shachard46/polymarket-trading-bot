@@ -379,11 +379,8 @@ def _research_market(
         return None
 
     from_edge = bool(row.get("_edge_research_refresh"))
-    edge_count = (
-        _read_edge_research_refresh_count(vault, market_id) + 1
-        if from_edge
-        else 0
-    )
+    prev_edge = _read_edge_research_refresh_count(vault, market_id)
+    edge_count = prev_edge + 1 if from_edge else prev_edge
 
     payload = {
         "market_id": market_id,

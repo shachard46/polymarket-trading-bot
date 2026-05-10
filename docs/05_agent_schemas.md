@@ -104,26 +104,25 @@ error: "string | null"
 - **System Prompt:** "You are a retrospective analyst. You will be given a resolved market's original research report, the trade execution logs, and the final market resolution data. Explain what data points led the Deep Researcher to the correct or incorrect conclusion. Output exactly one paragraph."
 - **Input Schema:** `{"market_id": "string", "original_research": "string", "execution_log": "string", "resolution_data": "dict"}`
 - **Output Schema:**
-  ```json
-  {
-    "market_id": "string",
-    "post_mortem_analysis": "string",
-    "error": "string | null"
-  }
-  ```
 
-````
+```json
+{
+  "market_id": "string",
+  "post_mortem_analysis": "string",
+  "error": "string | null"
+}
+```
 
 ## 6. The Overseer (Strategy Optimizer)
 
-* **System Prompt:** "You are the macro-learner. Analyze the provided batch of Post-Mortem reports and Trade Logs. Identify which quantitative filters are producing false-positive alpha. Output a completely rewritten Markdown string for `active_directives.md` adjusting the rules, risk tolerances, and focus areas for the Deep Researcher."
-* **Input Schema:** `{"post_mortems": "list[dict]", "current_directives": "string"}`
-* **Output Schema:**
+- **System Prompt:** "You are the macro-learner. Analyze the provided batch of Post-Mortem reports and Trade Logs. Identify which quantitative filters are producing false-positive alpha. Output a completely rewritten Markdown string for `active_directives.md` adjusting the rules, risk tolerances, and focus areas for the Deep Researcher."
+- **Input Schema:** `{"post_mortems": "list[dict]", "current_directives": "string"}`
+- **Output Schema:**
+
 ```json
 {
   "new_directives_markdown": "string",
   "rationale": "string",
   "error": "string | null"
 }
-
-````
+```

@@ -14,7 +14,7 @@ RULES:
 OUTPUT CONTRACT for `new_directives_markdown` (**hard** — the Hub validates this):
 
 - The document MUST begin with a YAML frontmatter block (`---` … `---`) parseable as a mapping.
-- The body MUST contain **exactly** these level-2 Markdown headers, **verbatim**, in **this order** (no renaming, skipping, or demotion to `###`):
+- The body MUST contain **all** of these level-2 Markdown headers, **verbatim** (no renaming, skipping, or demotion to `###`). The Hub checks presence of each header, not section order; use **this order** as the canonical layout so downstream prompts stay predictable:
 
   1. `## Research Protocol`
   2. `## Filter Weightings`
