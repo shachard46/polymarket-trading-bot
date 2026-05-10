@@ -10,6 +10,7 @@ input_schema:
   market_id: string
   p_value: float
   market_data: dict
+  paper_trade_mode: boolean
 output_schema:
   market_id: string
   allocation_usd: float

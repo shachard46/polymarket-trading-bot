@@ -59,3 +59,47 @@ def test_spawn_agent_accepts_valid_input(monkeypatch):
     assert isinstance(out, dict)
     assert out["market_id"] == "x"
     assert out["error"] is None
+
+
+def test_spawn_agent_re_evaluator_requires_prior_fields():
+    with pytest.raises(AgentSchemaError):
+        spawn_agent(
+            "re_evaluator",
+            {"market_id": "x", "historic_market_data": []},
+        )
+
+
+def test_spawn_agent_re_evaluator_accepts_null_prior():
+    out = spawn_agent(
+        "re_evaluator",
+        {
+            "market_id": "x",
+            "historic_market_data": [],
+            "prior_filter_trigger": None,
+            "prior_evaluator_details": None,
+        },
+    )
+    assert out["market_id"] == "x"
+    assert out["error"] is None
+
+
+def test_spawn_agent_executioner_requires_paper_trade_mode():
+    with pytest.raises(AgentSchemaError):
+        spawn_agent(
+            "executioner",
+            {"market_id": "m", "p_value": 0.5, "market_data": {}},
+        )
+
+
+def test_spawn_agent_executioner_accepts_paper_mode():
+    out = spawn_agent(
+        "executioner",
+        {
+            "market_id": "m",
+            "p_value": 0.5,
+            "market_data": {},
+            "paper_trade_mode": True,
+        },
+    )
+    assert out["market_id"] == "m"
+    assert out["executed"] is False

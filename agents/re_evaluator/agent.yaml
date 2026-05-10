@@ -8,6 +8,8 @@ tools:
 input_schema:
   market_id: string
   historic_market_data: list[dict]
+  prior_filter_trigger: "string | null"
+  prior_evaluator_details: "string | null"
 output_schema:
   market_id: string
   passed: boolean

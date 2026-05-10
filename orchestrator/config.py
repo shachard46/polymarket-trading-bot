@@ -18,6 +18,17 @@ RUNNER_MODE_STUB = "stub"
 RUNNER_MODE_STUB_ERROR = "stub_error"
 RUNNER_MODE_LIVE = "live"
 
+TOP_QUALITATIVE_MARKETS_ENV = "OPENCLAW_TOP_MARKETS"
+
+
+def top_qualitative_markets() -> int:
+    """Max markets promoted from quantitative gate to qualitative pipeline (default 20)."""
+    raw = os.environ.get(TOP_QUALITATIVE_MARKETS_ENV, "20")
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 20
+
 
 def runner_mode() -> str:
     """Return the active runner mode, defaulting to ``stub``."""
@@ -34,4 +45,6 @@ __all__ = [
     "RUNNER_MODE_STUB_ERROR",
     "RUNNER_MODE_LIVE",
     "runner_mode",
+    "TOP_QUALITATIVE_MARKETS_ENV",
+    "top_qualitative_markets",
 ]

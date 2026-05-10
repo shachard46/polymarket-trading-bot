@@ -17,8 +17,12 @@ from typing import Any
 
 from obsidian_utils import ObsidianManager, VaultWriteError
 from orchestrator import scraper
-from orchestrator.config import PAPER_TRADE_MODE
-from orchestrator.dead_letter import quarantine_market
+from orchestrator.config import PAPER_TRADE_MODE, top_qualitative_markets
+from orchestrator.dead_letter import (
+    market_quarantine,
+    quarantine_market,
+    vault_write_or_quarantine,
+)
 from orchestrator.scraper import MarketRow
 from orchestrator.parse import (
     AgentOutputParseError,
@@ -35,6 +39,17 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _qualitative_rank_key(row: dict[str, Any]) -> tuple[float, str]:
+    """Sort key: higher ``confidence_multiplier`` first, then ``market_id`` ascending."""
+    ev = row.get("evaluator_output") or {}
+    try:
+        cm = float(ev.get("confidence_multiplier", 0.0))
+    except (TypeError, ValueError):
+        cm = 0.0
+    mid = str(row.get("market_id") or "")
+    return (-cm, mid)
 
 
 def _run_structured_agent(
@@ -92,14 +107,25 @@ def phase2_quantitative_routing(
 
     for market in target_markets:
         market_id = market.market_id
-        try:
+        with market_quarantine(vault, market_id, "phase2"):
             historic = scraper.get_market_trends(market_id, limit)
             role = (
                 "re_evaluator"
                 if vault.active_research_path(market_id).exists()
                 else "evaluator"
             )
-            payload = {"market_id": market_id, "historic_market_data": historic}
+            payload: dict[str, Any] = {
+                "market_id": market_id,
+                "historic_market_data": historic,
+            }
+            if role == "re_evaluator":
+                prior = vault.read_filter_log(market_id)
+                if prior:
+                    payload["prior_filter_trigger"] = prior.get("trigger")
+                    payload["prior_evaluator_details"] = prior.get("details")
+                else:
+                    payload["prior_filter_trigger"] = None
+                    payload["prior_evaluator_details"] = None
 
             parsed, reason = _run_structured_agent(runner, role, payload)
             if reason:
@@ -110,24 +136,28 @@ def phase2_quantitative_routing(
                 log.info("Market %s did not pass quantitative filters", market_id)
                 continue
 
-            try:
-                vault.write_filter_log(market_id, parsed)
-            except VaultWriteError as exc:
-                quarantine_market(
-                    vault,
-                    market_id,
-                    f"filter log validation failed: {exc.cause}",
-                    parsed,
-                )
+            if not vault_write_or_quarantine(
+                vault=vault,
+                market_id=market_id,
+                write_fn=lambda: vault.write_filter_log(market_id, parsed),
+                payload=parsed,
+                artifact_label="filter log",
+            ):
                 continue
 
             row = market.model_dump()
             row["evaluator_output"] = parsed
             passed.append(row)
-        except Exception as exc:  # noqa: BLE001 — pipeline continues per market
-            quarantine_market(
-                vault, market_id, f"phase2 exception: {exc!r}", {"exception": repr(exc)}
-            )
+
+    passed.sort(key=_qualitative_rank_key)
+    cap = top_qualitative_markets()
+    if len(passed) > cap:
+        log.info(
+            "[PHASE 2] capping qualitative queue: %d -> %d (OPENCLAW_TOP_MARKETS)",
+            len(passed),
+            cap,
+        )
+        passed = passed[:cap]
 
     log.info("[PHASE 2] passed_markets count=%d", len(passed))
     return passed
@@ -150,13 +180,8 @@ def phase3_qualitative_pipeline(
 
     for row in passed_markets:
         market_id = row["market_id"]
-        try:
+        with market_quarantine(vault, market_id, "phase3"):
             researched_row = _research_market(vault, runner, row, directives)
-        except Exception as exc:  # noqa: BLE001
-            quarantine_market(
-                vault, market_id, f"phase3 exception: {exc!r}", {"exception": repr(exc)}
-            )
-            continue
         if researched_row is not None:
             researched.append(researched_row)
 
@@ -229,15 +254,13 @@ def _research_market(
         "estimated_p": research.estimated_p,
         "error": None,
     }
-    try:
-        vault.write_research_report(market_id, payload, research.body)
-    except VaultWriteError as exc:
-        quarantine_market(
-            vault,
-            market_id,
-            f"research report validation failed: {exc.cause}",
-            payload,
-        )
+    if not vault_write_or_quarantine(
+        vault=vault,
+        market_id=market_id,
+        write_fn=lambda: vault.write_research_report(market_id, payload, research.body),
+        payload=payload,
+        artifact_label="research report",
+    ):
         return None
 
     return {
@@ -266,11 +289,12 @@ def phase4_execution(
 
     for row in researched_markets:
         market_id = row["market_id"]
-        try:
+        with market_quarantine(vault, market_id, "phase4"):
             payload = {
                 "market_id": market_id,
                 "p_value": row["p_value"],
                 "market_data": row.get("market_data") or {},
+                "paper_trade_mode": bool(PAPER_TRADE_MODE),
             }
             parsed, reason = _run_structured_agent(runner, "executioner", payload)
             if reason:
@@ -280,18 +304,12 @@ def phase4_execution(
             if PAPER_TRADE_MODE:
                 parsed = {**parsed, "executed": False, "transaction_hash": None}
 
-            try:
-                vault.write_trade_log(market_id, parsed)
-            except VaultWriteError as exc:
-                quarantine_market(
-                    vault,
-                    market_id,
-                    f"trade log validation failed: {exc.cause}",
-                    parsed,
-                )
-        except Exception as exc:  # noqa: BLE001
-            quarantine_market(
-                vault, market_id, f"phase4 exception: {exc!r}", {"exception": repr(exc)}
+            vault_write_or_quarantine(
+                vault=vault,
+                market_id=market_id,
+                write_fn=lambda: vault.write_trade_log(market_id, parsed),
+                payload=parsed,
+                artifact_label="trade log",
             )
 
 
@@ -308,44 +326,51 @@ def phase5_resolution_and_post_mortem(
     log.info("[PHASE 5] Resolution & post-mortem")
     for trade_path in vault.iter_open_trades():
         market_id = trade_path.stem
-        resolution = scraper.fetch_resolution(market_id)
-        if resolution is None:
-            continue
+        with market_quarantine(vault, market_id, "phase5"):
+            _resolve_market(vault, runner, market_id)
 
-        try:
-            vault.move_file(market_id, "active", "post_mortem")
-        except FileNotFoundError:
-            log.warning("No active research file to move for %s", market_id)
-            continue
 
-        post_md = vault.post_mortem_path(market_id)
-        payload = {
-            "market_id": market_id,
-            "original_research": post_md.read_text(encoding="utf-8"),
-            "execution_log": trade_path.read_text(encoding="utf-8"),
-            "resolution_data": resolution,
-        }
-        parsed, reason = _run_structured_agent(runner, "post_mortem_analyst", payload)
-        if reason:
-            quarantine_market(vault, market_id, reason, parsed or payload)
-            continue
+def _resolve_market(
+    vault: ObsidianManager,
+    runner: AgentRunner,
+    market_id: str,
+) -> None:
+    """Resolve one market and append post-mortem analysis when possible."""
+    resolution = scraper.fetch_resolution(market_id)
+    if resolution is None:
+        return
 
-        try:
-            vault.append_post_mortem(market_id, parsed)
-        except VaultWriteError as exc:
-            quarantine_market(
-                vault,
-                market_id,
-                f"post-mortem append validation failed: {exc.cause}",
-                parsed,
-            )
-            continue
+    try:
+        vault.move_file(market_id, "active", "post_mortem")
+    except FileNotFoundError:
+        log.warning("No active research file to move for %s", market_id)
+        return
 
-        # Archive so subsequent ticks don't re-resolve already-analysed markets.
-        try:
-            vault.archive_trade(market_id)
-        except FileNotFoundError:
-            log.warning("Trade log already archived for %s", market_id)
+    payload = {
+        "market_id": market_id,
+        "original_research": vault.read_post_mortem(market_id),
+        "execution_log": vault.read_trade_log(market_id),
+        "resolution_data": resolution,
+    }
+    parsed, reason = _run_structured_agent(runner, "post_mortem_analyst", payload)
+    if reason:
+        quarantine_market(vault, market_id, reason, parsed or payload)
+        return
+
+    if not vault_write_or_quarantine(
+        vault=vault,
+        market_id=market_id,
+        write_fn=lambda: vault.append_post_mortem(market_id, parsed),
+        payload=parsed,
+        artifact_label="post-mortem append",
+    ):
+        return
+
+    # Archive so subsequent ticks don't re-resolve already-analysed markets.
+    try:
+        vault.archive_trade(market_id)
+    except FileNotFoundError:
+        log.warning("Trade log already archived for %s", market_id)
 
 
 # ---------------------------------------------------------------------------

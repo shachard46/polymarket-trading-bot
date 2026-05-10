@@ -13,7 +13,7 @@ import json
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import yaml
 from pydantic import BaseModel, ValidationError, field_validator
@@ -306,6 +306,25 @@ class ObsidianManager:
         )
         return dest
 
+    def read_filter_log(self, market_id: str) -> dict[str, Any] | None:
+        """Return the YAML frontmatter from ``01_Filters/{market_id}.md`` if present.
+
+        Used to give the Re-Evaluator continuity (prior trigger/details) without
+        the agent reading the vault directly.
+        """
+        path = self._dirs["filters"] / f"{market_id}.md"
+        if not path.exists():
+            return None
+        text = path.read_text(encoding="utf-8")
+        # Local import: same frontmatter split as research reports / filter logs.
+        from orchestrator.research import parse_deep_researcher_frontmatter
+
+        try:
+            fm, _ = parse_deep_researcher_frontmatter(text)
+        except ValueError:
+            return None
+        return fm
+
     def write_research_report(
         self,
         market_id: str,
@@ -523,6 +542,15 @@ class ObsidianManager:
     def post_mortem_path(self, market_id: str) -> Path:
         """Return the path where the post-mortem report for ``market_id`` lives."""
         return self._dirs["post_mortem"] / f"{market_id}.md"
+
+    def read_post_mortem(self, market_id: str) -> str:
+        """Read the post-mortem markdown for ``market_id``."""
+        return self.post_mortem_path(market_id).read_text(encoding="utf-8")
+
+    def read_trade_log(self, market_id: str) -> str:
+        """Read the open trade log JSON for ``market_id`` as a raw string."""
+        path = self._dirs["trades"] / f"{market_id}.json"
+        return path.read_text(encoding="utf-8")
 
     def iter_post_mortems(self) -> list[Path]:
         """Return every post-mortem markdown file in ``04_Post_Mortems/``."""

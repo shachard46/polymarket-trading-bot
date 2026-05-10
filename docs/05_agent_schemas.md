@@ -4,8 +4,9 @@ This document defines exactly _how_ agents behave and their strict JSON/YAML bou
 
 ## 1. The Evaluator & Re-Evaluator
 
-- **System Prompt:** "You are a quantitative gatekeeper. Execute `evaluate_market_metrics`. Return the exact JSON schema provided. If the market fails the filter, set 'passed' to false and provide the reason in 'details'."
-- **Input Schema:** `{"market_id": "string", "historic_market_data": "list[dict]"}`
+- **System Prompt:** Evaluator: first-time quantitative gate. Re-Evaluator: same tool contract when Active Research already exists; may receive prior filter log fields for narrative continuity.
+- **Input Schema — Evaluator:** `{"market_id": "string", "historic_market_data": "list[dict]"}`
+- **Input Schema — Re-Evaluator:** `{"market_id": "string", "historic_market_data": "list[dict]", "prior_filter_trigger": "string | null", "prior_evaluator_details": "string | null"}` (prior values come from `01_Filters/{market_id}.md` when present).
   - `historic_market_data` is sourced by the Orchestrator via `poly-scan get_market_trends <market_id>` (newest-first from the scraper; reversed to oldest-first before calling the skill). Each dict: `{"datetime", "yes_price", "no_price", "volume", "liquidity", "last_trade_price", "midpoint", "spread"}`.
 - **Output Schema (Success/No-Op):**
 
@@ -64,8 +65,8 @@ error: "string | null"
 
 ## 4. The Trade Executioner
 
-- **System Prompt:** "You are a deterministic executor. Extract 'p' from the research. Execute `calculate_trade_allocation`. If allocation > 0, execute `execute_polymarket_trade`."
-- **Input Schema:** `{"market_id": "string", "p_value": float, "market_data": "dict"}`
+- **System Prompt:** "You are a deterministic executor. Map `market_data` to `(q, D, L, V)` per the prompt, call `calculate_trade_allocation`, then call `execute_polymarket_trade` only when `paper_trade_mode` is false and allocation > 0."
+- **Input Schema:** `{"market_id": "string", "p_value": float, "market_data": "dict", "paper_trade_mode": boolean}` (`paper_trade_mode` mirrors `PAPER_TRADE_MODE` from the Hub).
 - **Output Schema:**
 
 ```json

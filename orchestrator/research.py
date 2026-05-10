@@ -42,7 +42,11 @@ def parse_estimated_p_from_deep_researcher_frontmatter(markdown: str) -> float:
     non-numeric, or out-of-range values.
     """
     frontmatter, _ = parse_deep_researcher_frontmatter(markdown)
+    return _parse_estimated_p(frontmatter)
 
+
+def _parse_estimated_p(frontmatter: dict[str, Any]) -> float:
+    """Extract and validate ``estimated_p`` from parsed frontmatter."""
     if "estimated_p" not in frontmatter:
         raise ValueError("frontmatter is missing 'estimated_p'")
 
@@ -59,10 +63,40 @@ def parse_estimated_p_from_deep_researcher_frontmatter(markdown: str) -> float:
     return p
 
 
+def _validate_deep_researcher_body(body: str) -> None:
+    """Require Bull / Bear / Post-Mortem sections in order; Post-Mortem body empty."""
+    bull_h = "## Bull Thesis"
+    bear_h = "## Bear Thesis"
+    pm_h = "## Post-Mortem"
+    i_bull = body.find(bull_h)
+    i_bear = body.find(bear_h)
+    i_pm = body.find(pm_h)
+    if i_bull < 0 or i_bear < 0 or i_pm < 0:
+        raise ValueError(
+            "deep researcher body must contain ## Bull Thesis, ## Bear Thesis, and ## Post-Mortem"
+        )
+    if not (i_bull < i_bear < i_pm):
+        raise ValueError(
+            "deep researcher sections must appear in order: Bull, Bear, Post-Mortem"
+        )
+    bull_text = body[i_bull + len(bull_h) : i_bear].strip()
+    bear_text = body[i_bear + len(bear_h) : i_pm].strip()
+    if not bull_text:
+        raise ValueError("## Bull Thesis must have non-empty content")
+    if not bear_text:
+        raise ValueError("## Bear Thesis must have non-empty content")
+    tail = body[i_pm + len(pm_h) :].strip()
+    if tail:
+        raise ValueError(
+            "## Post-Mortem section must be empty (no text after header; reserved for analyst)"
+        )
+
+
 def parse_deep_researcher(markdown: str) -> ParsedResearch:
     """Parse a complete Deep Researcher response into :class:`ParsedResearch`."""
     frontmatter, body = parse_deep_researcher_frontmatter(markdown)
-    p = parse_estimated_p_from_deep_researcher_frontmatter(markdown)
+    _validate_deep_researcher_body(body)
+    p = _parse_estimated_p(frontmatter)
 
     market_id = frontmatter.get("market_id")
     if market_id is not None:

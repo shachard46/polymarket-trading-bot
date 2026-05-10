@@ -15,7 +15,7 @@ from typing import Any
 import yaml
 
 _FENCE_RE = re.compile(
-    r"^\s*```(?:json|yaml|yml)?\s*\n(?P<body>.*?)\n```\s*$",
+    r"^\s*```(?:json|yaml|yml)?\s*\n(?P<body>.*?)\s*```\s*$",
     re.DOTALL | re.IGNORECASE,
 )
 
