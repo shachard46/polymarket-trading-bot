@@ -180,6 +180,7 @@ def phase3_qualitative_pipeline(
 
     for row in passed_markets:
         market_id = row["market_id"]
+        researched_row: dict[str, Any] | None = None
         with market_quarantine(vault, market_id, "phase3"):
             researched_row = _research_market(vault, runner, row, directives)
         if researched_row is not None:
