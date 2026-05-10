@@ -14,6 +14,8 @@ input_schema:
 output_schema:
   market_id: string
   allocation_usd: float
+  score: "float | null"
+  below_edge_threshold: "boolean | null"
   executed: boolean
   transaction_hash: "string | null"
   error: "string | null"

@@ -20,6 +20,8 @@ INPUT MAPPING (apply exactly; do not improvise):
 - `D` := `int(market_data["days_to_resolution"])` if present and numeric; else return with error `"missing or invalid days_to_resolution"`.
 - `L` := float `market_data["liquidity"]`; `V` := float `market_data["volume"]`. If either is missing or non-numeric, return with a clear `error` and zero allocation.
 
+After `calculate_trade_allocation` returns, copy `allocation_usd`, `score`, and `below_edge_threshold` from the tool output into your JSON response (numeric/boolean/null exactly as returned).
+
 After `calculate_trade_allocation` returns `allocation_usd` and if live execution is allowed (`paper_trade_mode` false) and `allocation_usd` > 0:
 
 - `outcome` := `"YES"` if `p > q`, else `"NO"` (use the same `q` as above).
@@ -39,6 +41,8 @@ OUTPUT SCHEMA:
 {
   "market_id": "<string>",
   "allocation_usd": <float>,
+  "score": <float | null>,
+  "below_edge_threshold": <true|false|null>,
   "executed": <true|false>,
   "transaction_hash": "<string or null>",
   "error": "<error message if any tool failed, otherwise null>"

@@ -68,6 +68,7 @@ class ResearchFrontmatter(BaseModel):
     market_id: str
     estimated_p: float
     error: Optional[str] = None
+    edge_research_refresh_count: int = 0
 
     @field_validator("estimated_p")
     @classmethod
@@ -76,12 +77,21 @@ class ResearchFrontmatter(BaseModel):
             raise ValueError(f"estimated_p must be in [0, 1], got {v}")
         return v
 
+    @field_validator("edge_research_refresh_count")
+    @classmethod
+    def _edge_refresh_non_negative(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("edge_research_refresh_count must be >= 0")
+        return v
+
 
 class TradeLogPayload(BaseModel):
     """Trade Executioner output — written to 03_Trades/."""
 
     market_id: str
     allocation_usd: float
+    score: Optional[float] = None
+    below_edge_threshold: Optional[bool] = None
     executed: bool
     transaction_hash: Optional[str] = None
     error: Optional[str] = None
@@ -127,10 +137,10 @@ class DirectivesPayload(BaseModel):
     @classmethod
     def _validate_structure(cls, value: str) -> str:
         # Local import avoids a top-level cycle with the orchestrator package.
-        from orchestrator.research import parse_deep_researcher_frontmatter
+        from orchestrator.research import split_yaml_frontmatter_markdown
 
         try:
-            parse_deep_researcher_frontmatter(value)
+            split_yaml_frontmatter_markdown(value)
         except ValueError as exc:
             raise ValueError(
                 f"new_directives_markdown is missing or has invalid YAML frontmatter: {exc}"
@@ -316,11 +326,11 @@ class ObsidianManager:
         if not path.exists():
             return None
         text = path.read_text(encoding="utf-8")
-        # Local import: same frontmatter split as research reports / filter logs.
-        from orchestrator.research import parse_deep_researcher_frontmatter
+        # Local import: generic YAML frontmatter split (filter logs are frontmatter-only).
+        from orchestrator.research import split_yaml_frontmatter_markdown
 
         try:
-            fm, _ = parse_deep_researcher_frontmatter(text)
+            fm, _ = split_yaml_frontmatter_markdown(text)
         except ValueError:
             return None
         return fm
@@ -538,6 +548,24 @@ class ObsidianManager:
     def active_research_path(self, market_id: str) -> Path:
         """Return the path where active research for ``market_id`` lives."""
         return self._dirs["active"] / f"{market_id}.md"
+
+    def read_active_research(self, market_id: str) -> str | None:
+        """Return full markdown for ``02_Active_Research/{market_id}.md`` if present."""
+        path = self.active_research_path(market_id)
+        if not path.exists():
+            return None
+        return path.read_text(encoding="utf-8")
+
+    def read_trade_log_dict(self, market_id: str) -> dict[str, Any] | None:
+        """Parse ``03_Trades/{market_id}.json`` if present; return ``None`` on missing/bad JSON."""
+        path = self._dirs["trades"] / f"{market_id}.json"
+        if not path.exists():
+            return None
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return None
+        return raw if isinstance(raw, dict) else None
 
     def post_mortem_path(self, market_id: str) -> Path:
         """Return the path where the post-mortem report for ``market_id`` lives."""

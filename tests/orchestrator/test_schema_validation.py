@@ -61,7 +61,7 @@ def test_spawn_agent_accepts_valid_input(monkeypatch):
     assert out["error"] is None
 
 
-def test_spawn_agent_re_evaluator_requires_prior_fields():
+def test_spawn_agent_re_evaluator_requires_schema_fields():
     with pytest.raises(AgentSchemaError):
         spawn_agent(
             "re_evaluator",
@@ -69,18 +69,41 @@ def test_spawn_agent_re_evaluator_requires_prior_fields():
         )
 
 
-def test_spawn_agent_re_evaluator_accepts_null_prior():
+def test_spawn_agent_re_evaluator_accepts_quantitative_payload():
     out = spawn_agent(
         "re_evaluator",
         {
             "market_id": "x",
+            "review_kind": "quantitative",
             "historic_market_data": [],
             "prior_filter_trigger": None,
             "prior_evaluator_details": None,
+            "prior_filter_log": None,
+            "research_markdown": None,
+            "trade_log": None,
         },
     )
     assert out["market_id"] == "x"
     assert out["error"] is None
+    assert out["retry_deep_research"] is False
+
+
+def test_spawn_agent_re_evaluator_accepts_edge_research_refresh_payload():
+    out = spawn_agent(
+        "re_evaluator",
+        {
+            "market_id": "x",
+            "review_kind": "edge_research_refresh",
+            "historic_market_data": [],
+            "prior_filter_trigger": None,
+            "prior_evaluator_details": None,
+            "prior_filter_log": {"passed": True},
+            "research_markdown": "---\nmarket_id: x\n---\n",
+            "trade_log": {"below_edge_threshold": True},
+        },
+    )
+    assert out["market_id"] == "x"
+    assert out["refresh_reason"] == "no_material_quant_change"
 
 
 def test_spawn_agent_executioner_requires_paper_trade_mode():

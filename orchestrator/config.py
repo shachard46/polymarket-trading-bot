@@ -20,6 +20,10 @@ RUNNER_MODE_LIVE = "live"
 
 TOP_QUALITATIVE_MARKETS_ENV = "OPENCLAW_TOP_MARKETS"
 
+# Max completed edge-triggered Deep Researcher refresh cycles per market (initial research is not counted).
+EDGE_RESEARCH_REFRESH_MAX_ENV = "OPENCLAW_EDGE_RESEARCH_REFRESH_MAX"
+DEFAULT_EDGE_RESEARCH_REFRESH_MAX = 3
+
 
 def top_qualitative_markets() -> int:
     """Max markets promoted from quantitative gate to qualitative pipeline (default 20)."""
@@ -28,6 +32,17 @@ def top_qualitative_markets() -> int:
         return max(1, int(raw))
     except ValueError:
         return 20
+
+
+def max_edge_research_refreshes() -> int:
+    """Cap edge-disqualification research refresh cycles per market (default 3)."""
+    raw = os.environ.get(EDGE_RESEARCH_REFRESH_MAX_ENV)
+    if not raw:
+        return DEFAULT_EDGE_RESEARCH_REFRESH_MAX
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return DEFAULT_EDGE_RESEARCH_REFRESH_MAX
 
 
 def runner_mode() -> str:
@@ -47,4 +62,6 @@ __all__ = [
     "runner_mode",
     "TOP_QUALITATIVE_MARKETS_ENV",
     "top_qualitative_markets",
+    "EDGE_RESEARCH_REFRESH_MAX_ENV",
+    "max_edge_research_refreshes",
 ]

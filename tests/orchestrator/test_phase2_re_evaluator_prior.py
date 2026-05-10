@@ -44,11 +44,16 @@ def test_phase2_passes_prior_filter_context_to_re_evaluator(monkeypatch, tmp_pat
             "confidence_multiplier": 1.0,
             "details": "ok",
             "error": None,
+            "retry_deep_research": False,
+            "refresh_reason": None,
         }
 
     market = MarketRow(market_id=market_id, market_title="T", market_data={})
-    phases.phase2_quantitative_routing(vault, [market], runner=fake_runner)
+    passed, refresh = phases.phase2_quantitative_routing(vault, [market], runner=fake_runner)
 
     assert captured["role"] == "re_evaluator"
+    assert captured["payload"]["review_kind"] == "quantitative"
     assert captured["payload"]["prior_filter_trigger"] == "volume_shock"
     assert captured["payload"]["prior_evaluator_details"] == "earlier pass"
+    assert captured["payload"]["prior_filter_log"] is None
+    assert passed and refresh == []

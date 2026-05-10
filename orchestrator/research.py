@@ -22,8 +22,11 @@ class ParsedResearch:
     frontmatter: dict[str, Any]
 
 
-def parse_deep_researcher_frontmatter(markdown: str) -> tuple[dict[str, Any], str]:
-    """Split a Deep Researcher markdown response into ``(frontmatter, body)``."""
+def split_yaml_frontmatter_markdown(markdown: str) -> tuple[dict[str, Any], str]:
+    """Split ``---`` YAML frontmatter from the following markdown body.
+
+    Generic helper for filter logs, research reports, directives, etc.
+    """
     match = _FRONTMATTER_RE.match(markdown.strip())
     if not match:
         raise ValueError("missing or invalid YAML frontmatter")
@@ -31,6 +34,14 @@ def parse_deep_researcher_frontmatter(markdown: str) -> tuple[dict[str, Any], st
     if not isinstance(fm_raw, dict):
         raise ValueError("frontmatter must parse to a mapping")
     return fm_raw, match.group("body").strip()
+
+
+def parse_deep_researcher_frontmatter(markdown: str) -> tuple[dict[str, Any], str]:
+    """Split a Deep Researcher markdown response into ``(frontmatter, body)``.
+
+    Alias for :func:`split_yaml_frontmatter_markdown` (same wire format).
+    """
+    return split_yaml_frontmatter_markdown(markdown)
 
 
 def parse_estimated_p_from_deep_researcher_frontmatter(markdown: str) -> float:
@@ -117,6 +128,7 @@ def parse_deep_researcher(markdown: str) -> ParsedResearch:
 
 __all__ = [
     "ParsedResearch",
+    "split_yaml_frontmatter_markdown",
     "parse_deep_researcher_frontmatter",
     "parse_estimated_p_from_deep_researcher_frontmatter",
     "parse_deep_researcher",

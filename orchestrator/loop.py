@@ -6,8 +6,9 @@ import logging
 import time
 
 from obsidian_utils import ObsidianManager
-from orchestrator.config import OVERSEER_INTERVAL_SEC, PIPELINE_INTERVAL_SEC
+from orchestrator.config import OVERSEER_INTERVAL_SEC, PIPELINE_INTERVAL_SEC, top_qualitative_markets
 from orchestrator.phases import (
+    merge_phase3_inputs,
     phase1_data_ingestion,
     phase2_quantitative_routing,
     phase3_qualitative_pipeline,
@@ -22,8 +23,11 @@ log = logging.getLogger(__name__)
 def run_pipeline_tick(vault: ObsidianManager) -> None:
     """Run a single phase 1 → 5 sweep over the scraper queue."""
     target_ids = phase1_data_ingestion(vault)
-    passed = phase2_quantitative_routing(vault, target_ids)
-    researched = phase3_qualitative_pipeline(vault, passed)
+    passed, edge_refresh = phase2_quantitative_routing(vault, target_ids)
+    merged = merge_phase3_inputs(
+        passed, edge_refresh, top_qualitative_markets()
+    )
+    researched = phase3_qualitative_pipeline(vault, merged)
     phase4_execution(vault, researched)
     phase5_resolution_and_post_mortem(vault)
 

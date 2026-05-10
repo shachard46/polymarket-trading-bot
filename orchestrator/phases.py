@@ -17,7 +17,7 @@ from typing import Any
 
 from obsidian_utils import ObsidianManager, VaultWriteError
 from orchestrator import scraper
-from orchestrator.config import PAPER_TRADE_MODE, top_qualitative_markets
+from orchestrator.config import PAPER_TRADE_MODE, max_edge_research_refreshes
 from orchestrator.dead_letter import (
     market_quarantine,
     quarantine_market,
@@ -30,7 +30,7 @@ from orchestrator.parse import (
     coerce_deep_researcher_markdown,
     parse_agent_json_or_yaml,
 )
-from orchestrator.research import parse_deep_researcher
+from orchestrator.research import parse_deep_researcher, split_yaml_frontmatter_markdown
 from orchestrator.runner import AgentRunner, spawn_agent
 
 log = logging.getLogger(__name__)
@@ -50,6 +50,80 @@ def _qualitative_rank_key(row: dict[str, Any]) -> tuple[float, str]:
         cm = 0.0
     mid = str(row.get("market_id") or "")
     return (-cm, mid)
+
+
+def _trade_log_has_nonempty_error(data: dict[str, Any]) -> bool:
+    err = data.get("error")
+    if err is None:
+        return False
+    return bool(str(err).strip())
+
+
+def _open_trade_shows_bet_not_edge_dq(data: dict[str, Any]) -> bool:
+    """True when an open trade log reflects a non-zero allocation path (bet placed)."""
+    if _trade_log_has_nonempty_error(data):
+        return False
+    bet = data.get("below_edge_threshold")
+    if bet is False:
+        return True
+    if bet is True:
+        return False
+    try:
+        return float(data.get("allocation_usd") or 0.0) > 0.0
+    except (TypeError, ValueError):
+        return False
+
+
+def _trade_log_shows_edge_disqualification(data: dict[str, Any]) -> bool:
+    """True when the last run hit the edge gate (no allocation due to score vs ``S_0``)."""
+    if _trade_log_has_nonempty_error(data):
+        return False
+    bet = data.get("below_edge_threshold")
+    if bet is True:
+        return True
+    if bet is False:
+        return False
+    try:
+        return float(data.get("allocation_usd") or 0.0) == 0.0
+    except (TypeError, ValueError):
+        return False
+
+
+def _read_edge_research_refresh_count(vault: ObsidianManager, market_id: str) -> int:
+    raw = vault.read_active_research(market_id)
+    if not raw:
+        return 0
+    try:
+        fm, _ = split_yaml_frontmatter_markdown(raw)
+    except ValueError:
+        return 0
+    try:
+        return int(fm.get("edge_research_refresh_count") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def merge_phase3_inputs(
+    primary: list[dict[str, Any]],
+    refresh_only: list[dict[str, Any]],
+    cap: int,
+) -> list[dict[str, Any]]:
+    """Merge primary quantitative passes with edge-refresh rows; dedupe by ``market_id``."""
+    by_id: dict[str, dict[str, Any]] = {}
+    for row in refresh_only:
+        by_id[str(row["market_id"])] = row
+    for row in primary:
+        by_id[str(row["market_id"])] = row
+    merged = list(by_id.values())
+    merged.sort(key=_qualitative_rank_key)
+    if len(merged) > cap:
+        log.info(
+            "[PHASE 2+3 queue] capping qualitative queue: %d -> %d (OPENCLAW_TOP_MARKETS)",
+            len(merged),
+            cap,
+        )
+        return merged[:cap]
+    return merged
 
 
 def _run_structured_agent(
@@ -99,33 +173,92 @@ def phase2_quantitative_routing(
     vault: ObsidianManager,
     target_markets: list[MarketRow],
     runner: AgentRunner = spawn_agent,
-) -> list[dict[str, Any]]:
-    """Filter markets through the (re-)Evaluator's quantitative skill."""
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Filter markets through the (re-)Evaluator; return ``(passed, edge_refresh_rows)``.
+
+    Caller merges with :func:`merge_phase3_inputs` and ``top_qualitative_markets()``.
+    """
     log.info("[PHASE 2] Quantitative routing")
     limit = scraper.trends_limit_for_filters()
     passed: list[dict[str, Any]] = []
+    edge_refresh: list[dict[str, Any]] = []
 
     for market in target_markets:
         market_id = market.market_id
         with market_quarantine(vault, market_id, "phase2"):
+            trade = vault.read_trade_log_dict(market_id)
+            if trade is not None and _open_trade_shows_bet_not_edge_dq(trade):
+                log.info(
+                    "[PHASE 2] skip %s: open trade log shows an active bet",
+                    market_id,
+                )
+                continue
+
             historic = scraper.get_market_trends(market_id, limit)
-            role = (
-                "re_evaluator"
-                if vault.active_research_path(market_id).exists()
-                else "evaluator"
-            )
-            payload: dict[str, Any] = {
-                "market_id": market_id,
-                "historic_market_data": historic,
-            }
-            if role == "re_evaluator":
+            has_active = vault.active_research_path(market_id).exists()
+
+            if (
+                has_active
+                and trade is not None
+                and _trade_log_shows_edge_disqualification(trade)
+            ):
+                cap_ref = max_edge_research_refreshes()
+                prev_edge = _read_edge_research_refresh_count(vault, market_id)
+                if prev_edge >= cap_ref:
+                    log.info(
+                        "[PHASE 2] skip edge research refresh for %s (cap %s)",
+                        market_id,
+                        cap_ref,
+                    )
+                    continue
+
+                prior_full = vault.read_filter_log(market_id)
+                research_md = vault.read_active_research(market_id) or ""
+                prior_trigger = prior_full.get("trigger") if prior_full else None
+                prior_details = prior_full.get("details") if prior_full else None
+                payload_re: dict[str, Any] = {
+                    "market_id": market_id,
+                    "review_kind": "edge_research_refresh",
+                    "historic_market_data": historic,
+                    "prior_filter_trigger": prior_trigger,
+                    "prior_evaluator_details": prior_details,
+                    "prior_filter_log": prior_full,
+                    "research_markdown": research_md,
+                    "trade_log": trade,
+                }
+                parsed_re, reason_re = _run_structured_agent(
+                    runner, "re_evaluator", payload_re
+                )
+                if reason_re:
+                    quarantine_market(
+                        vault, market_id, reason_re, parsed_re or payload_re
+                    )
+                    continue
+                if parsed_re.get("retry_deep_research"):
+                    row_er = market.model_dump()
+                    row_er["evaluator_output"] = parsed_re
+                    row_er["_edge_research_refresh"] = True
+                    edge_refresh.append(row_er)
+                continue
+
+            role = "re_evaluator" if has_active else "evaluator"
+            if role == "evaluator":
+                payload: dict[str, Any] = {
+                    "market_id": market_id,
+                    "historic_market_data": historic,
+                }
+            else:
                 prior = vault.read_filter_log(market_id)
-                if prior:
-                    payload["prior_filter_trigger"] = prior.get("trigger")
-                    payload["prior_evaluator_details"] = prior.get("details")
-                else:
-                    payload["prior_filter_trigger"] = None
-                    payload["prior_evaluator_details"] = None
+                payload = {
+                    "market_id": market_id,
+                    "review_kind": "quantitative",
+                    "historic_market_data": historic,
+                    "prior_filter_trigger": prior.get("trigger") if prior else None,
+                    "prior_evaluator_details": prior.get("details") if prior else None,
+                    "prior_filter_log": None,
+                    "research_markdown": None,
+                    "trade_log": None,
+                }
 
             parsed, reason = _run_structured_agent(runner, role, payload)
             if reason:
@@ -150,17 +283,12 @@ def phase2_quantitative_routing(
             passed.append(row)
 
     passed.sort(key=_qualitative_rank_key)
-    cap = top_qualitative_markets()
-    if len(passed) > cap:
-        log.info(
-            "[PHASE 2] capping qualitative queue: %d -> %d (OPENCLAW_TOP_MARKETS)",
-            len(passed),
-            cap,
-        )
-        passed = passed[:cap]
-
-    log.info("[PHASE 2] passed_markets count=%d", len(passed))
-    return passed
+    log.info(
+        "[PHASE 2] passed_markets count=%d edge_refresh_rows=%d",
+        len(passed),
+        len(edge_refresh),
+    )
+    return passed, edge_refresh
 
 
 # ---------------------------------------------------------------------------
@@ -250,10 +378,18 @@ def _research_market(
         )
         return None
 
+    from_edge = bool(row.get("_edge_research_refresh"))
+    edge_count = (
+        _read_edge_research_refresh_count(vault, market_id) + 1
+        if from_edge
+        else 0
+    )
+
     payload = {
         "market_id": market_id,
         "estimated_p": research.estimated_p,
         "error": None,
+        "edge_research_refresh_count": edge_count,
     }
     if not vault_write_or_quarantine(
         vault=vault,
@@ -417,6 +553,7 @@ def phase6_macro_learning_loop(
 __all__ = [
     "phase1_data_ingestion",
     "phase2_quantitative_routing",
+    "merge_phase3_inputs",
     "phase3_qualitative_pipeline",
     "phase4_execution",
     "phase5_resolution_and_post_mortem",

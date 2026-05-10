@@ -76,3 +76,38 @@ def test_stub_error_deep_researcher_carries_error_in_frontmatter(monkeypatch):
     )
     research = parse_deep_researcher(out)
     assert research.error == "stub_error mode"
+
+
+def test_stub_re_evaluator_returns_refresh_fields():
+    out = runner.spawn_agent(
+        "re_evaluator",
+        {
+            "market_id": "0xabc",
+            "review_kind": "quantitative",
+            "historic_market_data": [],
+            "prior_filter_trigger": None,
+            "prior_evaluator_details": None,
+            "prior_filter_log": None,
+            "research_markdown": None,
+            "trade_log": None,
+        },
+    )
+    parsed = out if isinstance(out, dict) else parse_agent_json_or_yaml(out)
+    assert parsed["retry_deep_research"] is False
+    assert parsed["refresh_reason"] is None
+
+
+def test_stub_executioner_includes_allocation_tool_fields():
+    out = runner.spawn_agent(
+        "executioner",
+        {
+            "market_id": "0xabc",
+            "p_value": 0.5,
+            "market_data": {},
+            "paper_trade_mode": True,
+        },
+    )
+    parsed = out if isinstance(out, dict) else parse_agent_json_or_yaml(out)
+    assert parsed["score"] == 0.0
+    assert parsed["below_edge_threshold"] is True
+    assert parsed["allocation_usd"] == 0.0

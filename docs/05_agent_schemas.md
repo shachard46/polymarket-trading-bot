@@ -4,11 +4,28 @@ This document defines exactly _how_ agents behave and their strict JSON/YAML bou
 
 ## 1. The Evaluator & Re-Evaluator
 
-- **System Prompt:** Evaluator: first-time quantitative gate. Re-Evaluator: same tool contract when Active Research already exists; may receive prior filter log fields for narrative continuity.
+- **System Prompt:** Evaluator: first-time quantitative gate. Re-Evaluator: same `evaluate_market_metrics` contract when Active Research already exists; may receive prior filter fields, full prior filter log, active research markdown, and trade log for **`edge_research_refresh`** mode (edge-disqualified trade) to decide whether to enqueue another Deep Researcher pass.
 - **Input Schema — Evaluator:** `{"market_id": "string", "historic_market_data": "list[dict]"}`
-- **Input Schema — Re-Evaluator:** `{"market_id": "string", "historic_market_data": "list[dict]", "prior_filter_trigger": "string | null", "prior_evaluator_details": "string | null"}` (prior values come from `01_Filters/{market_id}.md` when present).
+- **Input Schema — Re-Evaluator:** `{"market_id": "string", "review_kind": "string", "historic_market_data": "list[dict]", "prior_filter_trigger": "string | null", "prior_evaluator_details": "string | null", "prior_filter_log": "dict | null", "research_markdown": "string | null", "trade_log": "dict | null"}` — for `review_kind: "quantitative"`, the Orchestrator sets the last three keys to `null`. For `review_kind: "edge_research_refresh"`, it populates filter log, active research markdown, and the open trade JSON (including `below_edge_threshold` when present).
   - `historic_market_data` is sourced by the Orchestrator via `poly-scan get_market_trends <market_id>` (newest-first from the scraper; reversed to oldest-first before calling the skill). Each dict: `{"datetime", "yes_price", "no_price", "volume", "liquidity", "last_trade_price", "midpoint", "spread"}`.
-- **Output Schema (Success/No-Op):**
+- **Output Schema (Re-Evaluator):**
+
+```json
+  {
+    "market_id": "string",
+    "passed": boolean,
+    "trigger": "string | null",
+    "confidence_multiplier": float,
+    "details": "string",
+    "error": "string | null",
+    "retry_deep_research": boolean,
+    "refresh_reason": "string | null"
+  }
+
+
+```
+
+- **Output Schema (Evaluator — unchanged):**
 
 ```json
   {
@@ -73,6 +90,8 @@ error: "string | null"
 {
   "market_id": "string",
   "allocation_usd": float,
+  "score": "float | null",
+  "below_edge_threshold": "boolean | null",
   "executed": boolean,
   "transaction_hash": "string | null",
   "error": "string | null"

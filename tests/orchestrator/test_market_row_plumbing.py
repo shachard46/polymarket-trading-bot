@@ -67,7 +67,8 @@ def test_phase2_forwards_full_market_row_to_phase3(monkeypatch, vault):
             "error": None,
         }
 
-    rows = phases.phase2_quantitative_routing(vault, [market], runner=evaluator_runner)
+    passed, refresh = phases.phase2_quantitative_routing(vault, [market], runner=evaluator_runner)
+    rows = phases.merge_phase3_inputs(passed, refresh, 100)
     assert len(rows) == 1
     forwarded = rows[0]
     assert forwarded["market_id"] == "0xabc"

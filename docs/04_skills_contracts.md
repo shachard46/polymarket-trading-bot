@@ -40,7 +40,7 @@ description: Deterministic math engine. Use this to calculate the exact USD allo
 ```
 
 * **Input Schema:** `{"p": float, "q": float, "D": int, "L": float, "V": float}`
-* **Output Schema:** `{"allocation_usd": float, "score": float, "error": str | null}`
+* **Output Schema:** `{"allocation_usd": float, "score": float, "below_edge_threshold": bool | null, "error": str | null}` — `below_edge_threshold` is `true` when the score is at or below the minimum edge threshold `S_0` (no allocation for that reason), `false` when above threshold, and `null` when the score could not be computed (same cases as a non-null `error`).
 
 ## 4. Skill: execute_polymarket_trade
 

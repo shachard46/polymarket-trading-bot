@@ -10,9 +10,11 @@ This document defines _what_ happens and _where_ data moves. Do not implement ag
 ## 2. Quantitative Routing
 
 - **Action:** Orchestrator iterates over `target_market_ids`.
-  - For each market: load trend history from the scraper DB via `poly-scan get_market_trends <market_id> --limit N` (choose `N` to cover at least `breakout_time_window_hrs` and `low_liquidity_dead_window_hrs` from `FILTERS`). Reverse the newest-first result to oldest-first.
-  - Pass `historic_market_data` to `evaluate_market_metrics`. Both **Evaluator** (new markets) and **Re-Evaluator** (markets already in `/02_Active_Research/`) use this same series-based input; deltas are computed inside the skill, not from Obsidian baselines.
-- **State:** Filters output to `passed_markets: list[dict]`.
+  - If an **open** trade log in `/03_Trades/` shows a **bet** (not edge-disqualified: `below_edge_threshold` is false, or legacy `allocation_usd` > 0 with no error), **skip** quantitative routing for that market on this tick.
+  - Otherwise: load trend history from the scraper DB via `poly-scan get_market_trends <market_id> --limit N` (choose `N` to cover at least `breakout_time_window_hrs` and `low_liquidity_dead_window_hrs` from `FILTERS`). Reverse the newest-first result to oldest-first.
+  - Pass `historic_market_data` to `evaluate_market_metrics` via **Evaluator** (no active research) or **Re-Evaluator** (`review_kind: quantitative` when active research exists and the trade log is not edge-only disqualified).
+  - If active research exists and the open trade log is **edge-disqualified** (`below_edge_threshold` true, or legacy zero allocation with no error), spawn **Re-Evaluator** with `review_kind: edge_research_refresh`, prior filter log, research markdown, and trade JSON; on `retry_deep_research`, enqueue a qualitative row without rewriting the filter log (subject to a cap on `edge_research_refresh_count` in research frontmatter).
+- **State:** Primary quantitative passes plus edge-refresh rows are **merged** (primary wins on duplicate `market_id`), sorted by evaluator confidence, then capped with `OPENCLAW_TOP_MARKETS` before Phase 3.
 
 ## 3. Qualitative Pipeline
 

@@ -35,10 +35,13 @@ class CalculateTradeAllocationInput(BaseModel):
 
 
 class CalculateTradeAllocationOutput(BaseModel):
+    """``below_edge_threshold`` is ``True`` iff ``S <= S_0`` (edge gate); ``None`` on tool error."""
+
     model_config = ConfigDict(extra="forbid")
 
     allocation_usd: float
     score: float
+    below_edge_threshold: bool | None
     error: str | None
 
 
@@ -67,17 +70,20 @@ def calculate_trade_allocation(
         S = time_adj * B_rarity - P_exec
 
         # Step 6: bankroll fraction → USD allocation
-        f = 0.0 if S <= S_0 else min(F_MAX, ALPHA * (S - S_0))
+        below_edge = S <= S_0
+        f = 0.0 if below_edge else min(F_MAX, ALPHA * (S - S_0))
         allocation_usd = f * BANKROLL_USD
 
         return CalculateTradeAllocationOutput(
             allocation_usd=allocation_usd,
             score=S,
+            below_edge_threshold=below_edge,
             error=None,
         )
     except Exception as exc:
         return CalculateTradeAllocationOutput(
             allocation_usd=0.0,
             score=0.0,
+            below_edge_threshold=None,
             error=str(exc),
         )

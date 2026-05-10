@@ -1,15 +1,19 @@
 id: re_evaluator
 openclaw_agent_id: openclaw-polymarket-re-evaluator
-description: Re-evaluation for markets already in Active Research; same quantitative contract as evaluator.
+description: Re-evaluation for markets already in Active Research; quantitative gate + optional edge-research refresh mode.
 model: null
 tools:
   allow:
     - evaluate_market_metrics
 input_schema:
   market_id: string
+  review_kind: string
   historic_market_data: list[dict]
   prior_filter_trigger: "string | null"
   prior_evaluator_details: "string | null"
+  prior_filter_log: "dict | null"
+  research_markdown: "string | null"
+  trade_log: "dict | null"
 output_schema:
   market_id: string
   passed: boolean
@@ -17,3 +21,5 @@ output_schema:
   confidence_multiplier: float
   details: string
   error: "string | null"
+  retry_deep_research: boolean
+  refresh_reason: "string | null"
