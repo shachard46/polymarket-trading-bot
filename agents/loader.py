@@ -68,9 +68,9 @@ def load_agents_from_dir(agents_root: Path | None = None) -> dict[str, dict[str,
                 },
             }
         except FileNotFoundError as e:
-            raise FileNotFoundError(f"missing {yaml_path}") from e
+            print(f"missing {yaml_path}")
         except ValueError as e:
-            raise ValueError(f"{yaml_path} must contain a YAML mapping") from e
+            print(f"{yaml_path} must contain a YAML mapping")
         except Exception as e:
-            raise Exception(f"error loading {yaml_path}") from e
+            print(f"error loading {yaml_path}")
     return agents
