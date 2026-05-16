@@ -10,6 +10,7 @@ from config.trading_constants import (
     PAPER_TRADE_MODE,
     PIPELINE_INTERVAL_SEC,
 )
+from config.vault import VAULT_PATH_ENV, resolve_vault_base
 
 # Execution mode for the OpenClaw runner. "stub" prints + returns empty so the
 # DLQ path is exercised in CI without a live gateway; "live" calls the SDK.
@@ -64,4 +65,6 @@ __all__ = [
     "top_qualitative_markets",
     "EDGE_RESEARCH_REFRESH_MAX_ENV",
     "max_edge_research_refreshes",
+    "VAULT_PATH_ENV",
+    "resolve_vault_base",
 ]

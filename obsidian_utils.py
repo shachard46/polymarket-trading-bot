@@ -27,6 +27,7 @@ from config.trading_constants import (
     S_0,
     VAULT_PATHS,
 )
+from config.vault import resolve_vault_base
 
 # ---------------------------------------------------------------------------
 # Error contract
@@ -204,15 +205,13 @@ class ObsidianManager:
     Parameters
     ----------
     vault_base:
-        Root of the Vault on disk.  All ``VAULT_PATHS`` subdirectories are
-        resolved relative to this.  Defaults to a ``Vault/`` folder next to
-        this file so the project layout mirrors the architecture doc.
+        Workspace root on disk.  All ``VAULT_PATHS`` entries (e.g.
+        ``Vault/00_System/``) are resolved relative to this.  When omitted,
+        uses :envvar:`OPENCLAW_VAULT_PATH` if set, otherwise the project root.
     """
 
     def __init__(self, vault_base: str | Path | None = None) -> None:
-        if vault_base is None:
-            vault_base = Path(__file__).parent / "Vault"
-        self._base = Path(vault_base).resolve()
+        self._base = resolve_vault_base(vault_base)
         self._dirs: dict[str, Path] = {
             key: self._base / Path(rel_path)
             for key, rel_path in VAULT_PATHS.items()
