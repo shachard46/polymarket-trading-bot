@@ -1,5 +1,5 @@
 id: deep_researcher
-openclaw_agent_id: openclaw-polymarket-deep-researcher
+openclaw_agent_id: polymarket-deep-researcher
 description: Fundamental analyst; AIQ-backed bull/bear theses and estimated_p.
 model: null
 tools:

@@ -1,5 +1,5 @@
 id: briefer
-openclaw_agent_id: openclaw-polymarket-briefer
+openclaw_agent_id: polymarket-briefer
 description: News context aggregator via search_market_context.
 model: null
 tools:

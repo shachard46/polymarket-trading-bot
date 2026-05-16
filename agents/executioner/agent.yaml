@@ -1,5 +1,5 @@
 id: executioner
-openclaw_agent_id: openclaw-polymarket-executioner
+openclaw_agent_id: polymarket-executioner
 description: Deterministic executor; calculate_trade_allocation then optional execute_polymarket_trade.
 model: null
 tools:

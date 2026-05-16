@@ -1,5 +1,5 @@
 id: re_evaluator
-openclaw_agent_id: openclaw-polymarket-re-evaluator
+openclaw_agent_id: polymarket-re-evaluator
 description: Re-evaluation for markets already in Active Research; quantitative gate + optional edge-research refresh mode.
 model: null
 tools:

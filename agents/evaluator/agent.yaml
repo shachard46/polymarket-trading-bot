@@ -1,5 +1,5 @@
 id: evaluator
-openclaw_agent_id: openclaw-polymarket-evaluator
+openclaw_agent_id: polymarket-evaluator
 description: Quantitative gatekeeper; runs evaluate_market_metrics on chronological market series.
 model: null
 tools:

@@ -1,5 +1,5 @@
 id: post_mortem_analyst
-openclaw_agent_id: openclaw-polymarket-post-mortem
+openclaw_agent_id: polymarket-post-mortem
 description: Retrospective analyst; no tools; JSON output only.
 model: null
 tools:
