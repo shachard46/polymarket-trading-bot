@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any, Callable, Protocol
 
 from agents import AGENTS
@@ -260,17 +261,49 @@ def _spawn_live(role: str, spec: dict[str, Any], payload: dict[str, Any]) -> Any
     if not agent_id:
         raise RuntimeError(f"agent '{role}' has no openclaw_agent_id in agent.yaml")
 
-    # Imported lazily so stub-mode CI does not require the SDK installed.
-    from openclaw import OpenClawClient  # type: ignore[import-not-found]
+    api_key = os.environ.get("CMDOP_API_KEY") or os.environ.get("OPENCLAW_API_KEY")
+    if not api_key:
+        raise RuntimeError("live runner requires CMDOP_API_KEY or OPENCLAW_API_KEY")
 
-    client = OpenClawClient()
+    # Import the underlying SDK directly. The OpenClaw wrapper currently imports
+    # a removed cmdop.exceptions.TimeoutError symbol in recent cmdop releases.
+    from cmdop import CMDOPClient  # type: ignore[import-not-found]
+
+    client = CMDOPClient.remote(api_key=api_key, agent_id=agent_id)
     log.info("[LIVE] spawn role=%s openclaw_agent_id=%s", role, agent_id)
-    result = client.get_agent(agent_id).execute(input=payload)
-    # SDK returns either a raw string completion or an object exposing one;
-    # accept both shapes here so phases can stay agnostic.
-    if hasattr(result, "output"):
-        return result.output
+    prompt = _build_live_prompt(role, spec, payload)
+    output_model = None if spec.get("output_is_markdown") else spec.get("output_model")
+    result = client.agent.run(prompt, output_model=output_model)
+    if getattr(result, "success", True) is False:
+        raise RuntimeError(getattr(result, "error", "") or f"{role} agent run failed")
+    # SDK returns structured data when output_model is supplied; keep callers
+    # agnostic by returning the parsed dict when available, otherwise raw text.
+    data = getattr(result, "data", None)
+    if data is not None:
+        if hasattr(data, "model_dump"):
+            return data.model_dump()
+        return data
+    output_json = getattr(result, "output_json", "")
+    if output_json:
+        return output_json
+    if hasattr(result, "text"):
+        return result.text
     return result
+
+
+def _build_live_prompt(role: str, spec: dict[str, Any], payload: dict[str, Any]) -> str:
+    """Serialize the orchestrator payload for the remote agent workspace."""
+    response_hint = (
+        "Return only the Markdown document required by your output contract."
+        if spec.get("output_is_markdown")
+        else "Return only JSON/YAML matching your output schema."
+    )
+    return (
+        f"Run the {role} agent for this orchestrator payload.\n\n"
+        f"{response_hint}\n\n"
+        "Input JSON:\n"
+        f"{json.dumps(payload, indent=2, sort_keys=True, default=str)}"
+    )
 
 
 __all__ = ["AgentRunner", "STUB_RESPONSES", "spawn_agent"]

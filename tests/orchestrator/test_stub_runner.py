@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import sys
+import types
+
 import pytest
 
 from orchestrator import runner
-from orchestrator.config import RUNNER_MODE_ENV
+from orchestrator.config import RUNNER_MODE_ENV, RUNNER_MODE_LIVE
 from orchestrator.parse import agent_error_reason, parse_agent_json_or_yaml
 from orchestrator.research import parse_deep_researcher
 
@@ -111,3 +114,55 @@ def test_stub_executioner_includes_allocation_tool_fields():
     assert parsed["score"] == 0.0
     assert parsed["below_edge_threshold"] is True
     assert parsed["allocation_usd"] == 0.0
+
+
+def test_live_runner_uses_cmdop_directly(monkeypatch):
+    calls = {}
+
+    class FakeAgent:
+        def run(self, prompt, output_model=None):
+            calls["prompt"] = prompt
+            calls["output_model"] = output_model
+            data = output_model(
+                market_id="0xabc",
+                passed=False,
+                trigger=None,
+                confidence_multiplier=1.0,
+                details="live fake",
+                error=None,
+            )
+            return types.SimpleNamespace(success=True, data=data, output_json="", text="")
+
+    class FakeCMDOPClient:
+        def __init__(self):
+            self.agent = FakeAgent()
+
+        @classmethod
+        def remote(cls, api_key, agent_id):
+            calls["api_key"] = api_key
+            calls["agent_id"] = agent_id
+            return cls()
+
+    monkeypatch.setenv(RUNNER_MODE_ENV, RUNNER_MODE_LIVE)
+    monkeypatch.setenv("CMDOP_API_KEY", "cmdop_test")
+    monkeypatch.setitem(
+        sys.modules,
+        "cmdop",
+        types.SimpleNamespace(CMDOPClient=FakeCMDOPClient),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "openclaw",
+        types.SimpleNamespace(_should_not_be_used=True),
+    )
+
+    out = runner.spawn_agent(
+        "evaluator",
+        {"market_id": "0xabc", "historic_market_data": []},
+    )
+
+    assert out["details"] == "live fake"
+    assert calls["api_key"] == "cmdop_test"
+    assert calls["agent_id"] == "polymarket-evaluator"
+    assert "Input JSON" in calls["prompt"]
+    assert calls["output_model"] is not None

@@ -2,4 +2,5 @@
 # Skill-specific dependencies live alongside each skill (e.g. skills/market-scraper/requirements.txt).
 pydantic>=2.6
 PyYAML>=6.0
-openclaw>=2026.2.24
+cmdop>=2026.4.7.2
+tenacity>=8.0
