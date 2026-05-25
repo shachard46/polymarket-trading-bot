@@ -116,7 +116,7 @@ def test_stub_executioner_includes_allocation_tool_fields():
     assert parsed["allocation_usd"] == 0.0
 
 
-def test_live_runner_uses_cmdop_directly(monkeypatch):
+def test_live_runner_calls_local_cmdop(monkeypatch):
     calls = {}
 
     class FakeAgent:
@@ -138,22 +138,14 @@ def test_live_runner_uses_cmdop_directly(monkeypatch):
             self.agent = FakeAgent()
 
         @classmethod
-        def remote(cls, api_key, agent_id):
-            calls["api_key"] = api_key
-            calls["agent_id"] = agent_id
+        def local(cls):
             return cls()
 
     monkeypatch.setenv(RUNNER_MODE_ENV, RUNNER_MODE_LIVE)
-    monkeypatch.setenv("CMDOP_API_KEY", "cmdop_test")
     monkeypatch.setitem(
         sys.modules,
         "cmdop",
         types.SimpleNamespace(CMDOPClient=FakeCMDOPClient),
-    )
-    monkeypatch.setitem(
-        sys.modules,
-        "openclaw",
-        types.SimpleNamespace(_should_not_be_used=True),
     )
 
     out = runner.spawn_agent(
@@ -162,7 +154,6 @@ def test_live_runner_uses_cmdop_directly(monkeypatch):
     )
 
     assert out["details"] == "live fake"
-    assert calls["api_key"] == "cmdop_test"
-    assert calls["agent_id"] == "polymarket-evaluator"
+    assert "OpenClaw agent id: polymarket-evaluator" in calls["prompt"]
     assert "Input JSON" in calls["prompt"]
     assert calls["output_model"] is not None

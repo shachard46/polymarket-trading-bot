@@ -12,23 +12,19 @@ environment variable:
   per role so CI can exercise the *success* path without a live gateway.
 - ``stub_error``     — returns an explicit ``{"error": ...}`` payload so CI
   can exercise the DLQ failure path.
-- ``live``           — calls the OpenClaw Python SDK using the
-  ``openclaw_agent_id`` declared in each agent's ``agent.yaml``.
+- ``live``           — calls the local CMDOP/OpenClaw gateway via
+  :func:`CMDOPClient.local`, using each agent's ``openclaw_agent_id`` from
+  ``agent.yaml``.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import os
 from typing import Any, Callable, Protocol
 
 from agents import AGENTS
-from orchestrator.config import (
-    RUNNER_MODE_LIVE,
-    RUNNER_MODE_STUB_ERROR,
-    runner_mode,
-)
+from orchestrator.config import RUNNER_MODE_LIVE, RUNNER_MODE_STUB_ERROR, runner_mode
 from orchestrator.parse import (
     AgentOutputParseError,
     coerce_deep_researcher_markdown,
@@ -261,28 +257,23 @@ def _spawn_live(role: str, spec: dict[str, Any], payload: dict[str, Any]) -> Any
     if not agent_id:
         raise RuntimeError(f"agent '{role}' has no openclaw_agent_id in agent.yaml")
 
-    api_key = os.environ.get("CMDOP_API_KEY") or os.environ.get("OPENCLAW_API_KEY")
-    if not api_key:
-        raise RuntimeError("live runner requires CMDOP_API_KEY or OPENCLAW_API_KEY")
-
-    # Import the underlying SDK directly. The OpenClaw wrapper currently imports
-    # a removed cmdop.exceptions.TimeoutError symbol in recent cmdop releases.
     from cmdop import CMDOPClient  # type: ignore[import-not-found]
 
-    client = CMDOPClient.remote(api_key=api_key, agent_id=agent_id)
     log.info("[LIVE] spawn role=%s openclaw_agent_id=%s", role, agent_id)
-    prompt = _build_live_prompt(role, spec, payload)
+    client = CMDOPClient.local()
+    prompt = _build_live_prompt(role, spec, payload, agent_id=agent_id)
     output_model = None if spec.get("output_is_markdown") else spec.get("output_model")
     result = client.agent.run(prompt, output_model=output_model)
+    return _unwrap_agent_result(role, result)
+
+
+def _unwrap_agent_result(role: str, result: Any) -> Any:
+    """Normalize CMDOP ``AgentResult`` to the dict/str shape phases expect."""
     if getattr(result, "success", True) is False:
         raise RuntimeError(getattr(result, "error", "") or f"{role} agent run failed")
-    # SDK returns structured data when output_model is supplied; keep callers
-    # agnostic by returning the parsed dict when available, otherwise raw text.
     data = getattr(result, "data", None)
     if data is not None:
-        if hasattr(data, "model_dump"):
-            return data.model_dump()
-        return data
+        return data.model_dump() if hasattr(data, "model_dump") else data
     output_json = getattr(result, "output_json", "")
     if output_json:
         return output_json
@@ -291,15 +282,24 @@ def _spawn_live(role: str, spec: dict[str, Any], payload: dict[str, Any]) -> Any
     return result
 
 
-def _build_live_prompt(role: str, spec: dict[str, Any], payload: dict[str, Any]) -> str:
-    """Serialize the orchestrator payload for the remote agent workspace."""
+def _build_live_prompt(
+    role: str,
+    spec: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    agent_id: str | None = None,
+) -> str:
+    """Serialize the orchestrator payload for the target OpenClaw workspace."""
     response_hint = (
         "Return only the Markdown document required by your output contract."
         if spec.get("output_is_markdown")
         else "Return only JSON/YAML matching your output schema."
     )
+    header = f"Run the {role} agent for this orchestrator payload."
+    if agent_id:
+        header = f"{header}\nOpenClaw agent id: {agent_id}"
     return (
-        f"Run the {role} agent for this orchestrator payload.\n\n"
+        f"{header}\n\n"
         f"{response_hint}\n\n"
         "Input JSON:\n"
         f"{json.dumps(payload, indent=2, sort_keys=True, default=str)}"
