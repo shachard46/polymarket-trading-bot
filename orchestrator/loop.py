@@ -6,7 +6,14 @@ import logging
 import time
 
 from obsidian_utils import ObsidianManager
-from orchestrator.config import OVERSEER_INTERVAL_SEC, PIPELINE_INTERVAL_SEC, top_qualitative_markets
+from orchestrator.config import (
+    OVERSEER_INTERVAL_SEC,
+    PIPELINE_INTERVAL_SEC,
+    RUNNER_MODE_LIVE,
+    runner_mode,
+    top_qualitative_markets,
+)
+from orchestrator.openclaw_cli import require_gateway
 from orchestrator.phases import (
     merge_phase3_inputs,
     phase1_data_ingestion,
@@ -34,6 +41,9 @@ def run_pipeline_tick(vault: ObsidianManager) -> None:
 
 def run_forever(vault: ObsidianManager | None = None) -> None:
     """Run the orchestrator forever — phase 1-5 every tick, phase 6 on cadence."""
+    if runner_mode() == RUNNER_MODE_LIVE:
+        require_gateway()
+
     vault = vault or ObsidianManager()
     if vault.cold_start_protocol():
         log.info("Cold start: wrote seed active_directives.md")

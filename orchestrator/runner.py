@@ -12,8 +12,8 @@ environment variable:
   per role so CI can exercise the *success* path without a live gateway.
 - ``stub_error``     — returns an explicit ``{"error": ...}`` payload so CI
   can exercise the DLQ failure path.
-- ``live``           — calls the local CMDOP/OpenClaw gateway via
-  :func:`CMDOPClient.local`, using each agent's ``openclaw_agent_id`` from
+- ``live``           — calls the local OpenClaw Gateway through the
+  ``openclaw agent`` CLI, using each agent's ``openclaw_agent_id`` from
   ``agent.yaml``.
 """
 
@@ -30,6 +30,7 @@ from orchestrator.parse import (
     coerce_deep_researcher_markdown,
     parse_agent_json_or_yaml,
 )
+from orchestrator.openclaw_cli import extract_agent_text, run_agent
 from orchestrator.research import parse_deep_researcher
 from orchestrator.schema_validation import AgentSchemaError, validate_payload
 
@@ -257,29 +258,23 @@ def _spawn_live(role: str, spec: dict[str, Any], payload: dict[str, Any]) -> Any
     if not agent_id:
         raise RuntimeError(f"agent '{role}' has no openclaw_agent_id in agent.yaml")
 
-    from cmdop import CMDOPClient  # type: ignore[import-not-found]
-
     log.info("[LIVE] spawn role=%s openclaw_agent_id=%s", role, agent_id)
-    client = CMDOPClient.local()
     prompt = _build_live_prompt(role, spec, payload, agent_id=agent_id)
-    output_model = None if spec.get("output_is_markdown") else spec.get("output_model")
-    result = client.agent.run(prompt, output_model=output_model)
-    return _unwrap_agent_result(role, result)
+    result = run_agent(
+        agent_id,
+        prompt,
+        session_key=_live_session_key(agent_id, payload),
+    )
+    return extract_agent_text(result)
 
 
-def _unwrap_agent_result(role: str, result: Any) -> Any:
-    """Normalize CMDOP ``AgentResult`` to the dict/str shape phases expect."""
-    if getattr(result, "success", True) is False:
-        raise RuntimeError(getattr(result, "error", "") or f"{role} agent run failed")
-    data = getattr(result, "data", None)
-    if data is not None:
-        return data.model_dump() if hasattr(data, "model_dump") else data
-    output_json = getattr(result, "output_json", "")
-    if output_json:
-        return output_json
-    if hasattr(result, "text"):
-        return result.text
-    return result
+def _live_session_key(agent_id: str, payload: dict[str, Any]) -> str:
+    """Scope OpenClaw transcript state to one market per agent."""
+    raw_market_id = str(payload.get("market_id") or "global")
+    safe_market_id = "".join(
+        char if char.isalnum() or char in "._-" else "-" for char in raw_market_id
+    )
+    return f"agent:{agent_id}:orch-{safe_market_id}"
 
 
 def _build_live_prompt(

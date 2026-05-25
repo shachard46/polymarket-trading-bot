@@ -2,9 +2,9 @@
 
 ## 1. Core Infrastructure
 
-- **Framework:** Python backend utilizing the OpenClaw framework (version 2026.2.24).
+- **Framework:** Python backend utilizing the local OpenClaw Gateway via the `openclaw` CLI.
 - **Design Pattern:** Hub-and-Spoke. The central Orchestrator (`main.py`) controls execution flow. Agents are strictly ephemeral functions.
-- **Lifecycle:** Orchestrator creates JSON input -> Spawns Agent -> Agent executes Tools -> Agent returns JSON -> Orchestrator kills Agent and parses output.
+- **Lifecycle:** Orchestrator creates JSON input -> invokes `openclaw agent --agent <id>` -> Agent executes Tools -> Agent returns JSON or Markdown -> Orchestrator parses output.
 - **Tooling:** Agents do not perform math, execute API calls natively, or manage state. They must use the deterministic Python tools defined in `04_skills_contracts.md`.
 - **Quantitative inputs:** Market history for `evaluate_market_metrics` is loaded by the Orchestrator from the polymarket-scraper's local SQLite DB (`poly-scan get_market_trends`). Agents never query the scraper directly.
 

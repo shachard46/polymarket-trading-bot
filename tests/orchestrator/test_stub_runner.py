@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import sys
-import types
-
 import pytest
 
 from orchestrator import runner
@@ -116,44 +113,66 @@ def test_stub_executioner_includes_allocation_tool_fields():
     assert parsed["allocation_usd"] == 0.0
 
 
-def test_live_runner_calls_local_cmdop(monkeypatch):
+def test_live_runner_invokes_openclaw_cli(monkeypatch):
     calls = {}
 
-    class FakeAgent:
-        def run(self, prompt, output_model=None):
-            calls["prompt"] = prompt
-            calls["output_model"] = output_model
-            data = output_model(
-                market_id="0xabc",
-                passed=False,
-                trigger=None,
-                confidence_multiplier=1.0,
-                details="live fake",
-                error=None,
-            )
-            return types.SimpleNamespace(success=True, data=data, output_json="", text="")
-
-    class FakeCMDOPClient:
-        def __init__(self):
-            self.agent = FakeAgent()
-
-        @classmethod
-        def local(cls):
-            return cls()
+    def fake_run_agent(agent_id, message, *, session_key, timeout=None):
+        calls["agent_id"] = agent_id
+        calls["message"] = message
+        calls["session_key"] = session_key
+        calls["timeout"] = timeout
+        return {
+            "payloads": [
+                {
+                    "text": (
+                        '{"market_id":"0xabc","passed":false,"trigger":null,'
+                        '"confidence_multiplier":1.0,"details":"live fake",'
+                        '"error":null}'
+                    )
+                }
+            ]
+        }
 
     monkeypatch.setenv(RUNNER_MODE_ENV, RUNNER_MODE_LIVE)
-    monkeypatch.setitem(
-        sys.modules,
-        "cmdop",
-        types.SimpleNamespace(CMDOPClient=FakeCMDOPClient),
-    )
+    monkeypatch.setattr(runner, "run_agent", fake_run_agent)
 
     out = runner.spawn_agent(
         "evaluator",
         {"market_id": "0xabc", "historic_market_data": []},
     )
 
-    assert out["details"] == "live fake"
-    assert "OpenClaw agent id: polymarket-evaluator" in calls["prompt"]
-    assert "Input JSON" in calls["prompt"]
-    assert calls["output_model"] is not None
+    parsed = parse_agent_json_or_yaml(out)
+    assert parsed["details"] == "live fake"
+    assert calls["agent_id"] == "polymarket-evaluator"
+    assert calls["session_key"] == "agent:polymarket-evaluator:orch-0xabc"
+    assert "OpenClaw agent id: polymarket-evaluator" in calls["message"]
+    assert "Input JSON" in calls["message"]
+    assert calls["timeout"] is None
+
+
+def test_live_runner_sanitizes_session_key(monkeypatch):
+    calls = {}
+
+    def fake_run_agent(agent_id, message, *, session_key, timeout=None):
+        calls["session_key"] = session_key
+        return {
+            "payloads": [
+                {
+                    "text": (
+                        '{"market_id":"market with spaces","passed":false,'
+                        '"trigger":null,"confidence_multiplier":1.0,'
+                        '"details":"live fake","error":null}'
+                    )
+                }
+            ]
+        }
+
+    monkeypatch.setenv(RUNNER_MODE_ENV, RUNNER_MODE_LIVE)
+    monkeypatch.setattr(runner, "run_agent", fake_run_agent)
+
+    runner.spawn_agent(
+        "evaluator",
+        {"market_id": "market with spaces", "historic_market_data": []},
+    )
+
+    assert calls["session_key"] == "agent:polymarket-evaluator:orch-market-with-spaces"
