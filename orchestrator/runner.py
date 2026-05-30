@@ -23,7 +23,7 @@ import json
 import logging
 from typing import Any, Callable, Protocol
 
-from agents import AGENTS
+from agents_blueprint import AGENTS
 from orchestrator.config import RUNNER_MODE_LIVE, RUNNER_MODE_STUB_ERROR, runner_mode
 from orchestrator.parse import (
     AgentOutputParseError,
