@@ -10,9 +10,11 @@ from orchestrator.config import (
     OVERSEER_INTERVAL_SEC,
     PIPELINE_INTERVAL_SEC,
     RUNNER_MODE_LIVE,
+    auto_replay_dlq,
     runner_mode,
     top_qualitative_markets,
 )
+from orchestrator.dead_letter import replay_from_dlq
 from orchestrator.openclaw_cli import require_gateway
 from orchestrator.phases import (
     merge_phase3_inputs,
@@ -47,6 +49,10 @@ def run_forever(vault: ObsidianManager | None = None) -> None:
     vault = vault or ObsidianManager()
     if vault.cold_start_protocol():
         log.info("Cold start: wrote seed active_directives.md")
+
+    if auto_replay_dlq():
+        summary = replay_from_dlq(vault)
+        log.info("Auto DLQ replay: %s", summary)
 
     last_overseer_run = 0.0
     while True:

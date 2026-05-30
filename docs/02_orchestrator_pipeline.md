@@ -43,3 +43,34 @@ This document defines _what_ happens and _where_ data moves. Do not implement ag
 
 - **Action:** At any phase in the pipeline, if an agent's output contains a non-null `error` string, or if the Orchestrator fails to parse the agent's YAML/JSON output:
 - **State Management:** The Orchestrator halts the current market's progression, moves any existing files for that market into `/Vault/05_Errors/`, and immediately logs the exception details in that file. The pipeline then seamlessly continues to the next market ID.
+- **Manifest:** Each DLQ error log (`{market_id}__{timestamp}.json`) records a `quarantined_artifacts` manifest listing every moved file's `origin_key` (e.g. `active`, `filters`, `trades`, `post_mortem`) and `stored_filename` in `05_Errors/`.
+
+### DLQ Recovery (`replay_from_dlq`)
+
+When the root cause is fixed (e.g. Gateway restarted, bad prompt corrected), an operator can restore quarantined markets:
+
+```bash
+python -m orchestrator.replay --market-id 0xabc
+python -m orchestrator.replay --all
+python -m orchestrator.replay --market-id 0xabc --dry-run
+```
+
+Or enable automatic replay at orchestrator startup:
+
+```bash
+export OPENCLAW_AUTO_REPLAY_DLQ=1
+```
+
+**What replay does:**
+
+1. Reads each matching DLQ error log and its `quarantined_artifacts` manifest.
+2. Moves each quarantined file from `05_Errors/` back to its recorded origin directory (canonical filename restored; collision suffix stripped).
+3. Deletes the processed error log.
+4. Skips any artifact whose destination already exists (live artifact wins — never clobber).
+
+**Re-entry nuance:** Replay restores vault artifacts only; it does not immediately re-run agents. On the next pipeline tick:
+
+- Restored **trade logs** in `03_Trades/` are picked up by Phase 5 (`iter_open_trades`).
+- Restored **filter / active research** artifacts are reused when the scraper returns that `market_id` again in Phases 2–4.
+
+Legacy error logs without a manifest fall back to best-effort restore: `.json` → `trades`, `.md` → `active` (ambiguous; logged as a warning).
