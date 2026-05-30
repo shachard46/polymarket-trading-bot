@@ -44,6 +44,7 @@ def parse_agent_json_or_yaml(raw: str | dict[str, Any] | None) -> dict[str, Any]
     string, or either wrapped in a fenced code block. Raises
     :class:`AgentOutputParseError` if the result is not a mapping.
     """
+    print("raw output", raw)
     if raw is None:
         raise AgentOutputParseError("agent returned no output", raw="")
     if isinstance(raw, dict):
