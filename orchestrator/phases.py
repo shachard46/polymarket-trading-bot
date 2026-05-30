@@ -24,14 +24,17 @@ from orchestrator.dead_letter import (
     vault_write_or_quarantine,
 )
 from orchestrator.scraper import MarketRow
+from agents_blueprint import AGENTS
 from orchestrator.parse import (
     AgentOutputParseError,
     agent_error_reason,
     coerce_deep_researcher_markdown,
+    normalize_structured_output,
     parse_agent_json_or_yaml,
 )
 from orchestrator.research import parse_deep_researcher, split_yaml_frontmatter_markdown
 from orchestrator.runner import AgentRunner, spawn_agent
+from orchestrator.schema_validation import AgentSchemaError
 
 log = logging.getLogger(__name__)
 
@@ -136,11 +139,21 @@ def _run_structured_agent(
     ``error_reason`` is non-None when the agent failed (parse error, empty
     response, or explicit ``error`` field). Callers should DLQ on that.
     """
-    raw = runner(role, payload)
+    try:
+        raw = runner(role, payload)
+    except AgentSchemaError as exc:
+        return None, f"{role} output schema mismatch: {exc.cause}"
     try:
         parsed = parse_agent_json_or_yaml(raw)
     except AgentOutputParseError as exc:
         return None, f"{role} parse error: {exc}"
+    spec = AGENTS[role]
+    parsed = normalize_structured_output(
+        role,
+        payload,
+        parsed,
+        output_schema=spec.get("output_schema"),
+    )
     err = agent_error_reason(parsed)
     if err:
         return parsed, f"{role} error: {err}"
@@ -379,8 +392,11 @@ def _research_market(
         return None
 
     from_edge = bool(row.get("_edge_research_refresh"))
-    prev_edge = _read_edge_research_refresh_count(vault, market_id)
-    edge_count = prev_edge + 1 if from_edge else prev_edge
+    edge_count = (
+        _read_edge_research_refresh_count(vault, market_id) + 1
+        if from_edge
+        else 0
+    )
 
     payload = {
         "market_id": market_id,

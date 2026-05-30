@@ -9,13 +9,20 @@ the orchestrator can route the market to the Dead Letter Queue.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
 
 import yaml
 
+log = logging.getLogger(__name__)
+
 _FENCE_RE = re.compile(
     r"^\s*```(?:json|yaml|yml)?\s*\n(?P<body>.*?)\s*```\s*$",
+    re.DOTALL | re.IGNORECASE,
+)
+_FENCE_SEARCH_RE = re.compile(
+    r"```(?:json|yaml|yml)?\s*\n(?P<body>.*?)\s*```",
     re.DOTALL | re.IGNORECASE,
 )
 
@@ -37,6 +44,36 @@ def strip_code_fence(text: str) -> str:
     return match.group("body") if match else text
 
 
+def extract_fenced_block(text: str) -> str | None:
+    """Return the body of the first embedded fenced block, if any."""
+    match = _FENCE_SEARCH_RE.search(text.strip())
+    return match.group("body").strip() if match else None
+
+
+def _parse_body_candidates(raw: str) -> dict[str, Any] | None:
+    """Try JSON/YAML on stripped text and embedded fenced blocks."""
+    body = strip_code_fence(raw).strip()
+    candidates: list[str] = []
+    if body:
+        candidates.append(body)
+    fenced = extract_fenced_block(raw)
+    if fenced and fenced not in candidates:
+        candidates.insert(0, fenced)
+
+    parsed: Any = None
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            try:
+                parsed = yaml.safe_load(candidate)
+            except yaml.YAMLError:
+                parsed = None
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
 def parse_agent_json_or_yaml(raw: str | dict[str, Any] | None) -> dict[str, Any]:
     """Parse an agent response into a dict.
 
@@ -44,7 +81,6 @@ def parse_agent_json_or_yaml(raw: str | dict[str, Any] | None) -> dict[str, Any]
     string, or either wrapped in a fenced code block. Raises
     :class:`AgentOutputParseError` if the result is not a mapping.
     """
-    print("raw output", raw)
     if raw is None:
         raise AgentOutputParseError("agent returned no output", raw="")
     if isinstance(raw, dict):
@@ -54,31 +90,19 @@ def parse_agent_json_or_yaml(raw: str | dict[str, Any] | None) -> dict[str, Any]
             f"unsupported response type: {type(raw).__name__}", raw=repr(raw)
         )
 
-    body = strip_code_fence(raw).strip()
-    if not body:
+    if not raw.strip():
         raise AgentOutputParseError("agent returned empty output", raw=raw)
 
-    try:
-        parsed = json.loads(body)
-    except json.JSONDecodeError:
-        try:
-            parsed = yaml.safe_load(body)
-        except yaml.YAMLError:
-            parsed = None
-
-    if isinstance(parsed, dict):
+    parsed = _parse_body_candidates(raw)
+    if parsed is not None:
         return parsed
 
-    # The agent wrapped a JSON object in prose despite the JSON-only contract
-    # (e.g. "Here is the result: ```json {...}```"). Recover the embedded
-    # object rather than quarantining a near-miss.
     recovered = _find_embedded_json_object(raw)
     if recovered is not None:
+        log.info("Recovered embedded JSON object from agent prose/fences")
         return recovered
 
-    raise AgentOutputParseError(
-        f"expected a mapping, got {type(parsed).__name__}", raw=raw
-    )
+    raise AgentOutputParseError("expected a mapping, got non-dict", raw=raw)
 
 
 def _find_embedded_json_object(text: str) -> dict[str, Any] | None:
@@ -100,6 +124,28 @@ def _find_embedded_json_object(text: str) -> dict[str, Any] | None:
             return obj
         start = text.find("{", start + 1)
     return None
+
+
+def normalize_structured_output(
+    role: str,
+    payload: dict[str, Any],
+    parsed: dict[str, Any],
+    *,
+    output_schema: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Backfill known output fields from the orchestrator payload when missing."""
+    schema = output_schema or {}
+    if "market_id" not in schema:
+        return parsed
+
+    payload_mid = payload.get("market_id")
+    if payload_mid and not parsed.get("market_id"):
+        log.info(
+            "[%s] backfilled market_id from orchestrator payload (agent omitted it)",
+            role,
+        )
+        return {**parsed, "market_id": payload_mid}
+    return parsed
 
 
 def coerce_deep_researcher_markdown(raw: Any) -> str:
@@ -149,7 +195,9 @@ def agent_error_reason(payload: dict[str, Any] | None) -> str | None:
 __all__ = [
     "AgentOutputParseError",
     "strip_code_fence",
+    "extract_fenced_block",
     "parse_agent_json_or_yaml",
+    "normalize_structured_output",
     "coerce_deep_researcher_markdown",
     "agent_error_reason",
 ]

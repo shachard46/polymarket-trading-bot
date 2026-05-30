@@ -28,6 +28,7 @@ from orchestrator.config import RUNNER_MODE_LIVE, RUNNER_MODE_STUB_ERROR, runner
 from orchestrator.parse import (
     AgentOutputParseError,
     coerce_deep_researcher_markdown,
+    normalize_structured_output,
     parse_agent_json_or_yaml,
 )
 from orchestrator.openclaw_cli import extract_agent_text, run_agent
@@ -61,11 +62,16 @@ def spawn_agent(role: str, payload: dict[str, Any]) -> Any:
     else:
         result = _spawn_stub(role, spec, payload)
 
-    _validate_response(role, spec, result)
+    _validate_response(role, spec, result, payload)
     return result
 
 
-def _validate_response(role: str, spec: dict[str, Any], result: Any) -> None:
+def _validate_response(
+    role: str,
+    spec: dict[str, Any],
+    result: Any,
+    payload: dict[str, Any],
+) -> None:
     """Validate the agent response against the local ``output_schema``.
 
     Empty responses (the bare stub) and explicit errors propagated through
@@ -101,6 +107,12 @@ def _validate_response(role: str, spec: dict[str, Any], result: Any) -> None:
     if parsed.get("error"):
         return
 
+    parsed = normalize_structured_output(
+        role,
+        payload,
+        parsed,
+        output_schema=spec.get("output_schema"),
+    )
     validate_payload(role, "output", output_model, parsed)
 
 
@@ -288,7 +300,11 @@ def _build_live_prompt(
     response_hint = (
         "Return only the Markdown document required by your output contract."
         if spec.get("output_is_markdown")
-        else "Return only JSON/YAML matching your output schema."
+        else (
+            "Return ONLY a raw JSON object. First character must be `{`, last must be `}`.\n"
+            "Include all output_schema fields (including market_id from input). "
+            "No prose, no markdown fences."
+        )
     )
     header = f"Run the {role} agent for this orchestrator payload."
     if agent_id:
