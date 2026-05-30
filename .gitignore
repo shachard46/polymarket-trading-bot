@@ -24,3 +24,8 @@ polymarket.db-wal
 .env.test.local
 .env.production.local
 .venv/
+
+# Live agent workdir - contains sessions, skills, and runtime state
+agents/
+# Blueprint sessions shouldn't be tracked
+agents_blueprint/**/sessions/

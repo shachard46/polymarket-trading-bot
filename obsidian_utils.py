@@ -10,6 +10,7 @@ Orchestrator catches to route the market into the Dead Letter Queue.
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,6 +29,8 @@ from config.trading_constants import (
     VAULT_PATHS,
 )
 from config.vault import resolve_vault_base
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Error contract
@@ -499,6 +502,8 @@ class ObsidianManager:
         market_id: str,
         payload: dict,
         reason: str,
+        *,
+        quarantined_artifacts: list[dict[str, str]] | None = None,
     ) -> Path:
         """Write an error entry to the Dead Letter Queue (``05_Errors/``).
 
@@ -513,6 +518,9 @@ class ObsidianManager:
             The raw dict that caused the failure (may be malformed).
         reason:
             Human-readable description of why the market was rejected.
+        quarantined_artifacts:
+            Optional manifest of artifacts moved into ``05_Errors/`` during
+            quarantine, each with ``origin_key`` and ``stored_filename``.
 
         Returns
         -------
@@ -525,14 +533,111 @@ class ObsidianManager:
             "logged_at": datetime.now(tz=timezone.utc).isoformat(),
             "reason": reason,
             "payload": payload,
+            "quarantined_artifacts": quarantined_artifacts or [],
         }
         dest = self._dirs["errors"] / f"{market_id}__{suffix}.json"
         dest.write_text(json.dumps(error_record, indent=2), encoding="utf-8")
         return dest
 
     def iter_error_logs(self, market_id: str) -> list[Path]:
-        """Return every DLQ artifact recorded for ``market_id``, oldest-first."""
+        """Return every DLQ error log recorded for ``market_id``, oldest-first."""
         return sorted(self._dirs["errors"].glob(f"{market_id}__*.json"))
+
+    def iter_dlq_error_logs(self, market_id: str | None = None) -> list[Path]:
+        """Return DLQ error log JSON files, optionally filtered by ``market_id``."""
+        if market_id is not None:
+            return self.iter_error_logs(market_id)
+        return sorted(self._dirs["errors"].glob("*__*.json"))
+
+    def read_error_log(self, path: Path) -> dict[str, Any]:
+        """Parse a DLQ error log JSON file."""
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError(f"error log {path} is not a JSON object")
+        return raw
+
+    def _canonical_artifact_name(self, stored_filename: str) -> str:
+        """Strip a DLQ collision suffix to recover the canonical vault filename."""
+        stem, ext = Path(stored_filename).stem, Path(stored_filename).suffix
+        if "__" in stem:
+            stem = stem.rsplit("__", 1)[0]
+        return f"{stem}{ext}"
+
+    def restore_artifact(
+        self,
+        stored_filename: str,
+        origin_key: str,
+        *,
+        dry_run: bool = False,
+    ) -> Path | None:
+        """Move a quarantined artifact from ``05_Errors/`` back to ``origin_key``.
+
+        Returns the destination path, or ``None`` when the destination already
+        exists (live artifact wins — never clobber).
+        """
+        if origin_key not in self._dirs:
+            raise KeyError(
+                f"Unknown origin_key '{origin_key}'. "
+                f"Valid keys: {list(self._dirs)}"
+            )
+
+        src = self._dirs["errors"] / stored_filename
+        if not src.exists():
+            raise FileNotFoundError(
+                f"Quarantined artifact not found: {src}"
+            )
+
+        canonical = self._canonical_artifact_name(stored_filename)
+        dst = self._dirs[origin_key] / canonical
+        if dst.exists():
+            log.warning(
+                "Skipping restore of %s -> %s (destination already exists)",
+                stored_filename,
+                dst,
+            )
+            return None
+
+        if dry_run:
+            return dst
+
+        shutil.move(str(src), str(dst))
+        return dst
+
+    def discard_error_log(self, path: Path) -> None:
+        """Delete a processed DLQ error log."""
+        path.unlink(missing_ok=True)
+
+    def iter_quarantined_artifact_paths(
+        self,
+        market_id: str,
+        *,
+        exclude: Path | None = None,
+    ) -> list[Path]:
+        """Return non-log artifact files for ``market_id`` still in ``05_Errors/``."""
+        results: list[Path] = []
+        for path in sorted(self._dirs["errors"].iterdir()):
+            if not path.is_file() or path == exclude:
+                continue
+            stem = path.stem
+            if stem != market_id and not stem.startswith(f"{market_id}__"):
+                continue
+            if path.suffix not in {".md", ".json"}:
+                continue
+            if path.suffix == ".json" and self._looks_like_error_log(path):
+                continue
+            results.append(path)
+        return results
+
+    @staticmethod
+    def _looks_like_error_log(path: Path) -> bool:
+        """Heuristic: DLQ error logs are JSON objects with ``reason`` + ``logged_at``."""
+        if path.suffix != ".json":
+            return False
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False
+        return isinstance(raw, dict) and "reason" in raw and "logged_at" in raw
 
     # ------------------------------------------------------------------
     # Trade archival (phase 5)

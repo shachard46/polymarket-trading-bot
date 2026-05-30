@@ -23,6 +23,14 @@ OPENCLAW_BIN_ENV = "OPENCLAW_BIN"
 OPENCLAW_AGENT_TIMEOUT_ENV = "OPENCLAW_AGENT_TIMEOUT"
 DEFAULT_OPENCLAW_AGENT_TIMEOUT = 600
 
+OPENCLAW_AGENT_MAX_ATTEMPTS_ENV = "OPENCLAW_AGENT_MAX_ATTEMPTS"
+DEFAULT_OPENCLAW_AGENT_MAX_ATTEMPTS = 3
+
+OPENCLAW_AGENT_RETRY_BACKOFF_ENV = "OPENCLAW_AGENT_RETRY_BACKOFF"
+DEFAULT_OPENCLAW_AGENT_RETRY_BACKOFF = 2.0
+
+AUTO_REPLAY_DLQ_ENV = "OPENCLAW_AUTO_REPLAY_DLQ"
+
 TOP_QUALITATIVE_MARKETS_ENV = "OPENCLAW_TOP_MARKETS"
 
 # Max completed edge-triggered Deep Researcher refresh cycles per market (initial research is not counted).
@@ -71,6 +79,34 @@ def openclaw_agent_timeout() -> int:
         return DEFAULT_OPENCLAW_AGENT_TIMEOUT
 
 
+def openclaw_agent_max_attempts() -> int:
+    """Return max OpenClaw agent CLI attempts before surfacing failure."""
+    raw = os.environ.get(OPENCLAW_AGENT_MAX_ATTEMPTS_ENV)
+    if not raw:
+        return DEFAULT_OPENCLAW_AGENT_MAX_ATTEMPTS
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return DEFAULT_OPENCLAW_AGENT_MAX_ATTEMPTS
+
+
+def openclaw_agent_retry_backoff() -> float:
+    """Return base seconds for exponential backoff between CLI retries."""
+    raw = os.environ.get(OPENCLAW_AGENT_RETRY_BACKOFF_ENV)
+    if not raw:
+        return DEFAULT_OPENCLAW_AGENT_RETRY_BACKOFF
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return DEFAULT_OPENCLAW_AGENT_RETRY_BACKOFF
+
+
+def auto_replay_dlq() -> bool:
+    """Return whether the orchestrator should replay DLQ markets at startup."""
+    raw = os.environ.get(AUTO_REPLAY_DLQ_ENV, "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 __all__ = [
     "FILTERS",
     "OVERSEER_INTERVAL_SEC",
@@ -83,8 +119,14 @@ __all__ = [
     "runner_mode",
     "OPENCLAW_BIN_ENV",
     "OPENCLAW_AGENT_TIMEOUT_ENV",
+    "OPENCLAW_AGENT_MAX_ATTEMPTS_ENV",
+    "OPENCLAW_AGENT_RETRY_BACKOFF_ENV",
+    "AUTO_REPLAY_DLQ_ENV",
     "openclaw_bin",
     "openclaw_agent_timeout",
+    "openclaw_agent_max_attempts",
+    "openclaw_agent_retry_backoff",
+    "auto_replay_dlq",
     "TOP_QUALITATIVE_MARKETS_ENV",
     "top_qualitative_markets",
     "EDGE_RESEARCH_REFRESH_MAX_ENV",
