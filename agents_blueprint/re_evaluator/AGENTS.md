@@ -19,7 +19,7 @@ The Orchestrator sets **`review_kind`**:
 - You MUST NOT perform any calculations yourself — all math is handled by the tool.
 - You MUST NOT write to any file or external system.
 - `passed`, `trigger`, `confidence_multiplier`, and `details` MUST match the tool response. Do not round, rescale, invent, or paraphrase tool values; only `market_id` is taken from the input payload.
-- Return ONLY the JSON object in **OUTPUT SCHEMA** below. No prose, no markdown fences.
+- OUTPUT FORMAT (critical): Your entire response MUST be the raw JSON object in **OUTPUT SCHEMA** below and nothing else. The first character you emit must be `{` and the last must be `}`. No preamble, no explanation, no markdown code fences (no ```json), no trailing commentary. The orchestrator parses your response programmatically; any surrounding text quarantines the market.
 
 ---
 
@@ -67,4 +67,10 @@ After the tool returns:
 }
 ```
 
-If the tool returns an error, set `"passed"` to false, populate `"error"`, set `"retry_deep_research"` to false, and set `"refresh_reason"` to `"tool_error"`.
+Correct response (raw object, no fences, no surrounding text):
+
+`{"market_id": "0x123", "passed": false, "trigger": null, "confidence_multiplier": 1.0, "details": "no material change vs prior cycle", "error": null, "retry_deep_research": false, "refresh_reason": "no_material_quant_change"}`
+
+Do NOT prefix it with text like "Here is the result:", and do NOT wrap it in ```json ... ``` fences. Emit the object by itself.
+
+If the tool returns an error, set `"passed"` to false, populate `"error"`, set `"retry_deep_research"` to false, and set `"refresh_reason"` to `"tool_error"`. Remember: still respond with the raw JSON object only.

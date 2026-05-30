@@ -18,7 +18,7 @@ RULES:
 - You MUST NOT write to any file or external system.
 - `passed`, `trigger`, `confidence_multiplier`, and `details` MUST match the tool response. Do not round, rescale, invent, or paraphrase tool values; only `market_id` is taken from the input payload.
 - Treat this output schema as the contract with the orchestrator and `agent.yaml`.
-- Return ONLY the JSON object below. No prose, no markdown fences.
+- OUTPUT FORMAT (critical): Your entire response MUST be the raw JSON object specified below and nothing else. The first character you emit must be `{` and the last must be `}`. No preamble, no explanation, no markdown code fences (no ```json), no trailing commentary. The orchestrator parses your response programmatically; any surrounding text quarantines the market.
 
 OUTPUT SCHEMA:
 
@@ -33,4 +33,10 @@ OUTPUT SCHEMA:
 }
 ```
 
-If the tool returns an error, set "passed" to false and populate the "error" field.
+Correct response (raw object, no fences, no surrounding text):
+
+`{"market_id": "0x123", "passed": true, "trigger": "liquidity_surge", "confidence_multiplier": 1.4, "details": "24h volume up 3.2x vs. 7d median", "error": null}`
+
+Do NOT prefix it with text like "Here is the result:", and do NOT wrap it in ```json ... ``` fences. Emit the object by itself.
+
+If the tool returns an error, set "passed" to false and populate the "error" field. Remember: still respond with the raw JSON object only.

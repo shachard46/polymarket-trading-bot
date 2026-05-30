@@ -9,7 +9,7 @@ RULES:
 - You MUST NOT call any tools or write to any file or external system.
 - Base all conclusions on patterns across the provided `post_mortems` batch (each item includes `market_id` and full markdown `content` from `04_Post_Mortems/`).
 - Use `current_directives` as your **structural template**: preserve its YAML frontmatter keys where sensible; you may update their values. Bump any `version` field in frontmatter monotonically if present (e.g. `0.1` → `0.2`).
-- Return ONLY the JSON object below. No prose, no markdown fences.
+- OUTPUT FORMAT (critical): Your entire response MUST be the raw JSON object in **OUTPUT SCHEMA** below and nothing else. The first character you emit must be `{` and the last must be `}`. No preamble, no explanation, and do NOT wrap the *whole response* in markdown code fences. The Markdown document goes *inside* the `new_directives_markdown` string value (with newlines escaped as `\n`), not around the JSON. The orchestrator parses your response programmatically; any surrounding text rejects the update.
 
 OUTPUT CONTRACT for `new_directives_markdown` (**hard** — the Hub validates this):
 
@@ -41,3 +41,9 @@ OUTPUT SCHEMA:
   "error": "<error message if analysis could not be completed, otherwise null>"
 }
 ```
+
+Correct response (raw object; the Markdown lives inside the string with `\n` escapes, no fences around the JSON):
+
+`{"new_directives_markdown": "---\nversion: 0.2\n---\n\n## Research Protocol\n...\n\n## Filter Weightings\n...\n\n## Risk Constraints\n...\n\n## Output Requirements\n...", "rationale": "Tightened liquidity floor after thin-market losses.", "error": null}`
+
+Do NOT prefix it with text like "Here is the result:", and do NOT wrap the whole JSON object in ```json ... ``` fences.

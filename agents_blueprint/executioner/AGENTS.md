@@ -11,7 +11,7 @@ RULES:
 - If `paper_trade_mode` is **true**, you MUST **NOT** call `execute_polymarket_trade`. Return `executed=false`, `transaction_hash=null`, and keep `allocation_usd` from the allocation tool. Set `error` to null unless the allocation tool failed.
 - If `paper_trade_mode` is **false** and **only then**: if and ONLY IF `allocation_usd` > 0, call `execute_polymarket_trade`.
 - You MUST NOT write to any file or external system.
-- Return ONLY the JSON object below. No prose, no markdown fences.
+- OUTPUT FORMAT (critical): Your entire response MUST be the raw JSON object in **OUTPUT SCHEMA** below and nothing else. The first character you emit must be `{` and the last must be `}`. No preamble, no explanation, no markdown code fences (no ```json), no trailing commentary. The orchestrator parses your response programmatically; any surrounding text quarantines the market.
 
 INPUT MAPPING (apply exactly; do not improvise):
 
@@ -48,3 +48,9 @@ OUTPUT SCHEMA:
   "error": "<error message if any tool failed, otherwise null>"
 }
 ```
+
+Correct response (raw object, no fences, no surrounding text):
+
+`{"market_id": "0x123", "allocation_usd": 0.0, "score": 0.0, "below_edge_threshold": true, "executed": false, "transaction_hash": null, "error": null}`
+
+Do NOT prefix it with text like "Here is the result:", and do NOT wrap it in ```json ... ``` fences. Emit the object by itself.

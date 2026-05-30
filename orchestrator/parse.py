@@ -62,16 +62,43 @@ def parse_agent_json_or_yaml(raw: str | dict[str, Any] | None) -> dict[str, Any]
     except json.JSONDecodeError:
         try:
             parsed = yaml.safe_load(body)
-        except yaml.YAMLError as exc:
-            raise AgentOutputParseError(
-                f"response is neither valid JSON nor YAML: {exc}", raw=raw
-            ) from exc
+        except yaml.YAMLError:
+            parsed = None
 
-    if not isinstance(parsed, dict):
-        raise AgentOutputParseError(
-            f"expected a mapping, got {type(parsed).__name__}", raw=raw
-        )
-    return parsed
+    if isinstance(parsed, dict):
+        return parsed
+
+    # The agent wrapped a JSON object in prose despite the JSON-only contract
+    # (e.g. "Here is the result: ```json {...}```"). Recover the embedded
+    # object rather than quarantining a near-miss.
+    recovered = _find_embedded_json_object(raw)
+    if recovered is not None:
+        return recovered
+
+    raise AgentOutputParseError(
+        f"expected a mapping, got {type(parsed).__name__}", raw=raw
+    )
+
+
+def _find_embedded_json_object(text: str) -> dict[str, Any] | None:
+    """Return the first substring that decodes as a JSON object, else ``None``.
+
+    Uses the stdlib scanner (no hand-rolled brace matching); ``raw_decode``
+    cleanly ignores surrounding prose and trailing characters such as a
+    closing code fence.
+    """
+    decoder = json.JSONDecoder()
+    start = text.find("{")
+    while start != -1:
+        try:
+            obj, _ = decoder.raw_decode(text, start)
+        except json.JSONDecodeError:
+            start = text.find("{", start + 1)
+            continue
+        if isinstance(obj, dict):
+            return obj
+        start = text.find("{", start + 1)
+    return None
 
 
 def coerce_deep_researcher_markdown(raw: Any) -> str:
