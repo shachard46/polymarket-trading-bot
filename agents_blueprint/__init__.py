@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agents.loader import load_agents_from_dir
+from agents_blueprint.loader import load_agents_from_dir
 
 AGENTS = load_agents_from_dir()
 
