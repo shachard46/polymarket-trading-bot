@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from orchestrator.parse import (
@@ -113,3 +115,16 @@ def test_padded_evaluator_output_passes_schema_after_normalization():
 def test_parse_empty_output_raises():
     with pytest.raises(AgentOutputParseError, match="empty"):
         parse_agent_json_or_yaml("   ")
+
+
+def test_parse_double_encoded_json_string():
+    """OpenClaw sometimes returns the JSON object as a JSON-encoded string."""
+    inner = (
+        '{"passed": false, "trigger": null, "confidence_multiplier": 1.0, '
+        '"details": "No filter triggered. Notes: all filters evaluated", '
+        '"error": null, '
+        '"market_id": "0x3a3e8edb0923b69720fd41c274191f830a6ca1f7da9b6484fd82e1b4d8c3d1ec"}'
+    )
+    parsed = parse_agent_json_or_yaml(json.dumps(inner))
+    assert parsed["passed"] is False
+    assert parsed["market_id"].startswith("0x")
