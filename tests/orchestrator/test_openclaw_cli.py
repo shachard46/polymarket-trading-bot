@@ -260,6 +260,25 @@ def test_extract_agent_text_from_embedded_summary():
     assert text == "embedded text"
 
 
+def test_extract_agent_text_prefers_parseable_payload_over_summary():
+    reasoning = (
+        "Hard veto is null, so I need to reason over soft signals. "
+        "No signal fires."
+    )
+    full = (
+        f"{reasoning}\n\n"
+        "```json\n"
+        '{"market_id":"0xabc","passed":false,"trigger":null,'
+        '"confidence_multiplier":1.0,"details":"x","error":null}\n'
+        "```"
+    )
+    text = openclaw_cli.extract_agent_text(
+        {"summary": reasoning, "payloads": [{"text": full}]}
+    )
+
+    assert text == full
+
+
 def test_extract_agent_text_rejects_empty_payload():
     with pytest.raises(openclaw_cli.OpenClawCLIError, match="did not contain text"):
         openclaw_cli.extract_agent_text({"payloads": []})

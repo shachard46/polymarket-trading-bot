@@ -15,6 +15,7 @@ from orchestrator.config import (
     openclaw_agent_timeout,
     openclaw_bin,
 )
+from orchestrator.parse import AgentOutputParseError, parse_agent_json_or_yaml
 
 log = logging.getLogger(__name__)
 
@@ -217,31 +218,46 @@ def run_agent(
 
 
 def extract_agent_text(cli_json: dict[str, Any]) -> str:
-    """Normalize OpenClaw Gateway/embedded JSON responses into agent text."""
-    direct = _first_text(
-        cli_json,
-        ("text", "summary", "message", "output", "content"),
-    )
-    if direct:
-        return direct
+    """Normalize OpenClaw Gateway/embedded JSON responses into agent text.
+
+    OpenClaw may return reasoning in ``summary`` and the final JSON in
+    ``payloads``. Prefer any candidate that parses as structured agent output
+    so padded Turn-2 responses are not dropped before :mod:`orchestrator.parse`.
+    """
+    candidates = _collect_agent_text_candidates(cli_json)
+    if not candidates:
+        raise OpenClawCLIError("openclaw agent JSON did not contain text output")
+
+    for candidate in sorted(candidates, key=len, reverse=True):
+        try:
+            parse_agent_json_or_yaml(candidate)
+        except AgentOutputParseError:
+            continue
+        else:
+            return candidate
+
+    return candidates[0]
+
+
+def _collect_agent_text_candidates(cli_json: dict[str, Any]) -> list[str]:
+    """Gather distinct non-empty text blobs from an OpenClaw CLI JSON object."""
+    out: list[str] = []
+
+    def add(text: str | None) -> None:
+        if text and text.strip() and text.strip() not in out:
+            out.append(text.strip())
+
+    for key in ("text", "summary", "message", "output", "content"):
+        add(_get_str(cli_json.get(key)))
 
     result = cli_json.get("result")
     if isinstance(result, dict):
-        result_text = _first_text(
-            result,
-            ("text", "summary", "message", "output", "content"),
-        )
-        if result_text:
-            return result_text
-        payload_text = _payloads_text(result.get("payloads"))
-        if payload_text:
-            return payload_text
+        for key in ("text", "summary", "message", "output", "content"):
+            add(_get_str(result.get(key)))
+        add(_payloads_text(result.get("payloads")))
 
-    payload_text = _payloads_text(cli_json.get("payloads"))
-    if payload_text:
-        return payload_text
-
-    raise OpenClawCLIError("openclaw agent JSON did not contain text output")
+    add(_payloads_text(cli_json.get("payloads")))
+    return out
 
 
 def _payloads_text(payloads: Any) -> str | None:
@@ -257,11 +273,9 @@ def _payloads_text(payloads: Any) -> str | None:
     return "\n\n".join(texts) if texts else None
 
 
-def _first_text(data: dict[str, Any], keys: tuple[str, ...]) -> str | None:
-    for key in keys:
-        value = data.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
+def _get_str(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
     return None
 
 
