@@ -52,6 +52,12 @@ When the root cause is fixed (e.g. Gateway restarted, bad prompt corrected), an 
 python -m orchestrator.replay --market-id 0xabc
 python -m orchestrator.replay --all
 python -m orchestrator.replay --market-id 0xabc --dry-run
+# Only markets that passed quantitative routing (filter log was quarantined):
+python -m orchestrator.replay --all --phase 2
+# Shorthand: --phase2 is equivalent to --phase 2
+python -m orchestrator.replay --all --phase2
+# AND filter: passed phases 2 and 3 (filter + active research artifacts):
+python -m orchestrator.replay --all --phase 2 --phase 3
 ```
 
 Or enable automatic replay at orchestrator startup:
@@ -60,9 +66,11 @@ Or enable automatic replay at orchestrator startup:
 export OPENCLAW_AUTO_REPLAY_DLQ=1
 ```
 
+**Phase filters (`--phase N` / `--phaseN`, repeatable, AND):** A market is considered to have passed phase N when the DLQ manifest lists that phase’s success artifact (`filters` for phase 2, `active` for phase 3, `trades` for phase 4, `post_mortem` for phase 5). Phase 1 (ingestion) leaves no artifact and is always implied. Example: `--phase 2` replays failures that had reached qualitative routing (e.g. Briefer / Deep Researcher errors) without requiring `--phase 3`.
+
 **What replay does:**
 
-1. Reads each matching DLQ error log and its `quarantined_artifacts` manifest.
+1. Reads each matching DLQ error log and its `quarantined_artifacts` manifest (optionally filtered by `--phase`).
 2. Moves each quarantined file from `05_Errors/` back to its recorded origin directory (canonical filename restored; collision suffix stripped).
 3. Deletes the processed error log.
 4. Skips any artifact whose destination already exists (live artifact wins — never clobber).

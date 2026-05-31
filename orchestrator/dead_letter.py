@@ -30,6 +30,18 @@ _LEGACY_EXT_ORIGIN: dict[str, str] = {
     ".md": "active",
 }
 
+# Phase N is considered "passed" when the vault held that phase's success artifact
+# at quarantine time (listed in ``quarantined_artifacts``). Phase 1 (ingestion)
+# leaves no artifact; every DLQ market is treated as having passed phase 1.
+PHASE_TO_ORIGIN_KEY: dict[int, str | None] = {
+    1: None,
+    2: "filters",
+    3: "active",
+    4: "trades",
+    5: "post_mortem",
+}
+VALID_REPLAY_PHASES: frozenset[int] = frozenset(PHASE_TO_ORIGIN_KEY)
+
 
 def quarantine_market(
     vault: ObsidianManager,
@@ -121,6 +133,53 @@ def _legacy_artifact_candidates(
     return candidates
 
 
+def manifest_origin_keys(manifest: list[Any]) -> set[str]:
+    """Collect ``origin_key`` values from a DLQ ``quarantined_artifacts`` manifest."""
+    origins: set[str] = set()
+    for entry in manifest:
+        if not isinstance(entry, dict):
+            continue
+        origin_key = entry.get("origin_key")
+        if isinstance(origin_key, str) and origin_key:
+            origins.add(origin_key)
+    return origins
+
+
+def passed_phases_for_dlq_record(
+    record: dict[str, Any],
+    *,
+    manifest: list[Any] | None = None,
+) -> set[int]:
+    """Infer which pipeline phases completed before this DLQ failure."""
+    if manifest is None:
+        raw = record.get("quarantined_artifacts")
+        manifest = raw if isinstance(raw, list) else []
+    origins = manifest_origin_keys(manifest)
+    passed: set[int] = {1}
+    for phase, origin_key in PHASE_TO_ORIGIN_KEY.items():
+        if phase == 1:
+            continue
+        if origin_key and origin_key in origins:
+            passed.add(phase)
+    return passed
+
+
+def dlq_record_matches_passed_phases(
+    record: dict[str, Any],
+    required_phases: frozenset[int],
+    *,
+    manifest: list[Any] | None = None,
+) -> bool:
+    """True when the market had completed every phase in ``required_phases``."""
+    if not required_phases:
+        return True
+    unknown = required_phases - VALID_REPLAY_PHASES
+    if unknown:
+        raise ValueError(f"Invalid replay phase(s): {sorted(unknown)}")
+    passed = passed_phases_for_dlq_record(record, manifest=manifest)
+    return required_phases <= passed
+
+
 def _restore_manifest_entry(
     vault: ObsidianManager,
     entry: dict[str, str],
@@ -153,18 +212,32 @@ def replay_from_dlq(
     vault: ObsidianManager,
     market_ids: list[str] | None = None,
     *,
+    passed_phases: frozenset[int] | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Restore quarantined artifacts and clear processed DLQ error logs.
 
-    Returns a summary dict with ``restored``, ``skipped``, ``missing``, and
-    ``logs_cleared`` counts plus per-market detail.
+    When ``passed_phases`` is set, only replay logs whose quarantined manifest
+    shows the market completed **all** listed phases (AND). For example,
+    ``passed_phases=frozenset({2})`` restores markets that reached qualitative
+    routing (a filter log existed); ``frozenset({2, 3})`` requires both filter
+    and active-research artifacts.
+
+    Returns a summary dict with ``restored``, ``skipped``, ``missing``,
+    ``logs_cleared``, ``logs_filtered``, and per-market detail.
     """
+    if passed_phases:
+        unknown = passed_phases - VALID_REPLAY_PHASES
+        if unknown:
+            raise ValueError(f"Invalid replay phase(s): {sorted(unknown)}")
+
     summary: dict[str, Any] = {
         "restored": 0,
         "skipped": 0,
         "missing": 0,
         "logs_cleared": 0,
+        "logs_filtered": 0,
+        "passed_phases_filter": sorted(passed_phases) if passed_phases else None,
         "markets": {},
     }
 
@@ -198,7 +271,20 @@ def replay_from_dlq(
                 )
             ]
 
+        if passed_phases and not dlq_record_matches_passed_phases(
+            record, passed_phases, manifest=manifest
+        ):
+            log.debug(
+                "Skipping DLQ log for %s: passed %s, required %s",
+                market_id,
+                sorted(passed_phases_for_dlq_record(record, manifest=manifest)),
+                sorted(passed_phases),
+            )
+            summary["logs_filtered"] += 1
+            continue
+
         market_detail: dict[str, Any] = {
+            "passed_phases": sorted(passed_phases_for_dlq_record(record, manifest=manifest)),
             "restored": 0,
             "skipped": 0,
             "missing": 0,
@@ -226,8 +312,13 @@ def replay_from_dlq(
 
 __all__ = [
     "QUARANTINE_SOURCE_KEYS",
+    "PHASE_TO_ORIGIN_KEY",
+    "VALID_REPLAY_PHASES",
     "quarantine_market",
     "market_quarantine",
     "vault_write_or_quarantine",
+    "manifest_origin_keys",
+    "passed_phases_for_dlq_record",
+    "dlq_record_matches_passed_phases",
     "replay_from_dlq",
 ]

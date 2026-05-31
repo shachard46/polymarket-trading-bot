@@ -5,7 +5,12 @@ from __future__ import annotations
 import pytest
 
 from obsidian_utils import ObsidianManager
-from orchestrator.dead_letter import quarantine_market, replay_from_dlq
+from orchestrator.dead_letter import (
+    dlq_record_matches_passed_phases,
+    passed_phases_for_dlq_record,
+    quarantine_market,
+    replay_from_dlq,
+)
 
 
 @pytest.fixture
@@ -100,6 +105,49 @@ def test_legacy_replay_without_manifest(vault):
     assert summary["restored"] == 1
     assert vault.active_research_path(market_id).read_text(encoding="utf-8") == "legacy research"
     assert not log_path.exists()
+
+
+def test_passed_phases_inferred_from_manifest():
+    record = {
+        "quarantined_artifacts": [
+            {"origin_key": "filters", "stored_filename": "0x.md"},
+        ]
+    }
+    assert passed_phases_for_dlq_record(record) == {1, 2}
+    assert dlq_record_matches_passed_phases(record, frozenset({2}))
+    assert not dlq_record_matches_passed_phases(record, frozenset({3}))
+
+
+def test_replay_phase2_only_restores_filter_failures(vault):
+    _write_filter(vault, "0xfilters")
+    _write_active(vault, "0xactive", "body")
+    quarantine_market(vault, "0xfilters", "deep researcher parse error", {})
+    quarantine_market(vault, "0xactive", "phase4 error", {})
+
+    summary = replay_from_dlq(vault, market_ids=None, passed_phases=frozenset({2}))
+
+    assert summary["logs_cleared"] == 1
+    assert summary["logs_filtered"] == 1
+    assert (vault._dirs["filters"] / "0xfilters.md").exists()
+    assert not vault.active_research_path("0xactive").exists()
+    assert len(vault.iter_error_logs("0xactive")) == 1
+
+
+def test_replay_phase2_and_phase3_requires_both_artifacts(vault):
+    _write_filter(vault, "0xboth")
+    _write_active(vault, "0xboth", "research")
+    _write_filter(vault, "0xfilt")
+    quarantine_market(vault, "0xboth", "phase4 error", {})
+    quarantine_market(vault, "0xfilt", "phase3 error", {})
+
+    summary = replay_from_dlq(
+        vault, market_ids=None, passed_phases=frozenset({2, 3})
+    )
+
+    assert summary["logs_cleared"] == 1
+    assert summary["logs_filtered"] == 1
+    assert vault.active_research_path("0xboth").exists()
+    assert len(vault.iter_error_logs("0xfilt")) == 1
 
 
 def test_replay_all_processes_every_log(vault):
