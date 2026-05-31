@@ -491,6 +491,12 @@ def evaluate_market_metrics(
     )
 
 
+# Pydantic 2.13+ defers resolving ``from __future__ import annotations`` until rebuild.
+EvaluateMarketMetricsInput.model_rebuild()
+HardVeto.model_rebuild()
+EvaluateMarketMetricsOutput.model_rebuild()
+
+
 __all__ = [
     "EvaluateMarketMetricsInput",
     "EvaluateMarketMetricsOutput",
