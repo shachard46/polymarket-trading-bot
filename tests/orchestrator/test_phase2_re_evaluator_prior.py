@@ -45,7 +45,6 @@ def test_phase2_passes_prior_filter_context_to_re_evaluator(monkeypatch, tmp_pat
             "trigger": "breakout",
             "confidence_multiplier": 1.0,
             "details": "ok",
-            "signal_bundle": {"signals": {}},
             "error": None,
             "retry_deep_research": False,
             "refresh_reason": None,

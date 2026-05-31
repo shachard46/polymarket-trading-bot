@@ -57,7 +57,7 @@ def test_spawn_agent_accepts_valid_input(monkeypatch):
     assert isinstance(out, dict)
     assert out["market_id"] == "x"
     assert out["error"] is None
-    assert "signal_bundle" in out
+    assert "signal_bundle" not in out
 
 
 def test_spawn_agent_re_evaluator_requires_schema_fields():
@@ -86,6 +86,7 @@ def test_spawn_agent_re_evaluator_accepts_quantitative_payload():
     assert out["market_id"] == "x"
     assert out["error"] is None
     assert out["retry_deep_research"] is False
+    assert "signal_bundle" not in out
 
 
 def test_spawn_agent_re_evaluator_accepts_edge_research_refresh_payload():

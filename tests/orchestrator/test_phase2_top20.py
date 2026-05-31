@@ -27,7 +27,6 @@ def test_phase2_sorts_by_confidence_multiplier_and_caps(monkeypatch, tmp_path):
             "trigger": "stub",
             "confidence_multiplier": mult_by_id[mid],
             "details": "ok",
-            "signal_bundle": {"stub": True},
             "error": None,
         }
 

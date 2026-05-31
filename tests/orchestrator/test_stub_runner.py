@@ -36,7 +36,7 @@ def test_stub_evaluator_returns_schema_valid_response():
     assert parsed["market_id"] == "0xabc"
     assert parsed["passed"] is False
     assert parsed["error"] is None
-    assert "signal_bundle" in parsed
+    assert "signal_bundle" not in parsed
 
 
 def test_stub_briefer_includes_market_title():
@@ -92,7 +92,7 @@ def test_stub_re_evaluator_returns_refresh_fields():
     parsed = out if isinstance(out, dict) else parse_agent_json_or_yaml(out)
     assert parsed["retry_deep_research"] is False
     assert parsed["refresh_reason"] is None
-    assert "signal_bundle" in parsed
+    assert "signal_bundle" not in parsed
 
 
 def test_stub_executioner_includes_allocation_tool_fields():
@@ -125,7 +125,7 @@ def test_live_runner_invokes_openclaw_cli(monkeypatch):
                     "text": (
                         '{"market_id":"0xabc","passed":false,"trigger":null,'
                         '"confidence_multiplier":1.0,"details":"live fake",'
-                        '"signal_bundle":{"stub":true},"error":null}'
+                        '"error":null}'
                     )
                 }
             ]
@@ -156,7 +156,7 @@ def test_live_runner_sanitizes_session_key(monkeypatch):
                     "text": (
                         '{"market_id":"market with spaces","passed":false,'
                         '"trigger":null,"confidence_multiplier":1.0,'
-                        '"details":"live fake","signal_bundle":{},"error":null}'
+                        '"details":"live fake","error":null}'
                     )
                 }
             ]

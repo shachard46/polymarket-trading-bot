@@ -34,6 +34,7 @@ from orchestrator.parse import (
     parse_agent_json_or_yaml,
 )
 from orchestrator.research import parse_deep_researcher, split_yaml_frontmatter_markdown
+from orchestrator.evaluator_output import attach_signal_bundle
 from orchestrator.runner import AgentRunner, spawn_agent
 from orchestrator.schema_validation import AgentSchemaError
 
@@ -155,6 +156,7 @@ def _run_structured_agent(
         parsed,
         output_schema=spec.get("output_schema"),
     )
+    parsed = attach_signal_bundle(role, payload, parsed)
     err = agent_error_reason(parsed)
     if err:
         return parsed, f"{role} error: {err}"

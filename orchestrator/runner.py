@@ -171,7 +171,6 @@ def _evaluator_stub(payload: dict[str, Any]) -> dict[str, Any]:
         "trigger": None,
         "confidence_multiplier": 1.0,
         "details": "stub: no filter fired",
-        "signal_bundle": {"stub": True},
         "error": None,
     }
 
@@ -184,7 +183,6 @@ def _re_evaluator_stub(payload: dict[str, Any]) -> dict[str, Any]:
         "trigger": None,
         "confidence_multiplier": 1.0,
         "details": "stub: no filter fired",
-        "signal_bundle": {"stub": True},
         "error": None,
         "retry_deep_research": False,
         "refresh_reason": None,
@@ -303,9 +301,10 @@ def _build_live_prompt(
         "Return only the Markdown document required by your output contract."
         if spec.get("output_is_markdown")
         else (
-            "Return ONLY a raw JSON object. First character must be `{`, last must be `}`.\n"
-            "Include all output_schema fields (including market_id from input). "
-            "No prose, no markdown fences."
+            "Return ONLY a raw JSON object (Turn 2 / final response). "
+            "First character must be `{`, last must be `}`.\n"
+            "Include decision fields from output_schema (including market_id from input). "
+            "Do not include signal_bundle. No prose, no markdown fences."
         )
     )
     header = f"Run the {role} agent for this orchestrator payload."

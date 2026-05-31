@@ -60,7 +60,6 @@ def test_phase2_forwards_full_market_row_to_phase3(monkeypatch, vault):
             "trigger": "breakout",
             "confidence_multiplier": 1.0,
             "details": "ok",
-            "signal_bundle": {"signals": {}},
             "error": None,
         }
 

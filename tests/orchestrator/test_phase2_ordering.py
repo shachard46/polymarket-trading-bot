@@ -32,7 +32,6 @@ def test_phase2_passes_filter_directives_to_evaluator(vault):
             "trigger": None,
             "confidence_multiplier": 1.0,
             "details": "test",
-            "signal_bundle": {"stub": True},
             "error": None,
         }
 

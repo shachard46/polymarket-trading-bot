@@ -1,6 +1,6 @@
 id: evaluator
 openclaw_agent_id: polymarket-evaluator
-description: Quantitative gatekeeper; calls evaluate_market_metrics and reasons over signal_bundle.
+description: Quantitative gatekeeper; calls evaluate_market_metrics in Turn 1, returns decision JSON in Turn 2. Hub attaches signal_bundle after the run.
 model: null
 tools:
   allow:
@@ -14,5 +14,4 @@ output_schema:
   trigger: "string | null"
   confidence_multiplier: float
   details: string
-  signal_bundle: "dict | null"
   error: "string | null"
