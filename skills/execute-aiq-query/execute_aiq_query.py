@@ -14,7 +14,15 @@ Runtime config (env vars override trading_constants defaults):
 from __future__ import annotations
 
 import os
+import sys
 import time
+from pathlib import Path
+
+_OPENCLAW_ROOT = "/home/boldplane/.openclaw"
+_REPO_ROOT = str(Path(__file__).resolve().parents[2])
+for _path in (_REPO_ROOT, _OPENCLAW_ROOT):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
 
 import requests
 from pydantic import BaseModel, ConfigDict

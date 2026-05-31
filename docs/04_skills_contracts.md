@@ -1,6 +1,6 @@
 # OpenClaw Skill Contracts
 
-Agents must interact with the system via these explicit OpenClaw Skills. For each skill, the system requires a `skill.md` defining its interface, alongside its execution logic.
+Agents must interact with the system via these explicit OpenClaw Skills. For each skill, the system requires a `SKILL.md` defining its interface, alongside its execution logic.
 
 ## 1. Skill: evaluate_market_metrics
 
@@ -84,19 +84,7 @@ description: Loads market history from polymarket-scraper via poly-scan, compute
 - **Reject:** insufficient data (`snapshots_used` below minimum).
 - All other filters appear in `signals` only; the Evaluator agent decides pass/fail.
 
-## 2. Skill: search_market_context
-
-```yaml
----
-name: search_market_context
-description: Web scraping skill. Use this to search the internet for real-time news, context, and current events regarding a specific Polymarket title.
----
-```
-
-* **Input Schema:** `{"query": str}`
-* **Output Schema:** `{"summary": str, "error": str | null}`
-
-## 3. Skill: calculate_trade_allocation
+## 2. Skill: calculate_trade_allocation
 
 ```yaml
 ---
@@ -108,7 +96,7 @@ description: Deterministic math engine. Use this to calculate the exact USD allo
 * **Input Schema:** `{"p": float, "q": float, "D": int, "L": float, "V": float}`
 * **Output Schema:** `{"allocation_usd": float, "score": float, "below_edge_threshold": bool | null, "error": str | null}` — `below_edge_threshold` is `true` when the score is at or below the minimum edge threshold `S_0` (no allocation for that reason), `false` when above threshold, and `null` when the score could not be computed (same cases as a non-null `error`).
 
-## 4. Skill: execute_polymarket_trade
+## 3. Skill: execute_polymarket_trade
 
 ```yaml
 ---
@@ -120,7 +108,7 @@ description: Polymarket API wrapper. Use this to officially place a trade on the
 * **Input Schema:** `{"market_id": str, "outcome": str, "amount": float}`
 * **Output Schema:** `{"success": bool, "transaction_hash": str | null, "error": str | null}`
 
-## 5. Skill: execute_aiq_query
+## 4. Skill: execute_aiq_query
 
 ```yaml
 ---
@@ -132,3 +120,9 @@ description: Deep qualitative research engine. Use this to perform exhaustive, u
 * **Input Schema:** `{"query": str}`
 * **Output Schema:** `{"research_data": str, "error": str | null}`
 * **Runtime config:** base URL and polling defaults read from `config/trading_constants` (`AIQ_BASE_URL`, `AIQ_POLL_INTERVAL_SEC`, `AIQ_TIMEOUT_SEC`); each overridable via the matching environment variable.
+
+**Invocation:**
+
+- **Command:** `python3 {baseDir}/run.py '<json>'`
+- **Args JSON:** `{"query": "<focused research question>"}`
+- **Return:** parse stdout as JSON `{"research_data": str, "error": str | null}`

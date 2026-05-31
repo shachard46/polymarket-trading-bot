@@ -43,7 +43,7 @@ This document defines exactly _how_ agents behave and their strict JSON/YAML bou
 
 ## 2. The Context Briefer
 
-- **System Prompt:** "Use `search_market_context` to find real-world news regarding the provided market. Return exactly one paragraph summarizing current events. If no data is found or the tool fails, populate the error field."
+- **System Prompt:** "Use `web_search` to find real-world news regarding the provided market. Return exactly one paragraph summarizing current events. If no data is found or the tool fails, populate the error field."
 - **Input Schema:** `{"market_id": "string", "market_title": "string", "market_description": "string"}`
 - **Output Schema:**
 
