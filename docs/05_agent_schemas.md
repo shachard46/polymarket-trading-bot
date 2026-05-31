@@ -2,6 +2,8 @@
 
 This document defines exactly _how_ agents behave and their strict JSON/YAML boundaries. All JSON outputs must handle explicit failure states.
 
+Each role's [`agents_blueprint/<role>/agent.yaml`](../agents_blueprint/) declares `input_schema` and `output_schema`. In live mode the orchestrator builds the response hint from `output_schema` automatically. Optional `live_response_hint` (multiline string) appends extra rules when the schema alone is insufficient (e.g. Overseer markdown-in-JSON structure).
+
 ## 1. The Evaluator & Re-Evaluator
 
 - **System Prompt:** Evaluator: first-time quantitative gate; calls `evaluate_market_metrics` and reasons over the returned signal_bundle. Re-Evaluator: same skill contract when Active Research already exists; receives `historic_signal_bundle` from the prior filter log for regime comparison.

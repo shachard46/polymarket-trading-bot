@@ -51,10 +51,14 @@ def load_agents_from_dir(agents_root: Path | None = None) -> dict[str, dict[str,
             in_schema: Any = meta.get("input_schema") or {}
             out_schema: Any = meta.get("output_schema", {})
 
+            live_hint = meta.get("live_response_hint")
             agents[role] = {
                 "system_prompt": system_prompt,
                 "input_schema": in_schema,
                 "output_schema": out_schema,
+                "live_response_hint": (
+                    str(live_hint).strip() if live_hint is not None else None
+                ),
                 # Pre-built validators applied by ``orchestrator.runner.spawn_agent``.
                 "input_model": build_model(f"{role.title()}Input", in_schema),
                 "output_model": build_model(f"{role.title()}Output", out_schema),

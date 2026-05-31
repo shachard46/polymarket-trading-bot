@@ -6,6 +6,7 @@ import pytest
 
 from agents_blueprint import AGENTS
 from config.trading_constants import FILTERS
+from orchestrator.live_prompt import build_live_response_hint
 from orchestrator.runner import STUB_RESPONSES, _build_live_prompt, _live_session_key, spawn_agent
 from orchestrator.schema_validation import (
     AgentSchemaError,
@@ -192,7 +193,39 @@ def test_spawn_agent_overseer_rejects_evaluator_shape(monkeypatch):
     assert "new_directives_markdown" in msg or "rationale" in msg
 
 
-def test_build_live_prompt_overseer_uses_directives_contract():
+def test_build_live_response_hint_lists_schema_keys():
+    hint = build_live_response_hint(
+        {
+            "market_id": "string",
+            "summary": "string | null",
+            "error": "string | null",
+        }
+    )
+    assert "summary" in hint
+    assert "error" in hint
+    assert "decision fields" not in hint
+    assert "nullable fields" in hint
+
+
+def test_build_live_prompt_lists_briefer_schema_keys():
+    spec = AGENTS["briefer"]
+    prompt = _build_live_prompt(
+        "briefer",
+        spec,
+        {
+            "market_id": "0xabc",
+            "market_title": "Title",
+            "market_description": "",
+        },
+        agent_id="polymarket-briefer",
+    )
+    assert "summary" in prompt
+    assert "error" in prompt
+    assert "decision fields" not in prompt
+    assert "Required keys exactly" in prompt
+
+
+def test_build_live_prompt_overseer_includes_yaml_hint():
     spec = AGENTS["overseer"]
     prompt = _build_live_prompt(
         "overseer",
@@ -203,8 +236,47 @@ def test_build_live_prompt_overseer_uses_directives_contract():
     assert "new_directives_markdown" in prompt
     assert "rationale" in prompt
     assert "## Research Protocol" in prompt
-    assert "market_id from input" not in prompt
     assert "Do NOT include market_id" in prompt
+    assert spec.get("live_response_hint")
+
+
+def test_spawn_agent_briefer_rejects_evaluator_shape(monkeypatch):
+    def bad_briefer(_payload: dict) -> dict:
+        return {
+            "market_id": _payload["market_id"],
+            "passed": False,
+            "trigger": None,
+            "confidence_multiplier": 1.0,
+            "details": "wrong shape",
+            "error": None,
+        }
+
+    monkeypatch.setitem(STUB_RESPONSES, "briefer", bad_briefer)
+    with pytest.raises(AgentSchemaError) as exc_info:
+        spawn_agent(
+            "briefer",
+            {
+                "market_id": "0xabc",
+                "market_title": "Title",
+                "market_description": "",
+            },
+        )
+    msg = str(exc_info.value)
+    assert "summary" in msg
+
+
+def test_spawn_agent_briefer_accepts_valid_payload():
+    out = spawn_agent(
+        "briefer",
+        {
+            "market_id": "0xabc",
+            "market_title": "Will X happen?",
+            "market_description": "",
+        },
+    )
+    assert out["market_id"] == "0xabc"
+    assert out["summary"]
+    assert out.get("error") is None
 
 
 def test_live_session_key_overseer_is_isolated():

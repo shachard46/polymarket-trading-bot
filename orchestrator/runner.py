@@ -33,17 +33,10 @@ from orchestrator.parse import (
 )
 from orchestrator.openclaw_cli import extract_agent_text, run_agent
 from orchestrator.research import parse_deep_researcher
+from orchestrator.live_prompt import build_live_response_hint
 from orchestrator.schema_validation import AgentSchemaError, validate_payload
 
 log = logging.getLogger(__name__)
-
-# Must match obsidian_utils._REQUIRED_DIRECTIVE_HEADERS (Overseer structural contract).
-_OVERSEER_REQUIRED_HEADERS: tuple[str, ...] = (
-    "## Research Protocol",
-    "## Filter Weightings",
-    "## Risk Constraints",
-    "## Output Requirements",
-)
 
 
 class AgentRunner(Protocol):
@@ -124,9 +117,10 @@ def _validate_response(
     try:
         validate_payload(role, "output", output_model, parsed)
     except AgentSchemaError:
-        if role == "overseer" and isinstance(parsed, dict):
+        if isinstance(parsed, dict):
             log.warning(
-                "overseer output schema mismatch; response keys: %s",
+                "%s output schema mismatch; response keys: %s",
+                role,
                 sorted(parsed.keys()),
             )
         raise
@@ -307,23 +301,6 @@ def _live_session_key(agent_id: str, role: str, payload: dict[str, Any]) -> str:
     return f"agent:{agent_id}:orch-{safe_market_id}"
 
 
-def _overseer_live_response_hint() -> str:
-    headers = ", ".join(_OVERSEER_REQUIRED_HEADERS)
-    return (
-        "Return ONLY a raw JSON object (final response). "
-        "First character must be `{`, last must be `}`.\n"
-        "Required keys exactly: new_directives_markdown, rationale, error "
-        "(use null for error when successful).\n"
-        "Do NOT include market_id, passed, signal_bundle, or any per-market "
-        "decision fields.\n"
-        "new_directives_markdown must be the complete replacement for "
-        "active_directives.md: YAML frontmatter (--- ... ---) then body with "
-        f"these level-2 headers verbatim: {headers}.\n"
-        "Put the Markdown inside the JSON string (escape newlines as \\n). "
-        "No prose outside the JSON, no markdown fences around the whole object."
-    )
-
-
 def _build_live_prompt(
     role: str,
     spec: dict[str, Any],
@@ -336,15 +313,14 @@ def _build_live_prompt(
         response_hint = (
             "Return only the Markdown document required by your output contract."
         )
-    elif role == "overseer":
-        response_hint = _overseer_live_response_hint()
     else:
-        response_hint = (
-            "Return ONLY a raw JSON object (Turn 2 / final response). "
-            "First character must be `{`, last must be `}`.\n"
-            "Include decision fields from output_schema (including market_id from input). "
-            "Do not include signal_bundle. No prose, no markdown fences."
+        out_schema = spec.get("output_schema") or {}
+        response_hint = build_live_response_hint(
+            out_schema if isinstance(out_schema, dict) else {}
         )
+        extra = spec.get("live_response_hint")
+        if extra:
+            response_hint = f"{response_hint}\n\n{str(extra).strip()}"
     header = f"Run the {role} agent for this orchestrator payload."
     if agent_id:
         header = f"{header}\nOpenClaw agent id: {agent_id}"
