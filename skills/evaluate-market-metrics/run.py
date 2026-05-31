@@ -8,6 +8,10 @@ from __future__ import annotations
 import json
 import sys
 
+_OPENCLAW_ROOT = "/home/boldplane/.openclaw"
+if _OPENCLAW_ROOT not in sys.path:
+    sys.path.insert(0, _OPENCLAW_ROOT)
+
 from pydantic import ValidationError
 
 from evaluate_market_metrics import EvaluateMarketMetricsInput, evaluate_market_metrics
