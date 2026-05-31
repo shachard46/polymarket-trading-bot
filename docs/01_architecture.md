@@ -6,7 +6,7 @@
 - **Design Pattern:** Hub-and-Spoke. The central Orchestrator (`main.py`) controls execution flow. Agents are strictly ephemeral functions.
 - **Lifecycle:** Orchestrator creates JSON input -> invokes `openclaw agent --agent <id>` -> Agent executes Tools -> Agent returns JSON or Markdown -> Orchestrator parses output.
 - **Tooling:** Agents do not perform math, execute API calls natively, or manage state. They must use the deterministic Python tools defined in `04_skills_contracts.md`.
-- **Quantitative inputs:** Market history for `evaluate_market_metrics` is loaded by the Orchestrator from the polymarket-scraper's local SQLite DB (`poly-scan get_market_trends`). Agents never query the scraper directly.
+- **Quantitative inputs:** The Orchestrator passes only `market_id` and parsed filter directives to the Evaluator. The `evaluate_market_metrics` skill loads market history from the polymarket-scraper local SQLite DB via `poly-scan get_market_trends` / `poly-scan get_market` and returns a compact signal bundle for agent reasoning. Agents never query the scraper directly except through this skill.
 
 ## 2. File System Memory & The Pydantic Gatekeeper
 

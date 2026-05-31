@@ -46,17 +46,13 @@ def test_market_row_drops_rows_without_title():
 
 
 def test_phase2_forwards_full_market_row_to_phase3(monkeypatch, vault):
+    vault.cold_start_protocol()
     market = MarketRow(
         market_id="0xabc",
         market_title="Will X happen?",
         market_description="Background.",
         market_data={"yes_price": 0.42, "volume": 100.0, "liquidity": 200.0},
     )
-    monkeypatch.setattr(scraper, "get_market_trends", lambda mid, limit: [
-        {"datetime": "2026-01-01T00:00:00Z", "yes_price": 0.5},
-    ])
-    monkeypatch.setattr(scraper, "trends_limit_for_filters", lambda: 200)
-
     def evaluator_runner(role: str, payload: dict[str, Any]) -> dict[str, Any]:
         return {
             "market_id": payload["market_id"],
@@ -64,6 +60,7 @@ def test_phase2_forwards_full_market_row_to_phase3(monkeypatch, vault):
             "trigger": "breakout",
             "confidence_multiplier": 1.0,
             "details": "ok",
+            "signal_bundle": {"signals": {}},
             "error": None,
         }
 

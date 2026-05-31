@@ -1,0 +1,61 @@
+{
+  "market_id": "0xsample",
+  "latest_snapshot": {
+    "datetime": "2026-05-30T12:00:00+00:00",
+    "midpoint": 0.42,
+    "volume": 125000,
+    "liquidity": 3200,
+    "spread": 0.02,
+    "yes_price": 0.41,
+    "no_price": 0.59,
+    "days_since_creation": 14,
+    "total_volume": 125000
+  },
+  "hard_veto": {
+    "passed": null,
+    "trigger": null,
+    "details": null
+  },
+  "signals": {
+    "volume_shock": {
+      "ratio": 2.1,
+      "threshold": 3.0,
+      "baseline_median": 1200,
+      "current": 2520
+    },
+    "breakout": {
+      "pct_move": 0.08,
+      "threshold": 0.10,
+      "window_hrs": 4,
+      "start_price": 0.38,
+      "end_price": 0.42
+    },
+    "spread_anomaly": {
+      "ratio": 1.4,
+      "threshold": 2.0,
+      "baseline_median": 0.02,
+      "current": 0.028
+    },
+    "low_liquidity_breakout": {
+      "liquidity": 3200,
+      "pct_move": 0.07,
+      "threshold": 0.05,
+      "fired": false
+    },
+    "info_drift": {
+      "max_run": 8,
+      "threshold": 10,
+      "direction": "up",
+      "net_pct_change": 0.12,
+      "proxy": "snapshot"
+    }
+  },
+  "thresholds_applied": {},
+  "data_quality": {
+    "snapshots_used": 50,
+    "oldest": "2026-05-28T00:00:00+00:00",
+    "newest": "2026-05-30T12:00:00+00:00",
+    "start_date_available": true
+  },
+  "error": null
+}

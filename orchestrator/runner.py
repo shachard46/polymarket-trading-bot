@@ -171,6 +171,7 @@ def _evaluator_stub(payload: dict[str, Any]) -> dict[str, Any]:
         "trigger": None,
         "confidence_multiplier": 1.0,
         "details": "stub: no filter fired",
+        "signal_bundle": {"stub": True},
         "error": None,
     }
 
@@ -183,6 +184,7 @@ def _re_evaluator_stub(payload: dict[str, Any]) -> dict[str, Any]:
         "trigger": None,
         "confidence_multiplier": 1.0,
         "details": "stub: no filter fired",
+        "signal_bundle": {"stub": True},
         "error": None,
         "retry_deep_research": False,
         "refresh_reason": None,

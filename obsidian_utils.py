@@ -64,6 +64,7 @@ class FilterLogPayload(BaseModel):
     confidence_multiplier: float
     details: str
     error: Optional[str] = None
+    signal_bundle: Optional[dict[str, Any]] = None
 
 
 class ResearchFrontmatter(BaseModel):

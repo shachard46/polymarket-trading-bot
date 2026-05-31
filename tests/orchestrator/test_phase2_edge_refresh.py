@@ -92,6 +92,7 @@ def test_phase2_edge_refresh_enqueues_refresh_row(monkeypatch, vault):
             "trigger": "volume_shock",
             "confidence_multiplier": 1.1,
             "details": "regime changed",
+            "signal_bundle": {"signals": {"volume_shock": {"ratio": 4.0}}},
             "error": None,
             "retry_deep_research": True,
             "refresh_reason": "quantitative_regime_changed",

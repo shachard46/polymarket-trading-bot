@@ -8,7 +8,8 @@ tools:
 input_schema:
   market_id: string
   review_kind: string
-  historic_market_data: list[dict]
+  filter_directives: dict
+  historic_signal_bundle: "dict | null"
   prior_filter_trigger: "string | null"
   prior_evaluator_details: "string | null"
   prior_filter_log: "dict | null"
@@ -20,6 +21,7 @@ output_schema:
   trigger: "string | null"
   confidence_multiplier: float
   details: string
+  signal_bundle: "dict | null"
   error: "string | null"
   retry_deep_research: boolean
   refresh_reason: "string | null"

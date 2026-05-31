@@ -11,6 +11,7 @@ from orchestrator.scraper import MarketRow
 
 def test_phase2_passes_prior_filter_context_to_re_evaluator(monkeypatch, tmp_path):
     vault = ObsidianManager(vault_base=tmp_path)
+    vault.cold_start_protocol()
     market_id = "cond-1"
     vault.write_filter_log(
         market_id,
@@ -21,6 +22,7 @@ def test_phase2_passes_prior_filter_context_to_re_evaluator(monkeypatch, tmp_pat
             "confidence_multiplier": 1.5,
             "details": "earlier pass",
             "error": None,
+            "signal_bundle": {"signals": {"volume_shock": {"ratio": 3.5}}},
         },
     )
     vault.write_research_report(
@@ -43,6 +45,7 @@ def test_phase2_passes_prior_filter_context_to_re_evaluator(monkeypatch, tmp_pat
             "trigger": "breakout",
             "confidence_multiplier": 1.0,
             "details": "ok",
+            "signal_bundle": {"signals": {}},
             "error": None,
             "retry_deep_research": False,
             "refresh_reason": None,
@@ -55,5 +58,8 @@ def test_phase2_passes_prior_filter_context_to_re_evaluator(monkeypatch, tmp_pat
     assert captured["payload"]["review_kind"] == "quantitative"
     assert captured["payload"]["prior_filter_trigger"] == "volume_shock"
     assert captured["payload"]["prior_evaluator_details"] == "earlier pass"
+    assert captured["payload"]["historic_signal_bundle"] == {
+        "signals": {"volume_shock": {"ratio": 3.5}}
+    }
     assert captured["payload"]["prior_filter_log"] is None
     assert passed and refresh == []

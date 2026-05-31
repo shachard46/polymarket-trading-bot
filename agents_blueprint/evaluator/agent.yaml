@@ -1,17 +1,18 @@
 id: evaluator
 openclaw_agent_id: polymarket-evaluator
-description: Quantitative gatekeeper; runs evaluate_market_metrics on chronological market series.
+description: Quantitative gatekeeper; calls evaluate_market_metrics and reasons over signal_bundle.
 model: null
 tools:
   allow:
     - evaluate_market_metrics
 input_schema:
   market_id: string
-  historic_market_data: list[dict]
+  filter_directives: dict
 output_schema:
   market_id: string
   passed: boolean
   trigger: "string | null"
   confidence_multiplier: float
   details: string
+  signal_bundle: "dict | null"
   error: "string | null"

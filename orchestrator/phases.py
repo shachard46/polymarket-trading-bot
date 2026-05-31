@@ -23,6 +23,7 @@ from orchestrator.dead_letter import (
     quarantine_market,
     vault_write_or_quarantine,
 )
+from orchestrator.directives import extract_filter_directives
 from orchestrator.scraper import MarketRow
 from agents_blueprint import AGENTS
 from orchestrator.parse import (
@@ -192,7 +193,7 @@ def phase2_quantitative_routing(
     Caller merges with :func:`merge_phase3_inputs` and ``top_qualitative_markets()``.
     """
     log.info("[PHASE 2] Quantitative routing")
-    limit = scraper.trends_limit_for_filters()
+    filter_directives = extract_filter_directives(vault.read_directives())
     passed: list[dict[str, Any]] = []
     edge_refresh: list[dict[str, Any]] = []
 
@@ -207,8 +208,11 @@ def phase2_quantitative_routing(
                 )
                 continue
 
-            historic = scraper.get_market_trends(market_id, limit)
             has_active = vault.active_research_path(market_id).exists()
+            prior_full = vault.read_filter_log(market_id)
+            historic_signal_bundle = (
+                prior_full.get("signal_bundle") if prior_full else None
+            )
 
             if (
                 has_active
@@ -225,14 +229,14 @@ def phase2_quantitative_routing(
                     )
                     continue
 
-                prior_full = vault.read_filter_log(market_id)
-                research_md = vault.read_active_research(market_id) or ""
                 prior_trigger = prior_full.get("trigger") if prior_full else None
                 prior_details = prior_full.get("details") if prior_full else None
+                research_md = vault.read_active_research(market_id) or ""
                 payload_re: dict[str, Any] = {
                     "market_id": market_id,
                     "review_kind": "edge_research_refresh",
-                    "historic_market_data": historic,
+                    "filter_directives": filter_directives,
+                    "historic_signal_bundle": historic_signal_bundle,
                     "prior_filter_trigger": prior_trigger,
                     "prior_evaluator_details": prior_details,
                     "prior_filter_log": prior_full,
@@ -258,14 +262,15 @@ def phase2_quantitative_routing(
             if role == "evaluator":
                 payload: dict[str, Any] = {
                     "market_id": market_id,
-                    "historic_market_data": historic,
+                    "filter_directives": filter_directives,
                 }
             else:
-                prior = vault.read_filter_log(market_id)
+                prior = prior_full
                 payload = {
                     "market_id": market_id,
                     "review_kind": "quantitative",
-                    "historic_market_data": historic,
+                    "filter_directives": filter_directives,
+                    "historic_signal_bundle": historic_signal_bundle,
                     "prior_filter_trigger": prior.get("trigger") if prior else None,
                     "prior_evaluator_details": prior.get("details") if prior else None,
                     "prior_filter_log": None,
@@ -392,11 +397,8 @@ def _research_market(
         return None
 
     from_edge = bool(row.get("_edge_research_refresh"))
-    edge_count = (
-        _read_edge_research_refresh_count(vault, market_id) + 1
-        if from_edge
-        else 0
-    )
+    prev_edge = _read_edge_research_refresh_count(vault, market_id)
+    edge_count = prev_edge + 1 if from_edge else prev_edge
 
     payload = {
         "market_id": market_id,

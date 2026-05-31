@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from config.trading_constants import FILTERS
 from orchestrator.runner import spawn_agent
 from orchestrator.schema_validation import (
     AgentSchemaError,
@@ -44,28 +45,26 @@ def test_validate_payload_rejects_missing_required_field():
 
 
 def test_spawn_agent_rejects_bad_input_before_calling_runner(monkeypatch):
-    # Stub mode: the empty-string return is fine; we want to prove that
-    # a malformed Hub payload never makes it to the SDK at all.
     with pytest.raises(AgentSchemaError):
-        spawn_agent("evaluator", {"market_id": "x"})  # missing historic_market_data
+        spawn_agent("evaluator", {"market_id": "x"})  # missing filter_directives
 
 
 def test_spawn_agent_accepts_valid_input(monkeypatch):
-    # Schema-valid input → schema-valid stub response.
     out = spawn_agent(
         "evaluator",
-        {"market_id": "x", "historic_market_data": []},
+        {"market_id": "x", "filter_directives": dict(FILTERS)},
     )
     assert isinstance(out, dict)
     assert out["market_id"] == "x"
     assert out["error"] is None
+    assert "signal_bundle" in out
 
 
 def test_spawn_agent_re_evaluator_requires_schema_fields():
     with pytest.raises(AgentSchemaError):
         spawn_agent(
             "re_evaluator",
-            {"market_id": "x", "historic_market_data": []},
+            {"market_id": "x", "filter_directives": dict(FILTERS)},
         )
 
 
@@ -75,7 +74,8 @@ def test_spawn_agent_re_evaluator_accepts_quantitative_payload():
         {
             "market_id": "x",
             "review_kind": "quantitative",
-            "historic_market_data": [],
+            "filter_directives": dict(FILTERS),
+            "historic_signal_bundle": None,
             "prior_filter_trigger": None,
             "prior_evaluator_details": None,
             "prior_filter_log": None,
@@ -94,7 +94,8 @@ def test_spawn_agent_re_evaluator_accepts_edge_research_refresh_payload():
         {
             "market_id": "x",
             "review_kind": "edge_research_refresh",
-            "historic_market_data": [],
+            "filter_directives": dict(FILTERS),
+            "historic_signal_bundle": {"signals": {}},
             "prior_filter_trigger": None,
             "prior_evaluator_details": None,
             "prior_filter_log": {"passed": True},
