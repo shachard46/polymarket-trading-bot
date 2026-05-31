@@ -15,5 +15,4 @@ description: Loads market history from polymarket-scraper via poly-scan, compute
 
 - **Command:** `python3 {baseDir}/run.py '<json>'`
 - **Args JSON:** `{"market_id": "<from input>", "filter_overrides": <filter_directives or null>}`
-- **Env:** `PYTHONPATH` must include the directory containing `config/trading_constants.py`; set `POLY_SCAN_BIN` or ensure `poly-scan` is on `PATH`
 - **Return:** parse stdout as the signal_bundle; do not read source files or recompute metrics
