@@ -37,6 +37,14 @@ from orchestrator.schema_validation import AgentSchemaError, validate_payload
 
 log = logging.getLogger(__name__)
 
+# Must match obsidian_utils._REQUIRED_DIRECTIVE_HEADERS (Overseer structural contract).
+_OVERSEER_REQUIRED_HEADERS: tuple[str, ...] = (
+    "## Research Protocol",
+    "## Filter Weightings",
+    "## Risk Constraints",
+    "## Output Requirements",
+)
+
 
 class AgentRunner(Protocol):
     """Callable contract every phase uses to spawn an agent."""
@@ -113,7 +121,15 @@ def _validate_response(
         parsed,
         output_schema=spec.get("output_schema"),
     )
-    validate_payload(role, "output", output_model, parsed)
+    try:
+        validate_payload(role, "output", output_model, parsed)
+    except AgentSchemaError:
+        if role == "overseer" and isinstance(parsed, dict):
+            log.warning(
+                "overseer output schema mismatch; response keys: %s",
+                sorted(parsed.keys()),
+            )
+        raise
 
 
 def _spawn_stub(role: str, spec: dict[str, Any], payload: dict[str, Any]) -> Any:
@@ -275,18 +291,37 @@ def _spawn_live(role: str, spec: dict[str, Any], payload: dict[str, Any]) -> Any
     result = run_agent(
         agent_id,
         prompt,
-        session_key=_live_session_key(agent_id, payload),
+        session_key=_live_session_key(agent_id, role, payload),
     )
     return extract_agent_text(result)
 
 
-def _live_session_key(agent_id: str, payload: dict[str, Any]) -> str:
+def _live_session_key(agent_id: str, role: str, payload: dict[str, Any]) -> str:
     """Scope OpenClaw transcript state to one market per agent."""
+    if role == "overseer":
+        return f"agent:{agent_id}:orch-overseer-directives"
     raw_market_id = str(payload.get("market_id") or "global")
     safe_market_id = "".join(
         char if char.isalnum() or char in "._-" else "-" for char in raw_market_id
     )
     return f"agent:{agent_id}:orch-{safe_market_id}"
+
+
+def _overseer_live_response_hint() -> str:
+    headers = ", ".join(_OVERSEER_REQUIRED_HEADERS)
+    return (
+        "Return ONLY a raw JSON object (final response). "
+        "First character must be `{`, last must be `}`.\n"
+        "Required keys exactly: new_directives_markdown, rationale, error "
+        "(use null for error when successful).\n"
+        "Do NOT include market_id, passed, signal_bundle, or any per-market "
+        "decision fields.\n"
+        "new_directives_markdown must be the complete replacement for "
+        "active_directives.md: YAML frontmatter (--- ... ---) then body with "
+        f"these level-2 headers verbatim: {headers}.\n"
+        "Put the Markdown inside the JSON string (escape newlines as \\n). "
+        "No prose outside the JSON, no markdown fences around the whole object."
+    )
 
 
 def _build_live_prompt(
@@ -297,16 +332,19 @@ def _build_live_prompt(
     agent_id: str | None = None,
 ) -> str:
     """Serialize the orchestrator payload for the target OpenClaw workspace."""
-    response_hint = (
-        "Return only the Markdown document required by your output contract."
-        if spec.get("output_is_markdown")
-        else (
+    if spec.get("output_is_markdown"):
+        response_hint = (
+            "Return only the Markdown document required by your output contract."
+        )
+    elif role == "overseer":
+        response_hint = _overseer_live_response_hint()
+    else:
+        response_hint = (
             "Return ONLY a raw JSON object (Turn 2 / final response). "
             "First character must be `{`, last must be `}`.\n"
             "Include decision fields from output_schema (including market_id from input). "
             "Do not include signal_bundle. No prose, no markdown fences."
         )
-    )
     header = f"Run the {role} agent for this orchestrator payload."
     if agent_id:
         header = f"{header}\nOpenClaw agent id: {agent_id}"
@@ -318,4 +356,10 @@ def _build_live_prompt(
     )
 
 
-__all__ = ["AgentRunner", "STUB_RESPONSES", "spawn_agent"]
+__all__ = [
+    "AgentRunner",
+    "STUB_RESPONSES",
+    "_build_live_prompt",
+    "_live_session_key",
+    "spawn_agent",
+]

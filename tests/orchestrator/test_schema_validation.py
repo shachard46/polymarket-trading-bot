@@ -4,13 +4,36 @@ from __future__ import annotations
 
 import pytest
 
+from agents_blueprint import AGENTS
 from config.trading_constants import FILTERS
-from orchestrator.runner import spawn_agent
+from orchestrator.runner import STUB_RESPONSES, _build_live_prompt, _live_session_key, spawn_agent
 from orchestrator.schema_validation import (
     AgentSchemaError,
     build_model,
     validate_payload,
 )
+
+_OVERSEER_DIRECTIVES = """\
+---
+version: "1.0"
+---
+
+## Research Protocol
+
+Body.
+
+## Filter Weightings
+
+Body.
+
+## Risk Constraints
+
+Body.
+
+## Output Requirements
+
+Body.
+"""
 
 
 def test_build_model_resolves_nullable_and_primitives():
@@ -128,3 +151,67 @@ def test_spawn_agent_executioner_accepts_paper_mode():
     )
     assert out["market_id"] == "m"
     assert out["executed"] is False
+
+
+def test_spawn_agent_overseer_accepts_valid_payload():
+    out = spawn_agent(
+        "overseer",
+        {
+            "post_mortems": [{"market_id": "m1", "content": "post-mortem body"}],
+            "current_directives": _OVERSEER_DIRECTIVES,
+        },
+    )
+    assert isinstance(out, dict)
+    assert "new_directives_markdown" in out
+    assert out["rationale"]
+    assert out.get("error") is None
+    assert "market_id" not in out
+
+
+def test_spawn_agent_overseer_rejects_evaluator_shape(monkeypatch):
+    def bad_overseer(_payload: dict) -> dict:
+        return {
+            "market_id": None,
+            "passed": False,
+            "trigger": None,
+            "confidence_multiplier": 1.0,
+            "details": "wrong shape",
+            "error": None,
+        }
+
+    monkeypatch.setitem(STUB_RESPONSES, "overseer", bad_overseer)
+    with pytest.raises(AgentSchemaError) as exc_info:
+        spawn_agent(
+            "overseer",
+            {
+                "post_mortems": [],
+                "current_directives": _OVERSEER_DIRECTIVES,
+            },
+        )
+    msg = str(exc_info.value)
+    assert "new_directives_markdown" in msg or "rationale" in msg
+
+
+def test_build_live_prompt_overseer_uses_directives_contract():
+    spec = AGENTS["overseer"]
+    prompt = _build_live_prompt(
+        "overseer",
+        spec,
+        {"post_mortems": [], "current_directives": "x"},
+        agent_id="polymarket-overseer",
+    )
+    assert "new_directives_markdown" in prompt
+    assert "rationale" in prompt
+    assert "## Research Protocol" in prompt
+    assert "market_id from input" not in prompt
+    assert "Do NOT include market_id" in prompt
+
+
+def test_live_session_key_overseer_is_isolated():
+    key = _live_session_key(
+        "polymarket-overseer",
+        "overseer",
+        {"post_mortems": [], "current_directives": "x"},
+    )
+    assert key == "agent:polymarket-overseer:orch-overseer-directives"
+    assert "global" not in key
