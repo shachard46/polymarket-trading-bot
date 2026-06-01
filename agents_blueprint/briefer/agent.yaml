@@ -1,15 +1,15 @@
 id: briefer
 openclaw_agent_id: polymarket-briefer
-description: News context aggregator via web_search.
+description: Query planner — emits 1-3 targeted A-IQ research queries.
 model: null
 tools:
-  allow:
-    - web_search
+  allow: []
 input_schema:
   market_id: string
   market_title: string
   market_description: string
+  planning_context: "string | null"
 output_schema:
   market_id: string
-  summary: "string | null"
+  research_queries: list[str]
   error: "string | null"

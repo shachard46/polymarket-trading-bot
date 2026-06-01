@@ -1,13 +1,19 @@
 id: deep_researcher
 openclaw_agent_id: polymarket-deep-researcher
-description: Fundamental analyst; AIQ-backed bull/bear theses and estimated_p.
+description: Fundamental analyst; synthesizes Hub-fetched research_bundle into theses and estimated_p.
 model: null
 tools:
-  allow:
-    - execute_aiq_query
+  allow: []
 input_schema:
   market_id: string
   market_data: dict
-  context_summary: string
   directives: string
-output_schema: markdown_with_yaml_frontmatter
+  research_bundle: list[dict]
+  system_override: "string | null"
+  format_validation_error: "string | null"
+output_schema: deep_researcher_state_machine
+live_response_hint: |
+  Output raw JSON only (no markdown fences). Discriminate on "status":
+  - needs_more_data: {"status":"needs_more_data","new_queries":["..."]} with 1-3 new A-IQ query strings.
+  - complete: {"status":"complete","market_id":"...","estimated_p":0.0-1.0,"markdown":"..."} where markdown is the FULL document with YAML frontmatter (market_id, estimated_p, error) plus ## Bull Thesis, ## Bear Thesis, and empty ## Post-Mortem.
+  When system_override is present in input, you MUST return status complete.

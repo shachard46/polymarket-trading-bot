@@ -18,8 +18,9 @@ from typing import Any, Optional, Type, Union, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, ValidationError, create_model
 
-# Sentinel used by ``deep_researcher`` instead of a dict schema.
+# Sentinels used by ``deep_researcher`` instead of a dict schema.
 MARKDOWN_OUTPUT = "markdown_with_yaml_frontmatter"
+DEEP_RESEARCHER_STATE_MACHINE = "deep_researcher_state_machine"
 
 _NULLABLE_RE = re.compile(r"^(?P<inner>.+?)\s*\|\s*null$", re.IGNORECASE)
 
@@ -105,10 +106,16 @@ def is_markdown_output(schema: Any) -> bool:
     return isinstance(schema, str) and schema.strip() == MARKDOWN_OUTPUT
 
 
+def is_state_machine_output(schema: Any) -> bool:
+    return isinstance(schema, str) and schema.strip() == DEEP_RESEARCHER_STATE_MACHINE
+
+
 __all__ = [
     "MARKDOWN_OUTPUT",
+    "DEEP_RESEARCHER_STATE_MACHINE",
     "AgentSchemaError",
     "build_model",
     "validate_payload",
     "is_markdown_output",
+    "is_state_machine_output",
 ]

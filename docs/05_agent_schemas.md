@@ -43,45 +43,42 @@ Each role's [`agents_blueprint/<role>/agent.yaml`](../agents_blueprint/) declare
 
 ```
 
-## 2. The Context Briefer
+## 2. The Query Planner (briefer)
 
-- **System Prompt:** "Use `web_search` to find real-world news regarding the provided market. Return exactly one paragraph summarizing current events. If no data is found or the tool fails, populate the error field."
-- **Input Schema:** `{"market_id": "string", "market_title": "string", "market_description": "string"}`
+- **System Prompt:** "Plan 1–3 targeted A-IQ research queries from the market title, description, and optional planning context. The Hub runs `execute_aiq_query` in parallel — you do not call tools."
+- **Input Schema:** `{"market_id": "string", "market_title": "string", "market_description": "string", "planning_context": "string | null"}`
 - **Output Schema:**
 
 ```json
 {
   "market_id": "string",
-  "summary": "string | null",
+  "research_queries": ["string"],
   "error": "string | null"
 }
 ```
 
 ## 3. The Deep Researcher
 
-- **System Prompt:** "You are a fundamental analyst. Read the market data, context summary, and directives. Use the `execute_aiq_query` skill to conduct exhaustive, unconstrained qualitative research. You have no time limits. You MUST output a YAML frontmatter block containing 'market_id' and 'estimated_p', followed by the exact Markdown headers requested."
-- **Input Schema:** `{"market_id": "string", "market_data": "dict", "context_summary": "string", "directives": "string"}`
-- **Output Format:**
+- **System Prompt:** "Synthesize the Hub-provided `research_bundle` into bull/bear theses and a calibrated `estimated_p`. Output JSON with `status: needs_more_data` (new A-IQ queries) or `status: complete` (full markdown document)."
+- **Input Schema:** `{"market_id": "string", "market_data": "dict", "directives": "string", "research_bundle": "list[dict]", "system_override": "string | null", "format_validation_error": "string | null"}`
+- **Output Schema (state machine):**
 
-```markdown
----
-
-market_id: "string"
-estimated_p: float
-error: "string | null"
-
----
-
-## Bull Thesis
-
-[Your AIQ-backed analysis here]
-
-## Bear Thesis
-
-[Your AIQ-backed analysis here]
-
-## Post-Mortem
+```json
+{"status": "needs_more_data", "new_queries": ["string"]}
 ```
+
+```json
+{
+  "status": "complete",
+  "market_id": "string",
+  "estimated_p": float,
+  "markdown": "string"
+}
+```
+
+`markdown` is the full `02_Active_Research/{market_id}.md` wire format (YAML frontmatter + `## Bull Thesis`, `## Bear Thesis`, empty `## Post-Mortem`).
+
+Hub persistence: cumulative A-IQ results live in `02_Active_Research/research_bundles/{market_id}.json`.
 
 ## 4. The Trade Executioner
 

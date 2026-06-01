@@ -9,7 +9,9 @@ import pytest
 from config.trading_constants import STATUS_INACTIVE, STATUS_KEY
 from obsidian_utils import ObsidianManager
 from orchestrator import phases, scraper
+from orchestrator.runner import _stub_deep_researcher_markdown
 from orchestrator.scraper import MarketRow
+from tests.orchestrator.test_phase3_helpers import briefer_ok, deep_researcher_complete
 
 
 @pytest.fixture()
@@ -37,21 +39,23 @@ def test_mismatched_market_id_flags_inactive(monkeypatch, vault):
 
     def runner(role: str, payload: dict[str, Any]) -> Any:
         if role == "briefer":
-            return {
-                "market_id": payload["market_id"],
-                "summary": "ok",
-                "error": None,
-            }
+            return briefer_ok(payload)
         if role == "deep_researcher":
-            return (
-                "---\n"
-                'market_id: "0xWRONG"\n'
-                "estimated_p: 0.6\n"
-                "error: null\n"
-                "---\n\n"
-                "## Bull Thesis\n\nbody\n\n## Bear Thesis\n\nbody\n\n## Post-Mortem\n"
-            )
+            return {
+                "status": "complete",
+                "market_id": "0xWRONG",
+                "estimated_p": 0.6,
+                "markdown": _stub_deep_researcher_markdown("0xWRONG", estimated_p=0.6),
+            }
         raise AssertionError(role)
+
+    monkeypatch.setattr(
+        phases,
+        "fetch_research_bundle",
+        lambda queries: [
+            {"query": q, "research_data": "x", "error": None} for q in queries
+        ],
+    )
 
     out = phases.phase3_qualitative_pipeline(vault, runner=runner)
     assert out == []
@@ -83,17 +87,18 @@ def test_matching_market_id_proceeds(monkeypatch, vault):
 
     def runner(role: str, payload: dict[str, Any]) -> Any:
         if role == "briefer":
-            return {"market_id": payload["market_id"], "summary": "ok", "error": None}
+            return briefer_ok(payload)
         if role == "deep_researcher":
-            return (
-                "---\n"
-                f'market_id: "{payload["market_id"]}"\n'
-                "estimated_p: 0.6\n"
-                "error: null\n"
-                "---\n\n"
-                "## Bull Thesis\n\nbody\n\n## Bear Thesis\n\nbody\n\n## Post-Mortem\n"
-            )
+            return deep_researcher_complete(payload, estimated_p=0.6)
         raise AssertionError(role)
+
+    monkeypatch.setattr(
+        phases,
+        "fetch_research_bundle",
+        lambda queries: [
+            {"query": q, "research_data": "x", "error": None} for q in queries
+        ],
+    )
 
     out = phases.phase3_qualitative_pipeline(vault, runner=runner)
     assert len(out) == 1

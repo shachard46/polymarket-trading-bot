@@ -18,8 +18,10 @@ This document defines _what_ happens and _where_ data moves. Do not implement ag
 ## 3. Qualitative Pipeline (Decoupled)
 
 - **Action:** Phase 3 scans `/01_Filters/` only (does not poll `/03_Trades/` for edge refresh). A market is eligible if it is not `status: inactive` and **either**:
-  - **A)** `passed: true` and no error-free file in `/02_Active_Research/` → Briefer → Deep Researcher → write active research.
-  - **B)** `pending_edge_refresh: true` and `edge_research_refresh_count` in active research is below the cap → Deep Researcher only (overwrite active), increment count, strip `pending_edge_refresh` from the filter file.
+  - **A)** `passed: true` and no error-free file in `/02_Active_Research/` → Query Planner (`briefer`) → Hub parallel A-IQ fetch → iterative Deep Researcher → write active research.
+  - **B)** `pending_edge_refresh: true` and `edge_research_refresh_count` in active research is below the cap → same iterative loop (optional `planning_context` from prior research), overwrite active, increment count, strip `pending_edge_refresh` from the filter file.
+- **Hub I/O:** A-IQ results accumulate in `/02_Active_Research/research_bundles/{market_id}.json`. If that file already has queries (e.g. after `replay`), Phase 3 skips the Query Planner and redundant fetches and resumes synthesis.
+- **Loop cap:** At most two Deep Researcher rounds; if still `needs_more_data`, a forced-synthesis override requires `status: complete` before writing `/02_Active_Research/{market_id}.md`.
 - Queue is sorted by `confidence_multiplier` and capped with `OPENCLAW_TOP_MARKETS`.
 
 ## 4. Execution

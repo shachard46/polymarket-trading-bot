@@ -8,6 +8,7 @@ import pytest
 
 from orchestrator import phases, scraper
 from orchestrator.scraper import MarketRow, _market_row_from_scraper
+from tests.orchestrator.test_phase3_helpers import briefer_ok, deep_researcher_complete
 
 
 @pytest.fixture()
@@ -103,21 +104,18 @@ def test_phase3_passes_real_title_and_description_to_briefer(monkeypatch, vault)
     def runner(role: str, payload: dict[str, Any]) -> Any:
         captured.setdefault(role, []).append(payload)
         if role == "briefer":
-            return {
-                "market_id": payload["market_id"],
-                "summary": "stub summary",
-                "error": None,
-            }
+            return briefer_ok(payload)
         if role == "deep_researcher":
-            return (
-                "---\n"
-                f'market_id: "{payload["market_id"]}"\n'
-                "estimated_p: 0.5\n"
-                "error: null\n"
-                "---\n\n"
-                "## Bull Thesis\n\nbody\n\n## Bear Thesis\n\nbody\n\n## Post-Mortem\n"
-            )
+            return deep_researcher_complete(payload)
         raise AssertionError(f"unexpected role {role}")
+
+    monkeypatch.setattr(
+        phases,
+        "fetch_research_bundle",
+        lambda queries: [
+            {"query": q, "research_data": "stub", "error": None} for q in queries
+        ],
+    )
 
     out = phases.phase3_qualitative_pipeline(vault, runner=runner)
     assert len(out) == 1
@@ -128,7 +126,7 @@ def test_phase3_passes_real_title_and_description_to_briefer(monkeypatch, vault)
 
     dr_payload = captured["deep_researcher"][0]
     assert dr_payload["market_data"]["yes_price"] == 0.42
-    assert dr_payload["context_summary"] == "stub summary"
+    assert isinstance(dr_payload["research_bundle"], list)
 
     forwarded = out[0]
     assert forwarded["market_data"]["yes_price"] == 0.42

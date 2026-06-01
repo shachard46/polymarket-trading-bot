@@ -213,6 +213,24 @@ _DIR_EXTENSIONS: dict[str, str] = {
 _FRONTMATTER_DIR_KEYS: frozenset[str] = frozenset({"filters", "active", "post_mortem"})
 
 
+def _merge_research_bundle_queries(
+    existing: list[dict[str, Any]],
+    new_entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Append ``new_entries``, skipping duplicate ``query`` strings."""
+    seen = {str(e.get("query")) for e in existing if e.get("query")}
+    merged = list(existing)
+    for entry in new_entries:
+        query = entry.get("query")
+        if query:
+            key = str(query)
+            if key in seen:
+                continue
+            seen.add(key)
+        merged.append(entry)
+    return merged
+
+
 class ObsidianManager:
     """Single point of truth for all Vault I/O.
 
@@ -638,6 +656,63 @@ class ObsidianManager:
         archive = self._dirs["trades"] / "_resolved"
         archive.mkdir(parents=True, exist_ok=True)
         return archive
+
+    @property
+    def _research_bundles_dir(self) -> Path:
+        """Directory for Hub-persisted A-IQ query results (``research_bundles/``)."""
+        directory = self._dirs["active"] / "research_bundles"
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory
+
+    def _research_bundle_path(self, market_id: str) -> Path:
+        return self._research_bundles_dir / f"{market_id}.json"
+
+    def read_research_bundle(self, market_id: str) -> list[dict[str, Any]] | None:
+        """Return the ``queries`` list from a saved bundle, or ``None`` if missing.
+
+        An on-disk envelope with an empty ``queries`` array returns ``[]`` (no
+        salvaged data — Phase 3 will run the Query Planner).
+        """
+        path = self._research_bundle_path(market_id)
+        if not path.exists():
+            return None
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(raw, dict):
+            return None
+        queries = raw.get("queries")
+        if not isinstance(queries, list):
+            return None
+        if not queries:
+            return []
+        return [q for q in queries if isinstance(q, dict)]
+
+    def write_research_bundle(
+        self,
+        market_id: str,
+        bundle: list[dict[str, Any]],
+    ) -> Path:
+        """Write or merge A-IQ results under ``research_bundles/{market_id}.json``.
+
+        New entries are appended; duplicate ``query`` strings are skipped.
+        """
+        path = self._research_bundle_path(market_id)
+        existing: list[dict[str, Any]] = []
+        if path.exists():
+            prior = self.read_research_bundle(market_id)
+            if prior:
+                existing = prior
+
+        merged = _merge_research_bundle_queries(existing, bundle)
+        envelope = {
+            "market_id": market_id,
+            "fetched_at": datetime.now(tz=timezone.utc).isoformat(),
+            "queries": merged,
+        }
+        path.write_text(json.dumps(envelope, indent=2), encoding="utf-8")
+        return path
 
     def active_research_path(self, market_id: str) -> Path:
         """Return the path where active research for ``market_id`` lives."""

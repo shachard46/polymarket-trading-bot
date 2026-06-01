@@ -8,6 +8,7 @@ from config.trading_constants import FILTERS
 from orchestrator import runner
 from orchestrator.config import RUNNER_MODE_ENV, RUNNER_MODE_LIVE
 from orchestrator.parse import agent_error_reason, parse_agent_json_or_yaml
+from orchestrator.agent_outputs import parse_deep_researcher_json
 from orchestrator.research import parse_deep_researcher
 
 _EVALUATOR_IN = {"market_id": "0xabc", "filter_directives": dict(FILTERS)}
@@ -42,24 +43,33 @@ def test_stub_evaluator_returns_schema_valid_response():
 def test_stub_briefer_includes_market_title():
     out = runner.spawn_agent(
         "briefer",
-        {"market_id": "0xabc", "market_title": "Will X?", "market_description": ""},
+        {
+            "market_id": "0xabc",
+            "market_title": "Will X?",
+            "market_description": "",
+            "planning_context": None,
+        },
     )
     parsed = out if isinstance(out, dict) else parse_agent_json_or_yaml(out)
-    assert "Will X?" in parsed["summary"]
+    assert any("Will X?" in q for q in parsed["research_queries"])
     assert parsed["error"] is None
 
 
-def test_stub_deep_researcher_returns_parseable_markdown():
+def test_stub_deep_researcher_returns_parseable_complete_payload():
     out = runner.spawn_agent(
         "deep_researcher",
         {
             "market_id": "0xabc",
             "market_data": {},
-            "context_summary": "x",
             "directives": "y",
+            "research_bundle": [],
+            "system_override": None,
+            "format_validation_error": None,
         },
     )
-    research = parse_deep_researcher(out)
+    parsed = parse_deep_researcher_json(out)
+    assert parsed.status == "complete"
+    research = parse_deep_researcher(parsed.markdown)
     assert research.market_id == "0xabc"
     assert 0.0 <= research.estimated_p <= 1.0
     assert "## Bull Thesis" in research.body
@@ -79,11 +89,14 @@ def test_stub_error_deep_researcher_carries_error_in_frontmatter(monkeypatch):
         {
             "market_id": "0xabc",
             "market_data": {},
-            "context_summary": "x",
             "directives": "y",
+            "research_bundle": [],
+            "system_override": None,
+            "format_validation_error": None,
         },
     )
-    research = parse_deep_researcher(out)
+    parsed = parse_deep_researcher_json(out)
+    research = parse_deep_researcher(parsed.markdown)
     assert research.error == "stub_error mode"
 
 

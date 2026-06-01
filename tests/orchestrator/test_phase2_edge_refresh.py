@@ -244,17 +244,16 @@ def test_phase3_processes_pending_edge_refresh(monkeypatch, vault):
         "fetch_market_row",
         lambda mid: MarketRow(market_id=mid, market_title="T", market_data={}),
     )
+    vault.write_research_bundle(
+        market_id,
+        [{"query": "prior edge", "research_data": "saved", "error": None}],
+    )
+
+    from tests.orchestrator.test_phase3_helpers import deep_researcher_complete
 
     def runner(role: str, payload: dict[str, Any]) -> Any:
         if role == "deep_researcher":
-            return (
-                "---\n"
-                f'market_id: "{payload["market_id"]}"\n'
-                "estimated_p: 0.6\n"
-                "error: null\n"
-                "---\n\n"
-                "## Bull Thesis\n\nb\n\n## Bear Thesis\n\nb\n\n## Post-Mortem\n"
-            )
+            return deep_researcher_complete(payload, estimated_p=0.6)
         raise AssertionError(f"unexpected role {role}")
 
     out = phases.phase3_qualitative_pipeline(vault, runner=runner)

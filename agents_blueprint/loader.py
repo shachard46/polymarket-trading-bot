@@ -12,7 +12,11 @@ from typing import Any
 
 import yaml
 
-from orchestrator.schema_validation import build_model, is_markdown_output
+from orchestrator.schema_validation import (
+    build_model,
+    is_markdown_output,
+    is_state_machine_output,
+)
 
 _AGENTS_MD = "AGENTS.md"
 _AGENT_YAML = "agent.yaml"
@@ -52,6 +56,9 @@ def load_agents_from_dir(agents_root: Path | None = None) -> dict[str, dict[str,
             out_schema: Any = meta.get("output_schema", {})
 
             live_hint = meta.get("live_response_hint")
+            non_dict_output = is_markdown_output(out_schema) or is_state_machine_output(
+                out_schema
+            )
             agents[role] = {
                 "system_prompt": system_prompt,
                 "input_schema": in_schema,
@@ -61,8 +68,13 @@ def load_agents_from_dir(agents_root: Path | None = None) -> dict[str, dict[str,
                 ),
                 # Pre-built validators applied by ``orchestrator.runner.spawn_agent``.
                 "input_model": build_model(f"{role.title()}Input", in_schema),
-                "output_model": build_model(f"{role.title()}Output", out_schema),
+                "output_model": (
+                    None
+                    if non_dict_output
+                    else build_model(f"{role.title()}Output", out_schema)
+                ),
                 "output_is_markdown": is_markdown_output(out_schema),
+                "output_is_state_machine": is_state_machine_output(out_schema),
                 "workspace_path": str(child.resolve()),
                 "openclaw": {
                     "openclaw_agent_id": meta.get("openclaw_agent_id"),

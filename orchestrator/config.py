@@ -38,6 +38,17 @@ TOP_QUALITATIVE_MARKETS_ENV = "OPENCLAW_TOP_MARKETS"
 EDGE_RESEARCH_REFRESH_MAX_ENV = "OPENCLAW_EDGE_RESEARCH_REFRESH_MAX"
 DEFAULT_EDGE_RESEARCH_REFRESH_MAX = 3
 
+# Phase 3 iterative research loop
+MAX_FORMAT_RETRIES = 2
+MAX_RESEARCH_ITERATIONS = 2
+
+FORCED_SYNTHESIS_OVERRIDE = (
+    "SYSTEM OVERRIDE: Maximum research depth reached. You are strictly forbidden "
+    "from requesting more data. You must evaluate the current research_bundle and "
+    "output a status: complete JSON payload with a final Markdown report and "
+    "estimated_p."
+)
+
 
 def top_qualitative_markets() -> int:
     """Max markets promoted from quantitative gate to qualitative pipeline (default 20)."""
@@ -133,6 +144,9 @@ __all__ = [
     "top_qualitative_markets",
     "EDGE_RESEARCH_REFRESH_MAX_ENV",
     "max_edge_research_refreshes",
+    "MAX_FORMAT_RETRIES",
+    "MAX_RESEARCH_ITERATIONS",
+    "FORCED_SYNTHESIS_OVERRIDE",
     "VAULT_PATH_ENV",
     "resolve_vault_base",
 ]

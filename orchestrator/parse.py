@@ -11,11 +11,16 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 import yaml
+from pydantic import BaseModel, ValidationError
+
+from orchestrator.config import MAX_FORMAT_RETRIES
 
 log = logging.getLogger(__name__)
+
+T = TypeVar("T", bound=BaseModel)
 
 _FENCE_RE = re.compile(
     r"^\s*```(?:json|yaml|yml)?\s*\n(?P<body>.*?)\s*```\s*$",
@@ -71,6 +76,13 @@ def _parse_body_candidates(raw: str) -> dict[str, Any] | None:
                 parsed = None
         if isinstance(parsed, dict):
             return parsed
+        if isinstance(parsed, str):
+            try:
+                nested = json.loads(parsed)
+            except json.JSONDecodeError:
+                nested = None
+            if isinstance(nested, dict):
+                return nested
     return None
 
 
@@ -176,6 +188,61 @@ def coerce_deep_researcher_markdown(raw: Any) -> str:
     )
 
 
+def preprocess_agent_text(raw: str) -> str:
+    """Canonical pre-parser: strip fences and prefer embedded fenced JSON bodies."""
+    text = strip_code_fence(raw).strip()
+    fenced = extract_fenced_block(raw)
+    if fenced:
+        return fenced
+    return text
+
+
+def run_agent_with_format_retries(
+    runner: Callable[[str, dict[str, Any]], Any],
+    role: str,
+    payload: dict[str, Any],
+    *,
+    validate_fn: Callable[[dict[str, Any]], T],
+    max_retries: int = MAX_FORMAT_RETRIES,
+) -> T:
+    """Invoke ``runner`` until ``validate_fn`` accepts the parsed JSON mapping.
+
+    On :class:`ValidationError`, append ``format_validation_error`` to the payload
+    and retry up to ``max_retries`` times after the first failure.
+    """
+    attempt_payload = dict(payload)
+    last_error: ValidationError | None = None
+    max_attempts = max_retries + 1
+
+    for attempt in range(max_attempts):
+        raw = runner(role, attempt_payload)
+        try:
+            if isinstance(raw, dict):
+                parsed = raw
+            else:
+                text = raw if isinstance(raw, str) else str(raw)
+                parsed = parse_agent_json_or_yaml(preprocess_agent_text(text))
+            return validate_fn(parsed)
+        except AgentOutputParseError as exc:
+            if attempt >= max_retries:
+                raise
+            attempt_payload = {
+                **payload,
+                "format_validation_error": str(exc),
+            }
+        except ValidationError as exc:
+            last_error = exc
+            if attempt >= max_retries:
+                break
+            attempt_payload = {
+                **payload,
+                "format_validation_error": str(exc),
+            }
+
+    assert last_error is not None
+    raise last_error
+
+
 def agent_error_reason(payload: dict[str, Any] | None) -> str | None:
     """Return the error string from an agent payload, if any.
 
@@ -196,8 +263,10 @@ __all__ = [
     "AgentOutputParseError",
     "strip_code_fence",
     "extract_fenced_block",
+    "preprocess_agent_text",
     "parse_agent_json_or_yaml",
     "normalize_structured_output",
     "coerce_deep_researcher_markdown",
+    "run_agent_with_format_retries",
     "agent_error_reason",
 ]

@@ -16,6 +16,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from pydantic import ValidationError
+
 from obsidian_utils import ObsidianManager, VaultWriteError
 from config.trading_constants import BELOW_EDGE_KEY, PENDING_EDGE_REFRESH_KEY
 from orchestrator import scraper
@@ -32,12 +34,20 @@ from orchestrator.state import (
 from orchestrator.directives import extract_filter_directives
 from orchestrator.scraper import MarketRow
 from agents_blueprint import AGENTS
+from orchestrator.agent_outputs import (
+    BrieferOutput,
+    DeepResearcherComplete,
+    DeepResearcherNeedsMore,
+    parse_deep_researcher_json,
+)
+from orchestrator.aiq_bundle import fetch_research_bundle
+from orchestrator.config import FORCED_SYNTHESIS_OVERRIDE, MAX_RESEARCH_ITERATIONS
 from orchestrator.parse import (
     AgentOutputParseError,
     agent_error_reason,
-    coerce_deep_researcher_markdown,
     normalize_structured_output,
     parse_agent_json_or_yaml,
+    run_agent_with_format_retries,
 )
 from orchestrator.research import parse_deep_researcher, split_yaml_frontmatter_markdown
 from orchestrator.evaluator_output import attach_signal_bundle
@@ -401,26 +411,16 @@ def _edge_refresh_research(
     directives: str,
     _candidate: Phase3Candidate,
 ) -> dict[str, Any] | None:
-    """Deep Researcher only — overwrite active research; strip pending flag."""
+    """Iterative research refresh — overwrite active research; strip pending flag."""
     market_id = row["market_id"]
-    summary = _context_summary_from_active(vault, market_id)
-    if not summary:
-        brief_in = {
-            "market_id": market_id,
-            "market_title": row.get("market_title", ""),
-            "market_description": row.get("market_description", ""),
-        }
-        brief, reason = _run_structured_agent(runner, "briefer", brief_in)
-        if reason:
-            flag_inactive(vault, market_id, "phase3", reason, brief or brief_in)
-            return None
-        summary = brief.get("summary")
-        if not summary:
-            flag_inactive(vault, market_id, "phase3", "briefer returned no summary", brief)
-            return None
-
-    result = _run_deep_researcher(
-        vault, runner, row, directives, summary, market_id, from_edge=True
+    planning_context = _planning_context_from_active(vault, market_id)
+    result = _run_iterative_research(
+        vault,
+        runner,
+        row,
+        directives,
+        from_edge=True,
+        planning_context=planning_context,
     )
     if result is None:
         return None
@@ -429,8 +429,8 @@ def _edge_refresh_research(
     return result
 
 
-def _context_summary_from_active(vault: ObsidianManager, market_id: str) -> str | None:
-    """Use Bull thesis excerpt from existing research as context when re-briefing."""
+def _planning_context_from_active(vault: ObsidianManager, market_id: str) -> str | None:
+    """Use Bull thesis excerpt from existing research as Query Planner context."""
     raw = vault.read_active_research(market_id)
     if not raw:
         return None
@@ -455,55 +455,111 @@ def _research_market(
     row: dict[str, Any],
     directives: str,
 ) -> dict[str, Any] | None:
-    """Brief + research a single market. Returns row for phase 4 or None on failure."""
-    market_id = row["market_id"]
-
-    brief_in = {
-        "market_id": market_id,
-        "market_title": row.get("market_title", ""),
-        "market_description": row.get("market_description", ""),
-    }
-    brief, reason = _run_structured_agent(runner, "briefer", brief_in)
-    if reason:
-        flag_inactive(vault, market_id, "phase3", reason, brief or brief_in)
-        return None
-    summary = brief.get("summary")
-    if not summary:
-        flag_inactive(vault, market_id, "phase3", "briefer returned no summary", brief)
-        return None
-
-    return _run_deep_researcher(
-        vault, runner, row, directives, summary, market_id, from_edge=False
+    """Plan, fetch, and research a single market. Returns row for phase 4 or None."""
+    return _run_iterative_research(
+        vault, runner, row, directives, from_edge=False, planning_context=None
     )
 
 
-def _run_deep_researcher(
+def _bundle_has_entries(bundle: list[dict[str, Any]] | None) -> bool:
+    return bool(bundle)
+
+
+def _plan_research_queries(
     vault: ObsidianManager,
     runner: AgentRunner,
     row: dict[str, Any],
-    directives: str,
-    summary: str,
-    market_id: str,
-    *,
-    from_edge: bool,
-) -> dict[str, Any] | None:
-    dr_in = {
+    planning_context: str | None,
+) -> list[str] | None:
+    market_id = row["market_id"]
+    brief_in: dict[str, Any] = {
         "market_id": market_id,
-        "market_data": row.get("market_data") or {},
-        "context_summary": summary,
-        "directives": directives,
+        "market_title": row.get("market_title", ""),
+        "market_description": row.get("market_description", ""),
+        "planning_context": planning_context,
     }
-    raw_dr = runner("deep_researcher", dr_in)
+    spec = AGENTS["briefer"]
+
+    def _validate_briefer(parsed: dict[str, Any]) -> BrieferOutput:
+        normalized = normalize_structured_output(
+            "briefer",
+            brief_in,
+            parsed,
+            output_schema=spec.get("output_schema"),
+        )
+        return BrieferOutput.model_validate(normalized)
+
     try:
-        markdown = coerce_deep_researcher_markdown(raw_dr)
-        research = parse_deep_researcher(markdown)
-    except (AgentOutputParseError, ValueError) as exc:
+        brief = run_agent_with_format_retries(
+            runner, "briefer", brief_in, validate_fn=_validate_briefer
+        )
+    except ValidationError as exc:
         flag_inactive(
             vault,
             market_id,
             "phase3",
-            f"deep researcher parse error: {exc}",
-            {"raw": str(raw_dr)},
+            f"briefer output validation failed: {exc}",
+            brief_in,
+        )
+        return None
+
+    err = agent_error_reason(brief.model_dump())
+    if err:
+        flag_inactive(vault, market_id, "phase3", f"briefer error: {err}", brief.model_dump())
+        return None
+
+    return list(brief.research_queries)
+
+
+def _fetch_and_persist_bundle(
+    vault: ObsidianManager,
+    market_id: str,
+    queries: list[str],
+) -> None:
+    cleaned = [str(q).strip() for q in queries if str(q).strip()]
+    if not cleaned:
+        return
+    results = fetch_research_bundle(cleaned)
+    vault.write_research_bundle(market_id, results)
+
+
+def _invoke_deep_researcher(
+    runner: AgentRunner,
+    dr_in: dict[str, Any],
+) -> DeepResearcherComplete | DeepResearcherNeedsMore:
+    payload = dict(dr_in)
+
+    def _validate_dr(parsed: dict[str, Any]) -> DeepResearcherComplete | DeepResearcherNeedsMore:
+        normalized = normalize_structured_output(
+            "deep_researcher",
+            payload,
+            parsed,
+            output_schema=None,
+        )
+        return parse_deep_researcher_json(normalized)
+
+    return run_agent_with_format_retries(
+        runner, "deep_researcher", payload, validate_fn=_validate_dr
+    )
+
+
+def _finalize_research(
+    vault: ObsidianManager,
+    market_id: str,
+    complete: DeepResearcherComplete,
+    row: dict[str, Any],
+    *,
+    from_edge: bool,
+) -> dict[str, Any] | None:
+    try:
+        research = parse_deep_researcher(complete.markdown)
+    except (ValueError, AgentOutputParseError) as exc:
+        flag_inactive(
+            vault,
+            market_id,
+            "phase3",
+            f"deep researcher markdown validation failed: {exc}",
+            {"markdown": complete.markdown[:500]},
         )
         return None
 
@@ -517,12 +573,35 @@ def _run_deep_researcher(
         )
         return None
 
+    if complete.market_id != market_id:
+        flag_inactive(
+            vault,
+            market_id,
+            "phase3",
+            f"deep researcher returned mismatched market_id: {complete.market_id!r}",
+            {"expected": market_id, "got": complete.market_id},
+        )
+        return None
+
+    if abs(complete.estimated_p - research.estimated_p) > 1e-6:
+        flag_inactive(
+            vault,
+            market_id,
+            "phase3",
+            "deep researcher estimated_p mismatch between JSON and markdown frontmatter",
+            {
+                "json_estimated_p": complete.estimated_p,
+                "markdown_estimated_p": research.estimated_p,
+            },
+        )
+        return None
+
     if research.market_id is not None and research.market_id != market_id:
         flag_inactive(
             vault,
             market_id,
             "phase3",
-            f"deep researcher returned mismatched market_id: {research.market_id!r}",
+            f"deep researcher markdown market_id mismatch: {research.market_id!r}",
             research.frontmatter,
         )
         return None
@@ -551,6 +630,122 @@ def _run_deep_researcher(
         "p_value": research.estimated_p,
         "market_data": row.get("market_data") or {},
     }
+
+
+def _forced_synthesis(
+    vault: ObsidianManager,
+    runner: AgentRunner,
+    dr_in: dict[str, Any],
+    row: dict[str, Any],
+    market_id: str,
+    *,
+    from_edge: bool,
+) -> dict[str, Any] | None:
+    override_in = {**dr_in, "system_override": FORCED_SYNTHESIS_OVERRIDE}
+    try:
+        last_out = _invoke_deep_researcher(runner, override_in)
+    except ValidationError as exc:
+        flag_inactive(
+            vault,
+            market_id,
+            "phase3",
+            f"deep researcher forced synthesis validation failed: {exc}",
+            override_in,
+        )
+        return None
+
+    if isinstance(last_out, DeepResearcherNeedsMore):
+        flag_inactive(
+            vault,
+            market_id,
+            "phase3",
+            "deep researcher disobeyed forced synthesis override",
+            last_out.model_dump(),
+        )
+        return None
+
+    return _finalize_research(vault, market_id, last_out, row, from_edge=from_edge)
+
+
+def _run_iterative_research(
+    vault: ObsidianManager,
+    runner: AgentRunner,
+    row: dict[str, Any],
+    directives: str,
+    *,
+    from_edge: bool,
+    planning_context: str | None,
+) -> dict[str, Any] | None:
+    market_id = row["market_id"]
+    existing_bundle = vault.read_research_bundle(market_id)
+
+    if _bundle_has_entries(existing_bundle):
+        pending_queries: list[str] = []
+    else:
+        planned = _plan_research_queries(vault, runner, row, planning_context)
+        if planned is None:
+            return None
+        pending_queries = planned
+
+    iteration = 0
+    last_out: DeepResearcherComplete | DeepResearcherNeedsMore | None = None
+
+    while iteration < MAX_RESEARCH_ITERATIONS:
+        if pending_queries:
+            _fetch_and_persist_bundle(vault, market_id, pending_queries)
+
+        bundle = vault.read_research_bundle(market_id) or []
+        dr_in: dict[str, Any] = {
+            "market_id": market_id,
+            "market_data": row.get("market_data") or {},
+            "directives": directives,
+            "research_bundle": bundle,
+            "system_override": None,
+            "format_validation_error": None,
+        }
+
+        try:
+            last_out = _invoke_deep_researcher(runner, dr_in)
+        except ValidationError as exc:
+            flag_inactive(
+                vault,
+                market_id,
+                "phase3",
+                f"deep researcher output validation failed: {exc}",
+                dr_in,
+            )
+            return None
+
+        if isinstance(last_out, DeepResearcherComplete):
+            return _finalize_research(
+                vault, market_id, last_out, row, from_edge=from_edge
+            )
+
+        pending_queries = list(last_out.new_queries)
+        iteration += 1
+
+    if isinstance(last_out, DeepResearcherNeedsMore):
+        bundle = vault.read_research_bundle(market_id) or []
+        dr_in = {
+            "market_id": market_id,
+            "market_data": row.get("market_data") or {},
+            "directives": directives,
+            "research_bundle": bundle,
+            "system_override": None,
+            "format_validation_error": None,
+        }
+        return _forced_synthesis(
+            vault, runner, dr_in, row, market_id, from_edge=from_edge
+        )
+
+    flag_inactive(
+        vault,
+        market_id,
+        "phase3",
+        "deep researcher produced no output",
+        {"iteration": iteration},
+    )
+    return None
 
 
 # ---------------------------------------------------------------------------

@@ -25,11 +25,13 @@ from typing import Any, Callable, Protocol
 
 from agents_blueprint import AGENTS
 from orchestrator.config import RUNNER_MODE_LIVE, RUNNER_MODE_STUB_ERROR, runner_mode
+from orchestrator.agent_outputs import parse_deep_researcher_json
 from orchestrator.parse import (
     AgentOutputParseError,
     coerce_deep_researcher_markdown,
     normalize_structured_output,
     parse_agent_json_or_yaml,
+    preprocess_agent_text,
 )
 from orchestrator.openclaw_cli import extract_agent_text, run_agent
 from orchestrator.research import parse_deep_researcher
@@ -86,6 +88,18 @@ def _validate_response(
         try:
             markdown = coerce_deep_researcher_markdown(result)
             parse_deep_researcher(markdown)
+        except (AgentOutputParseError, ValueError) as exc:
+            raise AgentSchemaError(role, "output", str(exc)) from exc
+        return
+
+    if spec.get("output_is_state_machine"):
+        try:
+            if isinstance(result, dict):
+                parsed = result
+            else:
+                text = result if isinstance(result, str) else str(result)
+                parsed = parse_agent_json_or_yaml(preprocess_agent_text(text))
+            parse_deep_researcher_json(parsed)
         except (AgentOutputParseError, ValueError) as exc:
             raise AgentSchemaError(role, "output", str(exc)) from exc
         return
@@ -158,6 +172,14 @@ def _spawn_stub_error(role: str, spec: dict[str, Any], payload: dict[str, Any]) 
             "---\n\n"
             "## Bull Thesis\n\n(stub)\n\n## Bear Thesis\n\n(stub)\n\n## Post-Mortem\n"
         )
+    if spec.get("output_is_state_machine"):
+        market_id = payload.get("market_id", "stub")
+        return {
+            "status": "complete",
+            "market_id": market_id,
+            "estimated_p": 0.5,
+            "markdown": _stub_deep_researcher_markdown(market_id, error="stub_error mode"),
+        }
     builder = STUB_RESPONSES.get(role)
     if builder is None:
         return {"error": "stub_error mode"}
@@ -202,26 +224,49 @@ def _re_evaluator_stub(payload: dict[str, Any]) -> dict[str, Any]:
     return base
 
 
-def _briefer_stub(payload: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "market_id": payload.get("market_id", "stub"),
-        "summary": f"stub context for {payload.get('market_title', '')}",
-        "error": None,
-    }
-
-
-def _deep_researcher_stub(payload: dict[str, Any]) -> str:
-    market_id = payload.get("market_id", "stub")
+def _stub_deep_researcher_markdown(
+    market_id: str,
+    *,
+    estimated_p: float = 0.5,
+    error: str | None = None,
+) -> str:
+    err_yaml = "null" if error is None else f'"{error}"'
     return (
         "---\n"
         f'market_id: "{market_id}"\n'
-        "estimated_p: 0.5\n"
-        "error: null\n"
+        f"estimated_p: {estimated_p}\n"
+        f"error: {err_yaml}\n"
         "---\n\n"
         "## Bull Thesis\n\n(stub bull thesis)\n\n"
         "## Bear Thesis\n\n(stub bear thesis)\n\n"
         "## Post-Mortem\n"
     )
+
+
+def _briefer_stub(payload: dict[str, Any]) -> dict[str, Any]:
+    title = payload.get("market_title", "")
+    return {
+        "market_id": payload.get("market_id", "stub"),
+        "research_queries": [f"stub A-IQ query for {title}".strip()],
+        "error": None,
+    }
+
+
+def _deep_researcher_stub(payload: dict[str, Any]) -> dict[str, Any]:
+    market_id = payload.get("market_id", "stub")
+    if payload.get("system_override"):
+        return {
+            "status": "complete",
+            "market_id": market_id,
+            "estimated_p": 0.5,
+            "markdown": _stub_deep_researcher_markdown(market_id),
+        }
+    return {
+        "status": "complete",
+        "market_id": market_id,
+        "estimated_p": 0.5,
+        "markdown": _stub_deep_researcher_markdown(market_id),
+    }
 
 
 def _executioner_stub(payload: dict[str, Any]) -> dict[str, Any]:
@@ -313,6 +358,14 @@ def _build_live_prompt(
         response_hint = (
             "Return only the Markdown document required by your output contract."
         )
+    elif spec.get("output_is_state_machine"):
+        response_hint = (
+            "Return ONLY a raw JSON object discriminated by status "
+            "(needs_more_data or complete). No markdown fences."
+        )
+        extra = spec.get("live_response_hint")
+        if extra:
+            response_hint = f"{response_hint}\n\n{str(extra).strip()}"
     else:
         out_schema = spec.get("output_schema") or {}
         response_hint = build_live_response_hint(

@@ -197,11 +197,11 @@ def test_build_live_response_hint_lists_schema_keys():
     hint = build_live_response_hint(
         {
             "market_id": "string",
-            "summary": "string | null",
+            "research_queries": "list[str]",
             "error": "string | null",
         }
     )
-    assert "summary" in hint
+    assert "research_queries" in hint
     assert "error" in hint
     assert "decision fields" not in hint
     assert "nullable fields" in hint
@@ -219,7 +219,7 @@ def test_build_live_prompt_lists_briefer_schema_keys():
         },
         agent_id="polymarket-briefer",
     )
-    assert "summary" in prompt
+    assert "research_queries" in prompt
     assert "error" in prompt
     assert "decision fields" not in prompt
     assert "Required keys exactly" in prompt
@@ -259,10 +259,11 @@ def test_spawn_agent_briefer_rejects_evaluator_shape(monkeypatch):
                 "market_id": "0xabc",
                 "market_title": "Title",
                 "market_description": "",
+                "planning_context": None,
             },
         )
     msg = str(exc_info.value)
-    assert "summary" in msg
+    assert "research_queries" in msg
 
 
 def test_spawn_agent_briefer_accepts_valid_payload():
@@ -272,10 +273,11 @@ def test_spawn_agent_briefer_accepts_valid_payload():
             "market_id": "0xabc",
             "market_title": "Will X happen?",
             "market_description": "",
+            "planning_context": None,
         },
     )
     assert out["market_id"] == "0xabc"
-    assert out["summary"]
+    assert out["research_queries"]
     assert out.get("error") is None
 
 
