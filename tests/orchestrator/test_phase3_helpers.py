@@ -6,6 +6,13 @@ from typing import Any
 
 from orchestrator.runner import _stub_deep_researcher_markdown
 
+# Minimal snapshot so phase 3 pricing fail-fast passes in unit tests.
+STUB_MARKET_DATA: dict[str, float] = {
+    "yes_price": 0.42,
+    "volume": 100.0,
+    "liquidity": 200.0,
+}
+
 
 def briefer_ok(payload: dict[str, Any]) -> dict[str, Any]:
     title = payload.get("market_title", "")

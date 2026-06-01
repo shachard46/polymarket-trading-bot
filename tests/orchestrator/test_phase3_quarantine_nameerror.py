@@ -9,6 +9,7 @@ import pytest
 from obsidian_utils import ObsidianManager
 from orchestrator import phases, scraper
 from orchestrator.scraper import MarketRow
+from tests.orchestrator.test_phase3_helpers import STUB_MARKET_DATA
 
 
 def test_phase3_survives_research_market_exception(monkeypatch, tmp_path):
@@ -27,7 +28,9 @@ def test_phase3_survives_research_market_exception(monkeypatch, tmp_path):
     monkeypatch.setattr(
         scraper,
         "fetch_market_row",
-        lambda mid: MarketRow(market_id=mid, market_title="T", market_data={}),
+        lambda mid: MarketRow(
+            market_id=mid, market_title="T", market_data=dict(STUB_MARKET_DATA)
+        ),
     )
 
     def boom(*_args: Any, **_kwargs: Any) -> None:

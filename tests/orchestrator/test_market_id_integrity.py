@@ -11,7 +11,11 @@ from obsidian_utils import ObsidianManager
 from orchestrator import phases, scraper
 from orchestrator.runner import _stub_deep_researcher_markdown
 from orchestrator.scraper import MarketRow
-from tests.orchestrator.test_phase3_helpers import briefer_ok, deep_researcher_complete
+from tests.orchestrator.test_phase3_helpers import (
+    STUB_MARKET_DATA,
+    briefer_ok,
+    deep_researcher_complete,
+)
 
 
 @pytest.fixture()
@@ -34,7 +38,9 @@ def test_mismatched_market_id_flags_inactive(monkeypatch, vault):
     monkeypatch.setattr(
         scraper,
         "fetch_market_row",
-        lambda mid: MarketRow(market_id=mid, market_title="T", market_data={}),
+        lambda mid: MarketRow(
+            market_id=mid, market_title="T", market_data=dict(STUB_MARKET_DATA)
+        ),
     )
 
     def runner(role: str, payload: dict[str, Any]) -> Any:
@@ -82,7 +88,9 @@ def test_matching_market_id_proceeds(monkeypatch, vault):
     monkeypatch.setattr(
         scraper,
         "fetch_market_row",
-        lambda mid: MarketRow(market_id=mid, market_title="T", market_data={}),
+        lambda mid: MarketRow(
+            market_id=mid, market_title="T", market_data=dict(STUB_MARKET_DATA)
+        ),
     )
 
     def runner(role: str, payload: dict[str, Any]) -> Any:

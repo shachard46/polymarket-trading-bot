@@ -52,6 +52,7 @@ if str(_REPO_ROOT) not in sys.path:
 from config.vault import VAULT_PATH_ENV
 from obsidian_utils import ObsidianManager, TradeLogPayload
 from orchestrator import phases, scraper
+from orchestrator.scraper import market_data_hydration_error
 from orchestrator.config import PAPER_TRADE_MODE, RUNNER_MODE_ENV, RUNNER_MODE_LIVE
 from orchestrator.openclaw_cli import require_gateway
 from orchestrator.research import parse_deep_researcher
@@ -162,10 +163,18 @@ def _build_researched_row(vault: ObsidianManager, market_id: str) -> dict[str, A
             "Check POLYMARKET_DB_PATH and poly-scan."
         )
 
+    market_data = row.market_data or {}
+    hydration_err = market_data_hydration_error(market_data)
+    if hydration_err:
+        raise RuntimeError(
+            f"{hydration_err} (market_id={market_id!r}). "
+            "Run `poly-scan scan --market <id>` so latest_change is populated."
+        )
+
     return {
         "market_id": market_id,
         "p_value": research.estimated_p,
-        "market_data": row.market_data or {},
+        "market_data": market_data,
     }
 
 

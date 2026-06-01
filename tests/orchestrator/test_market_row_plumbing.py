@@ -7,7 +7,12 @@ from typing import Any
 import pytest
 
 from orchestrator import phases, scraper
-from orchestrator.scraper import MarketRow, _market_row_from_scraper
+from orchestrator.scraper import (
+    MarketRow,
+    market_data_hydration_error,
+    _market_row_from_scraper,
+    _market_snapshot_from_scraper_row,
+)
 from tests.orchestrator.test_phase3_helpers import briefer_ok, deep_researcher_complete
 
 
@@ -41,9 +46,99 @@ def test_market_row_from_scraper_preserves_title_description_and_snapshot():
     assert row.market_data["liquidity"] == 5678.0
 
 
+def test_market_row_from_scraper_reads_nested_latest_change():
+    raw = {
+        "market_id": "0xabc",
+        "question": "Will X happen by 2027?",
+        "description": "Long form description.",
+        "latest_change": {
+            "datetime": "2026-06-01T12:00:00Z",
+            "yes_price": 0.42,
+            "no_price": 0.58,
+            "volume": 1234.0,
+            "liquidity": 5678.0,
+            "last_trade_price": 0.43,
+            "midpoint": 0.50,
+            "spread": 0.02,
+        },
+    }
+    row = _market_row_from_scraper(raw)
+    assert row is not None
+    assert row.market_data["yes_price"] == 0.42
+    assert row.market_data["midpoint"] == 0.50
+    assert row.market_data["volume"] == 1234.0
+
+
+def test_market_snapshot_prefers_top_level_over_latest_change():
+    raw = {
+        "yes_price": 0.10,
+        "latest_change": {"yes_price": 0.99},
+    }
+    snapshot = _market_snapshot_from_scraper_row(raw)
+    assert snapshot["yes_price"] == 0.10
+
+
+def test_market_snapshot_derives_days_to_resolution_from_extra_info_end_date():
+    raw = {
+        "extra_info": '{"endDateIso": "2026-12-31T00:00:00Z"}',
+        "latest_change": {
+            "yes_price": 0.42,
+            "volume": 100.0,
+            "liquidity": 200.0,
+        },
+    }
+    snapshot = _market_snapshot_from_scraper_row(raw)
+    assert snapshot["end_date"] == "2026-12-31T00:00:00Z"
+    assert isinstance(snapshot["days_to_resolution"], int)
+    assert snapshot["days_to_resolution"] >= 1
+
+
+def test_market_snapshot_derives_end_date_from_parsed_extra_info_dict():
+    raw = {
+        "extra_info": {"endDateIso": "2026-08-18"},
+        "latest_change": {"yes_price": 0.42, "volume": 100.0, "liquidity": 200.0},
+    }
+    snapshot = _market_snapshot_from_scraper_row(raw)
+    assert snapshot["end_date"] == "2026-08-18"
+    assert snapshot["days_to_resolution"] >= 1
+
+
+def test_market_data_hydration_error_when_pricing_missing():
+    assert market_data_hydration_error({}) is not None
+    assert market_data_hydration_error({"volume": 1.0, "liquidity": 2.0}) is not None
+
+
+def test_market_data_hydration_error_when_volume_liquidity_missing():
+    assert market_data_hydration_error({"yes_price": 0.42}) is not None
+
+
+def test_market_data_hydration_error_ok_with_q_and_liquidity_fields():
+    assert market_data_hydration_error(
+        {"yes_price": 0.42, "volume": 100.0, "liquidity": 200.0}
+    ) is None
+
+
 def test_market_row_drops_rows_without_title():
     assert _market_row_from_scraper({"market_id": "x", "question": ""}) is None
     assert _market_row_from_scraper({"market_id": "", "question": "Q"}) is None
+
+
+def test_phase4_fail_fast_on_empty_market_data(vault):
+    vault.cold_start_protocol()
+    spawned: list[str] = []
+
+    def runner(role: str, payload: dict[str, Any]) -> dict[str, Any]:
+        spawned.append(role)
+        raise AssertionError("executioner should not be spawned")
+
+    phases.phase4_execution(
+        vault,
+        [{"market_id": "0xempty", "p_value": 0.5, "market_data": {}}],
+        runner=runner,
+    )
+    assert spawned == []
+    trade = vault.read_trade_log_dict("0xempty")
+    assert trade is None
 
 
 def test_phase2_writes_filter_for_phase3_scan(monkeypatch, vault):

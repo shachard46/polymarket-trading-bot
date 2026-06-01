@@ -37,7 +37,11 @@ from orchestrator.state import (
     vault_write_or_flag,
 )
 from orchestrator.directives import extract_filter_directives
-from orchestrator.scraper import MarketRow
+from orchestrator.scraper import (
+    MarketRow,
+    market_data_hydration_error,
+    market_data_pricing_error,
+)
 from agents_blueprint import AGENTS
 from orchestrator.agent_outputs import (
     BrieferOutput,
@@ -416,6 +420,11 @@ def phase3_qualitative_pipeline(
             )
             continue
 
+        pricing_err = market_data_pricing_error(row.market_data)
+        if pricing_err:
+            flag_inactive(vault, market_id, "phase3", pricing_err, row.model_dump())
+            continue
+
         market_row = row.model_dump()
         result: dict[str, Any] | None = None
         with market_quarantine(vault, market_id, "phase3"):
@@ -447,6 +456,11 @@ def phase3_research_market(
             "[PHASE 3] skip %s: could not hydrate market row from scraper",
             market_id,
         )
+        return None
+
+    pricing_err = market_data_pricing_error(row.market_data)
+    if pricing_err:
+        flag_inactive(vault, market_id, "phase3", pricing_err, row.model_dump())
         return None
 
     directives = vault.read_directives()
@@ -844,11 +858,17 @@ def phase4_execution(
 
     for row in researched_markets:
         market_id = row["market_id"]
+        market_data = row.get("market_data") or {}
+        hydration_err = market_data_hydration_error(market_data)
+        if hydration_err:
+            flag_inactive(vault, market_id, "phase4", hydration_err, row)
+            continue
+
         with market_quarantine(vault, market_id, "phase4"):
             payload = {
                 "market_id": market_id,
                 "p_value": row["p_value"],
-                "market_data": row.get("market_data") or {},
+                "market_data": market_data,
                 "paper_trade_mode": bool(PAPER_TRADE_MODE),
             }
             parsed, reason = _run_structured_agent(runner, "executioner", payload)

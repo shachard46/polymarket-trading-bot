@@ -16,9 +16,11 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import shutil
 import subprocess
+from datetime import datetime, timezone
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -148,6 +150,117 @@ class MarketRow(BaseModel):
     market_data: dict[str, Any] = Field(default_factory=dict)
 
 
+# Fields executioner / deep researcher use for implied price (q).
+Q_SOURCE_FIELDS: tuple[str, ...] = ("midpoint", "last_trade_price", "yes_price")
+
+# Minimum snapshot fields required before spawning executioner (phase 4).
+_EXECUTION_REQUIRED_FIELDS: tuple[str, ...] = Q_SOURCE_FIELDS + ("volume", "liquidity")
+
+
+def _parse_iso_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip().replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _days_to_resolution(end_date: datetime) -> int:
+    delta_days = (end_date - datetime.now(timezone.utc)).total_seconds() / 86400.0
+    return max(1, int(math.ceil(delta_days)))
+
+
+def _extra_info_dict(row: dict[str, Any]) -> dict[str, Any] | None:
+    extra_info = row.get("extra_info")
+    if isinstance(extra_info, dict):
+        return extra_info
+    if not isinstance(extra_info, str) or not extra_info.strip():
+        return None
+    try:
+        parsed = json.loads(extra_info)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _end_date_from_scraper_row(row: dict[str, Any]) -> str | None:
+    for key in ("end_date", "endDateIso", "endDate"):
+        value = row.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    parsed = _extra_info_dict(row)
+    if parsed is None:
+        return None
+    for key in ("endDateIso", "endDate", "end_date"):
+        value = parsed.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _market_snapshot_from_scraper_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Project poly-scan row into agent-facing ``market_data``.
+
+    poly-scan nests pricing under ``latest_change``; top-level keys win when both exist.
+    """
+    market_data: dict[str, Any] = {
+        key: row[key] for key in _MARKET_DATA_FIELDS if key in row and row[key] is not None
+    }
+
+    latest_change = row.get("latest_change")
+    if isinstance(latest_change, dict):
+        for key in _MARKET_DATA_FIELDS:
+            if key in market_data:
+                continue
+            value = latest_change.get(key)
+            if value is not None:
+                market_data[key] = value
+
+    if "end_date" not in market_data:
+        end_date = _end_date_from_scraper_row(row)
+        if end_date is not None:
+            market_data["end_date"] = end_date
+
+    if "days_to_resolution" not in market_data and "end_date" in market_data:
+        parsed_end = _parse_iso_datetime(market_data["end_date"])
+        if parsed_end is not None:
+            market_data["days_to_resolution"] = _days_to_resolution(parsed_end)
+
+    return market_data
+
+
+def _missing_pricing_error(data: dict[str, Any]) -> str | None:
+    if any(key in data for key in Q_SOURCE_FIELDS):
+        return None
+    return (
+        "missing market pricing data: no midpoint, last_trade_price, or yes_price "
+        "(run poly-scan scan --market <id> so latest_change is populated)"
+    )
+
+
+def market_data_pricing_error(market_data: dict[str, Any] | None) -> str | None:
+    """Return a reason when implied price (q) cannot be derived, else ``None``."""
+    return _missing_pricing_error(market_data or {})
+
+
+def market_data_hydration_error(market_data: dict[str, Any] | None) -> str | None:
+    """Return a reason when snapshot is unusable for execution (phase 4), else ``None``."""
+    data = market_data or {}
+    pricing_err = _missing_pricing_error(data)
+    if pricing_err:
+        return pricing_err
+    missing = [key for key in ("volume", "liquidity") if data.get(key) is None]
+    if missing:
+        return f"missing market snapshot fields: {', '.join(missing)}"
+    return None
+
+
 def _market_row_from_scraper(row: dict[str, Any]) -> MarketRow | None:
     """Project a raw scraper market dict into a validated :class:`MarketRow`.
 
@@ -168,9 +281,7 @@ def _market_row_from_scraper(row: dict[str, Any]) -> MarketRow | None:
     if not isinstance(description, str):
         description = str(description)
 
-    market_data = {
-        key: row[key] for key in _MARKET_DATA_FIELDS if key in row and row[key] is not None
-    }
+    market_data = _market_snapshot_from_scraper_row(row)
 
     return MarketRow(
         market_id=market_id,
@@ -267,6 +378,9 @@ def fetch_resolution(market_id: str) -> dict[str, Any] | None:
 
 __all__ = [
     "MarketRow",
+    "Q_SOURCE_FIELDS",
+    "market_data_hydration_error",
+    "market_data_pricing_error",
     "trends_limit_for_filters",
     "get_market_trends",
     "fetch_target_markets",

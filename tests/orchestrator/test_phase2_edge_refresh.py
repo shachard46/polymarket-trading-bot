@@ -242,7 +242,11 @@ def test_phase3_processes_pending_edge_refresh(monkeypatch, vault):
     monkeypatch.setattr(
         scraper,
         "fetch_market_row",
-        lambda mid: MarketRow(market_id=mid, market_title="T", market_data={}),
+        lambda mid: MarketRow(
+            market_id=mid,
+            market_title="T",
+            market_data={"yes_price": 0.42, "volume": 100.0, "liquidity": 200.0},
+        ),
     )
     vault.write_research_bundle(
         market_id,
