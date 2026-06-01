@@ -51,7 +51,6 @@ VAULT_PATHS = {
 # In-place pipeline state keys (filter frontmatter / trade JSON / research frontmatter)
 STATUS_KEY = "status"
 ERROR_LOG_KEY = "error_log"
-STATUS_ACTIVE = "active"
 STATUS_INACTIVE = "inactive"
 BELOW_EDGE_KEY = "below_edge_threshold"
 PENDING_EDGE_REFRESH_KEY = "pending_edge_refresh"

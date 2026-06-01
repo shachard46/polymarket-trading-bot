@@ -175,8 +175,8 @@ class DirectivesPayload(BaseModel):
 _DIRECTIVES_FILENAME = "active_directives.md"
 
 
-def _dlq_timestamp() -> str:
-    """Return a filesystem-safe UTC timestamp suffix for DLQ artifacts.
+def _archive_timestamp() -> str:
+    """Return a filesystem-safe UTC timestamp suffix for archived trade filenames.
 
     ISO 8601 with ``:`` would be illegal on Windows, so we collapse the
     time portion to a continuous digit string with microsecond resolution.
@@ -699,7 +699,7 @@ class ObsidianManager:
             raise FileNotFoundError(f"No trade log to archive for {market_id}: {src}")
         dst = self._trades_archive_dir / src.name
         if dst.exists():
-            dst = self._trades_archive_dir / f"{src.stem}__{_dlq_timestamp()}{src.suffix}"
+            dst = self._trades_archive_dir / f"{src.stem}__{_archive_timestamp()}{src.suffix}"
         shutil.move(str(src), str(dst))
         return dst
 
@@ -720,7 +720,6 @@ class ObsidianManager:
 
         Common transitions:
         - ``"active"`` → ``"post_mortem"``  (market resolved)
-        - any key → ``"errors"``            (dead letter queue)
 
         Parameters
         ----------

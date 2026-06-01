@@ -6,6 +6,7 @@ import pytest
 
 from config.trading_constants import ERROR_LOG_KEY, STATUS_INACTIVE, STATUS_KEY
 from obsidian_utils import ObsidianManager
+from orchestrator.phases import build_phase3_queue
 from orchestrator.state import flag_inactive, is_inactive, replay_inactive
 
 
@@ -32,6 +33,33 @@ def test_flag_inactive_on_filter(vault):
     assert record is not None
     assert is_inactive(record)
     assert record[ERROR_LOG_KEY]["reason"] == "evaluator error"
+
+
+def test_phase3_cascade_inactive_to_filter_when_active_exists(vault):
+    vault.write_filter_log(
+        "0xabc",
+        {
+            "market_id": "0xabc",
+            "passed": True,
+            "trigger": "stub",
+            "confidence_multiplier": 1.0,
+            "details": "ok",
+            "error": None,
+        },
+    )
+    vault.write_research_report(
+        "0xabc",
+        {"market_id": "0xabc", "estimated_p": 0.5, "error": None},
+        "## Bull Thesis\n\nb\n\n## Bear Thesis\n\nb\n\n## Post-Mortem\n",
+    )
+
+    flag_inactive(vault, "0xabc", "phase3", "deep researcher parse error", {"raw": "bad"})
+
+    active = vault.read_market_record("0xabc", "active")
+    filt = vault.read_filter_log("0xabc")
+    assert active is not None and is_inactive(active)
+    assert filt is not None and is_inactive(filt)
+    assert build_phase3_queue(vault) == []
 
 
 def test_replay_clears_inactive_flag(vault):
@@ -102,3 +130,21 @@ def test_replay_filters_by_market_id(vault):
 
     assert not is_inactive(vault.read_filter_log("0xabc"))
     assert is_inactive(vault.read_filter_log("0xdef"))
+
+
+def test_replay_clears_post_mortem_inactive(vault):
+    pm_path = vault._dirs["post_mortem"] / "0xabc.md"
+    pm_path.parent.mkdir(parents=True, exist_ok=True)
+    pm_path.write_text(
+        f"---\nmarket_id: 0xabc\nestimated_p: 0.5\nstatus: {STATUS_INACTIVE}\n"
+        "error_log:\n  reason: post-mortem analyst failed\n---\n\n## Post-Mortem\n",
+        encoding="utf-8",
+    )
+
+    summary = replay_inactive(vault, market_ids=["0xabc"], dir_keys=("post_mortem",))
+
+    assert summary["cleared"] >= 1
+    record = vault.read_market_record("0xabc", "post_mortem")
+    assert record is not None
+    assert not is_inactive(record)
+    assert ERROR_LOG_KEY not in record

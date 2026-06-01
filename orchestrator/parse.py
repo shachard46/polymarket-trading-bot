@@ -60,12 +60,10 @@ def _parse_body_candidates(raw: str) -> dict[str, Any] | None:
     if fenced and fenced not in candidates:
         candidates.insert(0, fenced)
 
+    parsed: Any = None
     for candidate in candidates:
-        parsed: Any = None
         try:
             parsed = json.loads(candidate)
-            if isinstance(parsed, str):
-                parsed = json.loads(parsed)
         except json.JSONDecodeError:
             try:
                 parsed = yaml.safe_load(candidate)
@@ -183,7 +181,7 @@ def agent_error_reason(payload: dict[str, Any] | None) -> str | None:
 
     Treats missing key, ``None``, and empty string as "no error". Any other
     value is coerced to ``str`` and returned so the caller can pass it
-    straight to the DLQ.
+    straight to ``flag_inactive``.
     """
     if not payload:
         return None

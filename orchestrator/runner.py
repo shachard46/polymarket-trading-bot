@@ -11,7 +11,7 @@ environment variable:
 - ``stub`` (default) — returns a deterministic, schema-valid canned response
   per role so CI can exercise the *success* path without a live gateway.
 - ``stub_error``     — returns an explicit ``{"error": ...}`` payload so CI
-  can exercise the DLQ failure path.
+  can exercise the inactive-flag failure path.
 - ``live``           — calls the local OpenClaw Gateway through the
   ``openclaw agent`` CLI, using each agent's ``openclaw_agent_id`` from
   ``agent.yaml``.
@@ -100,7 +100,7 @@ def _validate_response(
         try:
             parsed = parse_agent_json_or_yaml(result)
         except AgentOutputParseError:
-            # Let the phase-level parser surface this as a normal DLQ event.
+            # Let the phase-level parser surface this as a normal inactive-flag event.
             return
 
     # Don't re-validate explicit error responses — the agent is reporting a
@@ -144,7 +144,7 @@ def _spawn_stub(role: str, spec: dict[str, Any], payload: dict[str, Any]) -> Any
 def _spawn_stub_error(role: str, spec: dict[str, Any], payload: dict[str, Any]) -> Any:
     """Schema-valid response that propagates an explicit ``error`` field.
 
-    Drives the DLQ path end-to-end without forcing every market through a
+    Drives the inactive-flag path end-to-end without forcing every market through a
     parse failure (which would only exercise one error branch).
     """
     log.info("[STUB_ERROR] spawn role=%s", role)

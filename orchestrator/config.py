@@ -108,11 +108,6 @@ def auto_replay() -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def auto_replay_dlq() -> bool:
-    """Deprecated alias for :func:`auto_replay`."""
-    return auto_replay()
-
-
 __all__ = [
     "FILTERS",
     "OVERSEER_INTERVAL_SEC",
@@ -134,7 +129,6 @@ __all__ = [
     "openclaw_agent_timeout",
     "openclaw_agent_max_attempts",
     "openclaw_agent_retry_backoff",
-    "auto_replay_dlq",
     "TOP_QUALITATIVE_MARKETS_ENV",
     "top_qualitative_markets",
     "EDGE_RESEARCH_REFRESH_MAX_ENV",

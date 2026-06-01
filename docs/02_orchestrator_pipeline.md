@@ -62,7 +62,7 @@ export OPENCLAW_AUTO_REPLAY=1
 
 **What replay does:**
 
-1. Scans `/01_Filters/`, `/02_Active_Research/`, and `/03_Trades/` for `status: inactive`.
+1. Scans `/01_Filters/`, `/02_Active_Research/`, `/03_Trades/`, and `/04_Post_Mortems/` for `status: inactive`.
 2. Strips `status` and `error_log` from matching files in place.
 3. Does not immediately re-run agents; the next pipeline tick picks up restored artifacts organically.
 

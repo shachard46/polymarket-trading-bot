@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from obsidian_utils import ObsidianManager, VaultWriteError
-from config.trading_constants import PENDING_EDGE_REFRESH_KEY
+from config.trading_constants import BELOW_EDGE_KEY, PENDING_EDGE_REFRESH_KEY
 from orchestrator import scraper
 from orchestrator.config import PAPER_TRADE_MODE, max_edge_research_refreshes, top_qualitative_markets
 from orchestrator.state import (
@@ -83,7 +83,7 @@ def _open_trade_shows_bet_not_edge_dq(data: dict[str, Any]) -> bool:
     """True when an open trade log reflects a non-zero allocation path (bet placed)."""
     if _trade_log_has_nonempty_error(data):
         return False
-    bet = data.get("below_edge_threshold")
+    bet = data.get(BELOW_EDGE_KEY)
     if bet is False:
         return True
     if bet is True:
@@ -98,7 +98,7 @@ def _trade_log_shows_edge_disqualification(data: dict[str, Any]) -> bool:
     """True when the last run hit the edge gate (no allocation due to score vs ``S_0``)."""
     if _trade_log_has_nonempty_error(data):
         return False
-    bet = data.get("below_edge_threshold")
+    bet = data.get(BELOW_EDGE_KEY)
     if bet is True:
         return True
     if bet is False:
@@ -188,6 +188,11 @@ def phase2_quantitative_routing(
 
     for market in target_markets:
         market_id = market.market_id
+        prior_full = vault.read_filter_log(market_id)
+        if is_inactive(prior_full):
+            log.info("[PHASE 2] skip %s: filter marked inactive", market_id)
+            continue
+
         with market_quarantine(vault, market_id, "phase2"):
             trade = vault.read_trade_log_dict(market_id)
             if trade is not None and _open_trade_shows_bet_not_edge_dq(trade):
@@ -198,7 +203,6 @@ def phase2_quantitative_routing(
                 continue
 
             has_active = vault.active_research_path(market_id).exists()
-            prior_full = vault.read_filter_log(market_id)
             historic_signal_bundle = (
                 prior_full.get("signal_bundle") if prior_full else None
             )
@@ -249,11 +253,13 @@ def phase2_quantitative_routing(
                     ):
                         continue
                 else:
-                    vault.patch_frontmatter(
+                    if not _write_filter_with_pending_refresh(
+                        vault,
                         market_id,
-                        "filters",
-                        {PENDING_EDGE_REFRESH_KEY: False},
-                    )
+                        parsed_re,
+                        pending_edge_refresh=False,
+                    ):
+                        continue
                 continue
 
             role = "re_evaluator" if has_active else "evaluator"
@@ -604,6 +610,10 @@ def phase5_resolution_and_post_mortem(
     log.info("[PHASE 5] Resolution & post-mortem")
     for trade_path in vault.iter_open_trades():
         market_id = trade_path.stem
+        trade = vault.read_trade_log_dict(market_id)
+        if trade is not None and is_inactive(trade):
+            log.info("[PHASE 5] skip %s: trade log marked inactive", market_id)
+            continue
         with market_quarantine(vault, market_id, "phase5"):
             _resolve_market(vault, runner, market_id)
 

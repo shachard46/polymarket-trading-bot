@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from config.trading_constants import ERROR_LOG_KEY, STATUS_INACTIVE, STATUS_KEY
 from obsidian_utils import ObsidianManager
 from orchestrator import phases, scraper
 
@@ -72,3 +73,36 @@ def test_subsequent_tick_does_not_re_resolve_archived_trade(vault, monkeypatch):
     phases.phase5_resolution_and_post_mortem(vault, runner=_runner)
 
     assert calls == ["0xabc"], f"expected exactly one resolution call, got {calls}"
+
+
+def test_phase5_skips_inactive_trade_log(vault, monkeypatch):
+    market_id = "0xinactive"
+    vault.write_trade_log(
+        market_id,
+        {
+            "market_id": market_id,
+            "allocation_usd": 0.0,
+            "executed": False,
+            "transaction_hash": None,
+            "error": None,
+            STATUS_KEY: STATUS_INACTIVE,
+            ERROR_LOG_KEY: {"reason": "executioner failed"},
+        },
+    )
+    resolution_calls: list[str] = []
+    runner_calls: list[str] = []
+
+    monkeypatch.setattr(
+        scraper,
+        "fetch_resolution",
+        lambda mid: resolution_calls.append(mid) or None,
+    )
+
+    def runner(role: str, payload: dict[str, Any]) -> dict[str, Any]:
+        runner_calls.append(role)
+        return {"error": "should not run"}
+
+    phases.phase5_resolution_and_post_mortem(vault, runner=runner)
+
+    assert resolution_calls == []
+    assert runner_calls == []

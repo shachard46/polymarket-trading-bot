@@ -1,4 +1,4 @@
-"""F7 regression: stub runner returns schema-valid responses; stub_error drives DLQ."""
+"""F7 regression: stub runner returns schema-valid responses; stub_error drives inactive flagging."""
 
 from __future__ import annotations
 

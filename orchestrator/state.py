@@ -1,4 +1,11 @@
-"""In-place pipeline state — flag inactive markets without moving vault files."""
+"""In-place pipeline state — flag inactive markets without moving vault files.
+
+Error-handling contract (see also :mod:`orchestrator.phases`):
+
+- ``flag_inactive`` — explicit agent or parse failures
+- ``market_quarantine`` — uncaught exceptions inside a per-market block
+- ``vault_write_or_flag`` — :class:`~obsidian_utils.VaultWriteError` on validated writes
+"""
 
 from __future__ import annotations
 
@@ -25,8 +32,8 @@ PHASE_ARTIFACTS: dict[str, list[str]] = {
     "phase5": ["post_mortem", "trades"],
 }
 
-REPLAY_DIR_KEYS: tuple[str, ...] = ("filters", "active", "trades")
-VALID_REPLAY_DIRS: frozenset[str] = frozenset(REPLAY_DIR_KEYS)
+REPLAY_DIRS: tuple[str, ...] = ("filters", "active", "trades", "post_mortem")
+VALID_REPLAY_DIRS: frozenset[str] = frozenset(REPLAY_DIRS)
 
 
 def _utc_now_iso() -> str:
@@ -45,14 +52,24 @@ def has_pending_edge_refresh(record: dict[str, Any] | None) -> bool:
     return bool(record.get(PENDING_EDGE_REFRESH_KEY))
 
 
-def is_error_free_active(vault: ObsidianManager, market_id: str) -> bool:
-    """True when active research exists and is not flagged inactive."""
+def _active_frontmatter(
+    vault: ObsidianManager,
+    market_id: str,
+) -> dict[str, Any] | None:
     raw = vault.read_active_research(market_id)
     if not raw:
-        return False
+        return None
     try:
         fm, _ = split_yaml_frontmatter_markdown(raw)
+        return fm
     except ValueError:
+        return None
+
+
+def is_error_free_active(vault: ObsidianManager, market_id: str) -> bool:
+    """True when active research exists and is not flagged inactive."""
+    fm = _active_frontmatter(vault, market_id)
+    if fm is None:
         return False
     if is_inactive(fm):
         return False
@@ -63,12 +80,8 @@ def is_error_free_active(vault: ObsidianManager, market_id: str) -> bool:
 
 
 def read_edge_refresh_count(vault: ObsidianManager, market_id: str) -> int:
-    raw = vault.read_active_research(market_id)
-    if not raw:
-        return 0
-    try:
-        fm, _ = split_yaml_frontmatter_markdown(raw)
-    except ValueError:
+    fm = _active_frontmatter(vault, market_id)
+    if fm is None:
         return 0
     try:
         return int(fm.get("edge_research_refresh_count") or 0)
@@ -93,6 +106,53 @@ def _flag_payload(payload: dict[str, Any], phase: str, reason: str) -> dict[str,
     }
 
 
+def _inactive_keys(flagged: dict[str, Any]) -> dict[str, Any]:
+    return {STATUS_KEY: STATUS_INACTIVE, ERROR_LOG_KEY: flagged[ERROR_LOG_KEY]}
+
+
+def _patch_dir_inactive(
+    vault: ObsidianManager,
+    market_id: str,
+    dir_key: str,
+    flagged: dict[str, Any],
+) -> None:
+    keys = _inactive_keys(flagged)
+    if dir_key == "filters":
+        try:
+            vault.write_filter_log(market_id, flagged)
+        except VaultWriteError:
+            vault.patch_frontmatter(market_id, dir_key, keys)
+    elif dir_key in ("active", "post_mortem"):
+        vault.patch_frontmatter(market_id, dir_key, keys)
+    elif dir_key == "trades":
+        vault.patch_json(market_id, dir_key, keys)
+
+
+def _cascade_phase3_filter_inactive(
+    vault: ObsidianManager,
+    market_id: str,
+    flagged: dict[str, Any],
+) -> None:
+    """Stamp filter inactive when active is halted so Phase 3 queue skips the market."""
+    if vault.market_file(market_id, "filters") is None:
+        return
+    filt = vault.read_market_record(market_id, "filters")
+    if is_inactive(filt):
+        return
+    vault.patch_frontmatter(market_id, "filters", _inactive_keys(flagged))
+
+
+def _primary_artifact_record(
+    vault: ObsidianManager,
+    market_id: str,
+    phase_name: str,
+) -> dict[str, Any] | None:
+    for dir_key in PHASE_ARTIFACTS.get(phase_name, ["filters"]):
+        if vault.market_file(market_id, dir_key) is not None:
+            return vault.read_market_record(market_id, dir_key)
+    return None
+
+
 def flag_inactive(
     vault: ObsidianManager,
     market_id: str,
@@ -107,45 +167,9 @@ def flag_inactive(
 
     for dir_key in candidates:
         if vault.market_file(market_id, dir_key) is not None:
-            if dir_key == "filters":
-                try:
-                    vault.write_filter_log(market_id, flagged)
-                except VaultWriteError:
-                    vault.patch_frontmatter(
-                        market_id,
-                        dir_key,
-                        {
-                            STATUS_KEY: STATUS_INACTIVE,
-                            ERROR_LOG_KEY: flagged[ERROR_LOG_KEY],
-                        },
-                    )
-            elif dir_key == "active":
-                vault.patch_frontmatter(
-                    market_id,
-                    dir_key,
-                    {
-                        STATUS_KEY: STATUS_INACTIVE,
-                        ERROR_LOG_KEY: flagged[ERROR_LOG_KEY],
-                    },
-                )
-            elif dir_key == "trades":
-                vault.patch_json(
-                    market_id,
-                    dir_key,
-                    {
-                        STATUS_KEY: STATUS_INACTIVE,
-                        ERROR_LOG_KEY: flagged[ERROR_LOG_KEY],
-                    },
-                )
-            elif dir_key == "post_mortem":
-                vault.patch_frontmatter(
-                    market_id,
-                    dir_key,
-                    {
-                        STATUS_KEY: STATUS_INACTIVE,
-                        ERROR_LOG_KEY: flagged[ERROR_LOG_KEY],
-                    },
-                )
+            _patch_dir_inactive(vault, market_id, dir_key, flagged)
+            if phase == "phase3" and dir_key == "active":
+                _cascade_phase3_filter_inactive(vault, market_id, flagged)
             log.warning("Market %s flagged inactive (%s): %s", market_id, phase, reason)
             return
 
@@ -195,6 +219,14 @@ def market_quarantine(
     try:
         yield
     except Exception as exc:  # noqa: BLE001 - pipeline must continue per market
+        record = _primary_artifact_record(vault, market_id, phase_name)
+        if is_inactive(record):
+            log.warning(
+                "Market %s already inactive (%s); preserving existing error_log",
+                market_id,
+                phase_name,
+            )
+            return
         flag_inactive(
             vault,
             market_id,
@@ -250,7 +282,7 @@ def replay_inactive(
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Clear ``status: inactive`` and ``error_log`` from native vault directories."""
-    keys = dir_keys or REPLAY_DIR_KEYS
+    keys = dir_keys or REPLAY_DIRS
     unknown = set(keys) - VALID_REPLAY_DIRS
     if unknown:
         raise ValueError(f"Invalid replay dir(s): {sorted(unknown)}")
@@ -283,8 +315,6 @@ def replay_inactive(
 
 
 __all__ = [
-    "PHASE_ARTIFACTS",
-    "REPLAY_DIR_KEYS",
     "VALID_REPLAY_DIRS",
     "is_inactive",
     "has_pending_edge_refresh",

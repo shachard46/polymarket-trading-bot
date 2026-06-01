@@ -21,9 +21,10 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Directory filters (repeatable):\n"
-            "  --dir filters   01_Filters/\n"
-            "  --dir active    02_Active_Research/\n"
-            "  --dir trades    03_Trades/\n"
+            "  --dir filters      01_Filters/\n"
+            "  --dir active       02_Active_Research/\n"
+            "  --dir trades       03_Trades/\n"
+            "  --dir post_mortem  04_Post_Mortems/\n"
             "\n"
             "Examples:\n"
             "  %(prog)s --all\n"
@@ -50,7 +51,7 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="dirs",
         choices=sorted(VALID_REPLAY_DIRS),
         metavar="KEY",
-        help="Vault directory to scan (repeatable). Default: all of filters, active, trades.",
+        help="Vault directory to scan (repeatable). Default: filters, active, trades, post_mortem.",
     )
     parser.add_argument(
         "--vault-path",

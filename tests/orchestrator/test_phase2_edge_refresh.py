@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from config.trading_constants import PENDING_EDGE_REFRESH_KEY
+from config.trading_constants import ERROR_LOG_KEY, PENDING_EDGE_REFRESH_KEY, STATUS_INACTIVE, STATUS_KEY
 from obsidian_utils import ObsidianManager
 from orchestrator import phases, scraper
 from orchestrator.research import split_yaml_frontmatter_markdown
@@ -40,6 +40,33 @@ def test_phase2_skips_when_open_trade_shows_bet(monkeypatch, vault):
 
     monkeypatch.setattr(scraper, "get_market_trends", lambda mid, limit: [])
     monkeypatch.setattr(scraper, "trends_limit_for_filters", lambda: 10)
+
+    market = MarketRow(market_id=market_id, market_title="T", market_data={})
+    phases.phase2_quantitative_routing(vault, [market], runner=runner)
+
+    assert calls == []
+
+
+def test_phase2_skips_inactive_filter(monkeypatch, vault):
+    market_id = "m-inactive"
+    vault.write_filter_log(
+        market_id,
+        {
+            "market_id": market_id,
+            "passed": True,
+            "trigger": "stub",
+            "confidence_multiplier": 1.0,
+            "details": "ok",
+            "error": None,
+            STATUS_KEY: STATUS_INACTIVE,
+            ERROR_LOG_KEY: {"reason": "prior failure"},
+        },
+    )
+    calls: list[str] = []
+
+    def runner(role: str, payload: dict[str, Any]) -> dict[str, Any]:
+        calls.append(role)
+        return {"error": "should not run"}
 
     market = MarketRow(market_id=market_id, market_title="T", market_data={})
     phases.phase2_quantitative_routing(vault, [market], runner=runner)

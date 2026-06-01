@@ -7,7 +7,7 @@ calls into this module to:
 1. Validate the payload before it ever leaves the Hub.
 2. Validate the agent's response after it returns.
 
-Mismatches raise :class:`AgentSchemaError` so the orchestrator can DLQ the
+Mismatches raise :class:`AgentSchemaError` so the orchestrator can flag the
 market with a precise reason.
 """
 
