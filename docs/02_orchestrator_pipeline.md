@@ -19,10 +19,10 @@ This document defines _what_ happens and _where_ data moves. Do not implement ag
 ## 3. Qualitative Pipeline (Decoupled)
 
 - **Action:** Phase 3 scans `/01_Filters/` only (does not poll `/03_Trades/` for edge refresh). A market is eligible if it is not `status: inactive` and **either**:
-  - **A)** `passed: true` and no error-free file in `/02_Active_Research/` → Query Planner (`briefer`) → Hub parallel A-IQ fetch → iterative Deep Researcher → write active research.
-  - **B)** `pending_edge_refresh: true` and `edge_research_refresh_count` in active research is below the cap → same iterative loop (optional `planning_context` from prior research), overwrite active, increment count, strip `pending_edge_refresh` from the filter file.
-- **Hub I/O:** A-IQ results accumulate in `/02_Active_Research/research_bundles/{market_id}.json`. If that file already has queries (e.g. after `replay`), Phase 3 skips the Query Planner and redundant fetches and resumes synthesis. Re-fetching the same query string replaces a prior row when the new result has `research_data` and the saved row had an error or empty data (successful rows are not overwritten by later failures).
-- **Loop cap:** At most two Deep Researcher rounds; if still `needs_more_data`, a forced-synthesis override requires `status: complete` before writing `/02_Active_Research/{market_id}.md`.
+  - **A)** `passed: true` and no error-free file in `/02_Active_Research/` → **Surgical Query Planner** (`briefer`) → Hub parallel A-IQ fetch → iterative **Forensic Fact Verifier** (`deep_researcher`) → write active research.
+  - **B)** `pending_edge_refresh: true` and `edge_research_refresh_count` in active research is below the cap → same Forensic Pipeline loop (optional `planning_context` from prior research), overwrite active, increment count, strip `pending_edge_refresh` from the filter file.
+- **Hub I/O:** A-IQ results accumulate in `/02_Active_Research/research_bundles/{market_id}.json`. If that file already has queries (e.g. after `replay`), Phase 3 skips the Query Planner and redundant fetches and resumes synthesis. Re-fetching the same query string replaces a prior row when the new result has `research_data` and the saved row had an error or empty data (successful rows are not overwritten by later failures). Per-query `research_data` is capped at 4000 characters; batch A-IQ poll timeout is 60 seconds.
+- **Loop cap:** At most **four** Forensic Fact Verifier rounds; if still `needs_more_data`, a forced-synthesis override requires `status: complete` before writing `/02_Active_Research/{market_id}.md`.
 - Queue is sorted by `confidence_multiplier` and capped with `OPENCLAW_TOP_MARKETS`.
 
 ## 4. Execution

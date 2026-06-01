@@ -1,6 +1,6 @@
 id: briefer
 openclaw_agent_id: polymarket-briefer
-description: Query planner — emits 1-3 targeted A-IQ research queries.
+description: Surgical Query Planner — 1-3 unevadable A-IQ verification queries per market.
 model: null
 tools:
   allow: []

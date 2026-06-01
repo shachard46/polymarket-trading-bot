@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 import pytest
 
 import orchestrator.aiq_bundle as aiq_bundle
+from orchestrator.config import AIQ_BATCH_POLL_TIMEOUT, RESEARCH_DATA_MAX_CHARS
 
 
 @dataclass
@@ -99,6 +101,36 @@ def test_fetch_research_bundle_submits_all_queries_in_parallel(monkeypatch):
     results = aiq_bundle.fetch_research_bundle(queries)
     assert [r["query"] for r in results] == queries
     assert set(seen) == set(queries)
+
+
+def test_fetch_research_bundle_truncates_long_research_data(monkeypatch):
+    long_body = "x" * (RESEARCH_DATA_MAX_CHARS + 500)
+
+    def fake_execute(query: str) -> FakeAiqOutput:
+        return FakeAiqOutput(research_data=long_body)
+
+    monkeypatch.setattr(aiq_bundle, "_load_execute_aiq_query", lambda: fake_execute)
+
+    results = aiq_bundle.fetch_research_bundle(["long"])
+    data = results[0]["research_data"]
+    assert len(data) <= RESEARCH_DATA_MAX_CHARS + len("\n...[truncated]")
+    assert data.endswith("...[truncated]")
+    assert data.startswith("x")
+
+
+def test_fetch_research_bundle_sets_batch_aiq_timeout(monkeypatch):
+    seen: list[str | None] = []
+
+    def fake_execute(query: str) -> FakeAiqOutput:
+        seen.append(os.environ.get("AIQ_TIMEOUT_SEC"))
+        return FakeAiqOutput(research_data=f"ok:{query}")
+
+    monkeypatch.setattr(aiq_bundle, "_load_execute_aiq_query", lambda: fake_execute)
+    monkeypatch.setenv("AIQ_TIMEOUT_SEC", "1200")
+
+    aiq_bundle.fetch_research_bundle(["q1"])
+    assert seen == [str(AIQ_BATCH_POLL_TIMEOUT)]
+    assert os.environ.get("AIQ_TIMEOUT_SEC") == "1200"
 
 
 def test_reset_execute_aiq_query_cache_clears_loader(monkeypatch):

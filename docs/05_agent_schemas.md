@@ -43,9 +43,9 @@ Each role's [`agents_blueprint/<role>/agent.yaml`](../agents_blueprint/) declare
 
 ```
 
-## 2. The Query Planner (briefer)
+## 2. The Surgical Query Planner (briefer)
 
-- **System Prompt:** "Plan 1–3 targeted A-IQ research queries from the market title, description, and optional planning context. The Hub runs `execute_aiq_query` in parallel — you do not call tools."
+- **System Prompt:** "**Surgical Query Planner** in the Phase 3 **Forensic Pipeline** (high velocity + high rigor). Engineer 1–3 unevadable verification questions per turn targeting vulnerabilities, legal conditions, and structural anomalies in the market copy. Forbidden: open-ended thematic queries. The Hub runs `execute_aiq_query` in parallel (60s batch timeout, 4k chars per result) — you do not call tools."
 - **Input Schema:** `{"market_id": "string", "market_title": "string", "market_description": "string", "planning_context": "string | null"}`
 - **Output Schema:**
 
@@ -59,9 +59,9 @@ Each role's [`agents_blueprint/<role>/agent.yaml`](../agents_blueprint/) declare
 
 On success: `research_queries` must contain **1–3** non-empty strings and `error` is `null`. On failure: `research_queries` may be `[]` with a non-null `error`.
 
-## 3. The Deep Researcher
+## 3. The Forensic Fact Verifier (deep_researcher)
 
-- **System Prompt:** "Synthesize the Hub-provided `research_bundle` into bull/bear theses and a calibrated `estimated_p`. Output JSON with `status: needs_more_data` (new A-IQ queries) or `status: complete` (full markdown document)."
+- **System Prompt:** "**Forensic Fact Verifier** in the Phase 3 **Forensic Pipeline**. Verify `research_bundle` with prosecutorial rigor; use `needs_more_data` as exhaustive interrogation when any pricing-critical fact is not 100% verified (1–3 surgical follow-up queries). Output `status: complete` only with ironclad conviction in `estimated_p`. Bull/Bear sections: exactly 2–3 maximum-density, fact-backed asymmetric bullets each (not narrative summaries)."
 - **Input Schema:** `{"market_id": "string", "market_data": "dict", "directives": "string", "research_bundle": "list[dict]", "system_override": "string | null", "format_validation_error": "string | null"}`
 - **Output Schema (state machine):**
 
@@ -82,6 +82,8 @@ On success: `research_queries` must contain **1–3** non-empty strings and `err
 ```
 
 `markdown` is the full `02_Active_Research/{market_id}.md` wire format (YAML frontmatter + `## Bull Thesis`, `## Bear Thesis`, empty `## Post-Mortem`).
+
+**Hub caps (Forensic Pipeline):** Up to **4** Deep Researcher iterations (`MAX_RESEARCH_ITERATIONS`); per-query `research_data` capped at **4000** characters; Phase 3 A-IQ batch poll timeout **60s** (`AIQ_BATCH_POLL_TIMEOUT`, batch-only). After the iteration cap, forced synthesis requires `status: complete`.
 
 Hub persistence: cumulative A-IQ results live in `02_Active_Research/research_bundles/{market_id}.json`.
 

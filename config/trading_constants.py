@@ -17,7 +17,7 @@ BANKROLL_USD = 1000.0  # allocation_usd = f * BANKROLL_USD
 # A-IQ Service (overridable via env vars AIQ_BASE_URL, AIQ_POLL_INTERVAL_SEC, AIQ_TIMEOUT_SEC)
 AIQ_BASE_URL = "http://localhost:8000"
 AIQ_POLL_INTERVAL_SEC = 2.0
-AIQ_TIMEOUT_SEC = 600.0
+AIQ_TIMEOUT_SEC = 1200.0
 
 # Filter Thresholds
 FILTERS = {

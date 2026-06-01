@@ -33,7 +33,7 @@ from config.trading_constants import (
     AIQ_TIMEOUT_SEC as _DEFAULT_TIMEOUT,
 )
 
-_AGENT_TYPE = "deep_researcher"
+_AGENT_TYPE = "shallow_researcher"
 _SUBMIT_PATH = "/v1/jobs/async/submit"
 _STATUS_PATH = "/v1/jobs/async/job/{job_id}"
 _REPORT_PATH = "/v1/jobs/async/job/{job_id}/report"

@@ -51,6 +51,12 @@ class DeepResearcherNeedsMore(BaseModel):
 
 
 class DeepResearcherComplete(BaseModel):
+    """Complete Forensic Fact Verifier payload.
+
+    ``markdown`` is the full active-research wire document: YAML frontmatter plus
+    Bull/Bear thesis sections (2-3 max-density bullets each) and empty Post-Mortem.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     status: Literal["complete"]
