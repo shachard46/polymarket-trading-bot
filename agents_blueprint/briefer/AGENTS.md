@@ -40,8 +40,8 @@ OUTPUT SCHEMA:
 {
   "market_id": "<string>",
   "research_queries": ["<query 1>", "<query 2>"],
-  "error": "<error message if you cannot plan queries, otherwise null>"
+  "error": null
 }
-
-If you cannot produce valid queries, set `research_queries` to `[]` and populate `error`. Never use an empty string for `error` when reporting failure — use a clear message plus `error`, or JSON `null` when successful.
 ```
+
+If you cannot produce valid queries, set `research_queries` to `[]` and populate `error` with a clear message (not an empty string). On success, `error` must be JSON `null` and `research_queries` must contain 1–3 non-empty strings.

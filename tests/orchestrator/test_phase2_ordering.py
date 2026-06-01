@@ -6,9 +6,10 @@ from typing import Any
 
 import pytest
 
-from config.trading_constants import FILTERS
+from config.trading_constants import ERROR_LOG_KEY, FILTERS, STATUS_INACTIVE, STATUS_KEY
 from orchestrator import phases
 from orchestrator.scraper import MarketRow
+from orchestrator.state import is_inactive
 
 
 @pytest.fixture()
@@ -46,3 +47,11 @@ def test_phase2_passes_filter_directives_to_evaluator(vault):
     assert captured["payload"]["filter_directives"]["breakout_pct_shift"] == FILTERS[
         "breakout_pct_shift"
     ]
+
+    record = vault.read_filter_log("m1")
+    assert record is not None
+    assert record["passed"] is False
+    assert is_inactive(record)
+    assert record[STATUS_KEY] == STATUS_INACTIVE
+    assert record[ERROR_LOG_KEY]["details"] == "test"
+    assert record[ERROR_LOG_KEY]["trigger"] is None

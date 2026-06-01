@@ -19,10 +19,15 @@ from typing import Any, Literal
 from pydantic import ValidationError
 
 from obsidian_utils import ObsidianManager, VaultWriteError
-from config.trading_constants import BELOW_EDGE_KEY, PENDING_EDGE_REFRESH_KEY
+from config.trading_constants import (
+    BELOW_EDGE_KEY,
+    ERROR_LOG_KEY,
+    PENDING_EDGE_REFRESH_KEY,
+)
 from orchestrator import scraper
 from orchestrator.config import PAPER_TRADE_MODE, max_edge_research_refreshes, top_qualitative_markets
 from orchestrator.state import (
+    build_inactive_filter_payload,
     flag_inactive,
     has_pending_edge_refresh,
     is_error_free_active,
@@ -147,6 +152,38 @@ def _run_structured_agent(
     return parsed, None
 
 
+def _persist_phase2_filter(
+    vault: ObsidianManager,
+    market_id: str,
+    parsed: dict[str, Any],
+) -> bool:
+    """Persist quantitative agent output; stamp inactive when ``passed`` is false."""
+    if not parsed.get("passed"):
+        reason = str(
+            parsed.get("details") or "did not pass quantitative filters"
+        )
+        body = build_inactive_filter_payload(parsed, "phase2", reason)
+        body[ERROR_LOG_KEY] = {
+            **body[ERROR_LOG_KEY],
+            "trigger": parsed.get("trigger"),
+            "details": parsed.get("details"),
+        }
+        log.info(
+            "Market %s did not pass quantitative filters (persisted inactive)",
+            market_id,
+        )
+    else:
+        body = parsed
+    return vault_write_or_flag(
+        vault=vault,
+        market_id=market_id,
+        write_fn=lambda: vault.write_filter_log(market_id, body),
+        payload=body,
+        artifact_label="filter log",
+        phase="phase2",
+    )
+
+
 def _write_filter_with_pending_refresh(
     vault: ObsidianManager,
     market_id: str,
@@ -198,10 +235,10 @@ def phase2_quantitative_routing(
 
     for market in target_markets:
         market_id = market.market_id
-        prior_full = vault.read_filter_log(market_id)
-        if is_inactive(prior_full):
+        if vault.is_market_inactive(market_id, dir_key="filters"):
             log.info("[PHASE 2] skip %s: filter marked inactive", market_id)
             continue
+        prior_full = vault.read_filter_log(market_id)
 
         with market_quarantine(vault, market_id, "phase2"):
             trade = vault.read_trade_log_dict(market_id)
@@ -297,18 +334,7 @@ def phase2_quantitative_routing(
                 flag_inactive(vault, market_id, "phase2", reason, parsed or payload)
                 continue
 
-            if not parsed.get("passed"):
-                log.info("Market %s did not pass quantitative filters", market_id)
-                continue
-
-            if not vault_write_or_flag(
-                vault=vault,
-                market_id=market_id,
-                write_fn=lambda: vault.write_filter_log(market_id, parsed),
-                payload=parsed,
-                artifact_label="filter log",
-                phase="phase2",
-            ):
+            if not _persist_phase2_filter(vault, market_id, parsed):
                 continue
 
     log.info("[PHASE 2] quantitative routing complete")

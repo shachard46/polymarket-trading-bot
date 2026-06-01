@@ -98,12 +98,19 @@ def _build_error_log(phase: str, reason: str, payload: dict[str, Any]) -> dict[s
     }
 
 
-def _flag_payload(payload: dict[str, Any], phase: str, reason: str) -> dict[str, Any]:
+def build_inactive_filter_payload(
+    payload: dict[str, Any], phase: str, reason: str
+) -> dict[str, Any]:
+    """Merge agent payload with ``status: inactive`` and ``error_log``."""
     return {
         **payload,
         STATUS_KEY: STATUS_INACTIVE,
         ERROR_LOG_KEY: _build_error_log(phase, reason, payload),
     }
+
+
+def _flag_payload(payload: dict[str, Any], phase: str, reason: str) -> dict[str, Any]:
+    return build_inactive_filter_payload(payload, phase, reason)
 
 
 def _inactive_keys(flagged: dict[str, Any]) -> dict[str, Any]:
@@ -316,6 +323,7 @@ def replay_inactive(
 
 __all__ = [
     "VALID_REPLAY_DIRS",
+    "build_inactive_filter_payload",
     "is_inactive",
     "has_pending_edge_refresh",
     "is_error_free_active",

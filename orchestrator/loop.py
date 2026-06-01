@@ -30,6 +30,11 @@ log = logging.getLogger(__name__)
 def run_pipeline_tick(vault: ObsidianManager) -> None:
     """Run a single phase 1 → 5 sweep over the scraper queue."""
     target_ids = phase1_data_ingestion(vault)
+    target_ids = [
+        m
+        for m in target_ids
+        if not vault.is_market_inactive(m.market_id, dir_key="filters")
+    ]
     phase2_quantitative_routing(vault, target_ids)
     researched = phase3_qualitative_pipeline(vault)
     phase4_execution(vault, researched)

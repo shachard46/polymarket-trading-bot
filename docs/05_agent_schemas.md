@@ -57,6 +57,8 @@ Each role's [`agents_blueprint/<role>/agent.yaml`](../agents_blueprint/) declare
 }
 ```
 
+On success: `research_queries` must contain **1–3** non-empty strings and `error` is `null`. On failure: `research_queries` may be `[]` with a non-null `error`.
+
 ## 3. The Deep Researcher
 
 - **System Prompt:** "Synthesize the Hub-provided `research_bundle` into bull/bear theses and a calibrated `estimated_p`. Output JSON with `status: needs_more_data` (new A-IQ queries) or `status: complete` (full markdown document)."
@@ -65,6 +67,9 @@ Each role's [`agents_blueprint/<role>/agent.yaml`](../agents_blueprint/) declare
 
 ```json
 {"status": "needs_more_data", "new_queries": ["string"]}
+```
+
+`new_queries`: **1–3** non-empty strings (Hub fetches in parallel).
 ```
 
 ```json

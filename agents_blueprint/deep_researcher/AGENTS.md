@@ -27,17 +27,10 @@ OUTPUT (raw JSON, no fences):
 
 **Needs more data** (max 3 new queries, only when override is absent):
 
-````json
 {"status": "needs_more_data", "new_queries": ["focused question 1"]}
+
 **Complete** — `markdown` is the **full** file (frontmatter + body):
 
-```json
-{
-  "status": "complete",
-  "market_id": "<string>",
-  "estimated_p": 0.55,
-  "markdown": "---\nmarket_id: \"...\"\nestimated_p: 0.55\nerror: null\n---\n\n## Bull Thesis\n\n...\n\n## Bear Thesis\n\n...\n\n## Post-Mortem\n"
-}
-````
+{"status": "complete", "market_id": "<string>", "estimated_p": 0.55, "markdown": "---\nmarket_id: \"...\"\nestimated_p: 0.55\nerror: null\n---\n\n## Bull Thesis\n\n...\n\n## Bear Thesis\n\n...\n\n## Post-Mortem\n"}
 
 When `format_validation_error` is present, fix the JSON shape before resubmitting.

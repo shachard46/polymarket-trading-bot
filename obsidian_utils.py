@@ -26,6 +26,8 @@ from config.trading_constants import (
     FILTERS,
     PAPER_TRADE_MODE,
     S_0,
+    STATUS_INACTIVE,
+    STATUS_KEY,
     VAULT_PATHS,
 )
 from config.vault import resolve_vault_base
@@ -213,20 +215,40 @@ _DIR_EXTENSIONS: dict[str, str] = {
 _FRONTMATTER_DIR_KEYS: frozenset[str] = frozenset({"filters", "active", "post_mortem"})
 
 
+def _has_usable_research_data(entry: dict[str, Any]) -> bool:
+    return bool(str(entry.get("research_data", "")).strip())
+
+
+def _should_replace_bundle_entry(prior: dict[str, Any], new: dict[str, Any]) -> bool:
+    """Replace a prior bundle row when a refetch succeeds after failure."""
+    if not _has_usable_research_data(new):
+        return False
+    if prior.get("error") or not _has_usable_research_data(prior):
+        return True
+    return False
+
+
 def _merge_research_bundle_queries(
     existing: list[dict[str, Any]],
     new_entries: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Append ``new_entries``, skipping duplicate ``query`` strings."""
-    seen = {str(e.get("query")) for e in existing if e.get("query")}
+    """Append ``new_entries``; refresh duplicate ``query`` rows when the new fetch is better."""
     merged = list(existing)
+    index_by_query: dict[str, int] = {
+        str(e.get("query")): i for i, e in enumerate(merged) if e.get("query")
+    }
     for entry in new_entries:
         query = entry.get("query")
-        if query:
-            key = str(query)
-            if key in seen:
-                continue
-            seen.add(key)
+        if not query:
+            merged.append(entry)
+            continue
+        key = str(query)
+        if key in index_by_query:
+            idx = index_by_query[key]
+            if _should_replace_bundle_entry(merged[idx], entry):
+                merged[idx] = entry
+            continue
+        index_by_query[key] = len(merged)
         merged.append(entry)
     return merged
 
@@ -346,6 +368,13 @@ class ObsidianManager:
             _dump_frontmatter(validated.model_dump()), encoding="utf-8"
         )
         return dest
+
+    def is_market_inactive(self, market_id: str, *, dir_key: str = "filters") -> bool:
+        """True when the market artifact exists and frontmatter has ``status: inactive``."""
+        record = self.read_market_record(market_id, dir_key)
+        if not record:
+            return False
+        return str(record.get(STATUS_KEY) or "").strip().lower() == STATUS_INACTIVE
 
     def read_filter_log(self, market_id: str) -> dict[str, Any] | None:
         """Return the YAML frontmatter from ``01_Filters/{market_id}.md`` if present.

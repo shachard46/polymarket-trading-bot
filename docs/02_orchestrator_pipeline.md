@@ -10,17 +10,18 @@ This document defines _what_ happens and _where_ data moves. Do not implement ag
 ## 2. Quantitative Routing
 
 - **Action:** Orchestrator iterates over `target_market_ids` (edge refresh only runs when Phase 1 includes the market — not on every tick).
+  - If `/01_Filters/{market_id}.md` exists with **`status: inactive`**, **skip** that market until `orchestrator.replay` clears the flag (no Evaluator/Re-Evaluator spawn).
   - If an **open** trade log in `/03_Trades/` shows a **bet** (not edge-disqualified: `below_edge_threshold` is false, or legacy `allocation_usd` > 0 with no error), **skip** quantitative routing for that market on this tick.
   - Otherwise: pass `market_id` and parsed `filter_directives` from `active_directives.md` to **Evaluator** (no active research) or **Re-Evaluator** (`review_kind: quantitative` when active research exists and the trade log is not edge-only disqualified). The agent calls `evaluate_market_metrics`, which loads trends internally via `poly-scan`.
   - If active research exists and the open trade log is **edge-disqualified** (`below_edge_threshold` true, or legacy zero allocation with no error), spawn **Re-Evaluator** with `review_kind: edge_research_refresh`, prior filter log, research markdown, and trade JSON. On `retry_deep_research`, update `/01_Filters/{market_id}.md` with new quantitative data and set **`pending_edge_refresh: true`** in frontmatter. Phase 2 does **not** run the Deep Researcher.
-- **State:** Passing evaluations are written to `/01_Filters/`. Failures set `status: inactive` and `error_log` on the filter file in place.
+- **State:** **Every** quantitative evaluation is written to `/01_Filters/{market_id}.md`. Passing runs keep `passed: true` without an inactive stamp. Soft filter failures (`passed: false` with no agent `error`) are persisted with `passed: false`, **`status: inactive`**, and **`error_log`** (including evaluator `details` and `trigger`). Agent/parse/validation failures also set `status: inactive` and `error_log` in place. Failed markets are **not** sent to the Overseer; macro-learning uses `/04_Post_Mortems/` only.
 
 ## 3. Qualitative Pipeline (Decoupled)
 
 - **Action:** Phase 3 scans `/01_Filters/` only (does not poll `/03_Trades/` for edge refresh). A market is eligible if it is not `status: inactive` and **either**:
   - **A)** `passed: true` and no error-free file in `/02_Active_Research/` → Query Planner (`briefer`) → Hub parallel A-IQ fetch → iterative Deep Researcher → write active research.
   - **B)** `pending_edge_refresh: true` and `edge_research_refresh_count` in active research is below the cap → same iterative loop (optional `planning_context` from prior research), overwrite active, increment count, strip `pending_edge_refresh` from the filter file.
-- **Hub I/O:** A-IQ results accumulate in `/02_Active_Research/research_bundles/{market_id}.json`. If that file already has queries (e.g. after `replay`), Phase 3 skips the Query Planner and redundant fetches and resumes synthesis.
+- **Hub I/O:** A-IQ results accumulate in `/02_Active_Research/research_bundles/{market_id}.json`. If that file already has queries (e.g. after `replay`), Phase 3 skips the Query Planner and redundant fetches and resumes synthesis. Re-fetching the same query string replaces a prior row when the new result has `research_data` and the saved row had an error or empty data (successful rows are not overwritten by later failures).
 - **Loop cap:** At most two Deep Researcher rounds; if still `needs_more_data`, a forced-synthesis override requires `status: complete` before writing `/02_Active_Research/{market_id}.md`.
 - Queue is sorted by `confidence_multiplier` and capped with `OPENCLAW_TOP_MARKETS`.
 

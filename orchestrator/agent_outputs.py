@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
 DeepResearcherOutput = Union["DeepResearcherNeedsMore", "DeepResearcherComplete"]
 
@@ -20,9 +20,19 @@ class BrieferOutput(BaseModel):
     @classmethod
     def _one_to_three_queries(cls, value: list[str]) -> list[str]:
         cleaned = [str(q).strip() for q in value if str(q).strip()]
-        if not cleaned or len(cleaned) > 3:
-            raise ValueError("research_queries must contain 1 to 3 non-empty strings")
+        if len(cleaned) > 3:
+            raise ValueError("research_queries must contain at most 3 non-empty strings")
         return cleaned
+
+    @model_validator(mode="after")
+    def _error_or_nonempty_queries(self) -> "BrieferOutput":
+        if self.error:
+            return self
+        if not self.research_queries:
+            raise ValueError(
+                "research_queries must contain 1 to 3 non-empty strings when error is null"
+            )
+        return self
 
 
 class DeepResearcherNeedsMore(BaseModel):

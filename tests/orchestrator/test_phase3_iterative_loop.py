@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from config.trading_constants import STATUS_INACTIVE, STATUS_KEY
+from config.trading_constants import ERROR_LOG_KEY, STATUS_INACTIVE, STATUS_KEY
 from orchestrator import phases, scraper
 from orchestrator.scraper import MarketRow
 from tests.orchestrator.test_phase3_helpers import (
@@ -161,3 +161,36 @@ def test_phase3_forced_synthesis_disobedience_flags_inactive(monkeypatch, vault)
     filt = vault.read_filter_log("0xabc")
     assert filt is not None
     assert filt.get(STATUS_KEY) == STATUS_INACTIVE
+
+
+def test_phase3_briefer_error_with_empty_queries_flags_inactive(monkeypatch, vault):
+    _seed_filter(vault)
+    _mock_row(monkeypatch)
+    calls = {"fetch": 0, "dr": 0}
+
+    def runner(role: str, payload: dict[str, Any]) -> Any:
+        if role == "briefer":
+            return {
+                "market_id": payload["market_id"],
+                "research_queries": [],
+                "error": "cannot plan queries",
+            }
+        if role == "deep_researcher":
+            calls["dr"] += 1
+            return deep_researcher_complete(payload)
+        raise AssertionError(role)
+
+    monkeypatch.setattr(
+        phases,
+        "fetch_research_bundle",
+        lambda queries: (calls.__setitem__("fetch", calls["fetch"] + 1) or []),
+    )
+
+    out = phases.phase3_qualitative_pipeline(vault, runner=runner)
+    assert out == []
+    assert calls["fetch"] == 0
+    assert calls["dr"] == 0
+    filt = vault.read_filter_log("0xabc")
+    assert filt is not None
+    assert filt.get(STATUS_KEY) == STATUS_INACTIVE
+    assert "briefer error" in str(filt.get(ERROR_LOG_KEY, {}).get("reason", ""))
