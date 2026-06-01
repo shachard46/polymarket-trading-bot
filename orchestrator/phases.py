@@ -432,6 +432,39 @@ def phase3_qualitative_pipeline(
     return researched
 
 
+def phase3_research_market(
+    vault: ObsidianManager,
+    market_id: str,
+    runner: AgentRunner = spawn_agent,
+    *,
+    kind: Phase3Kind = "initial",
+) -> dict[str, Any] | None:
+    """Run Briefer → Deep Researcher for one market without scanning ``01_Filters/``."""
+    log.info("[PHASE 3] research single market market_id=%s kind=%s", market_id, kind)
+    row = scraper.fetch_market_row(market_id)
+    if row is None:
+        log.warning(
+            "[PHASE 3] skip %s: could not hydrate market row from scraper",
+            market_id,
+        )
+        return None
+
+    directives = vault.read_directives()
+    market_row = row.model_dump()
+    with market_quarantine(vault, market_id, "phase3"):
+        if kind == "edge_refresh":
+            record = vault.read_market_record(market_id, "filters") or {}
+            candidate = Phase3Candidate(
+                market_id=market_id,
+                kind="edge_refresh",
+                filter_record=record,
+            )
+            return _edge_refresh_research(
+                vault, runner, market_row, directives, candidate
+            )
+        return _research_market(vault, runner, market_row, directives)
+
+
 def _edge_refresh_research(
     vault: ObsidianManager,
     runner: AgentRunner,
@@ -940,6 +973,7 @@ __all__ = [
     "phase2_quantitative_routing",
     "build_phase3_queue",
     "phase3_qualitative_pipeline",
+    "phase3_research_market",
     "phase4_execution",
     "phase5_resolution_and_post_mortem",
     "phase6_macro_learning_loop",

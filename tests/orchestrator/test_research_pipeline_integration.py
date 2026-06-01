@@ -7,8 +7,9 @@ Opt-in only (skipped in normal ``pytest`` runs). Use on a host with:
 - a readable polymarket-scraper DB (configured via ``POLYMARKET_DB_PATH``)
 - ``poly-scan`` on PATH (or ``POLY_SCAN_BIN``)
 
-This runs Phase 3 in isolation (no phases 1–2, 4–6). It fetches markets exactly like the
-Orchestrator does: through ``orchestrator.scraper``.
+This runs Phase 3 in isolation (no phases 1–2, 4–6). It fetches one market through
+``orchestrator.scraper`` and researches **only that market** via
+``phase3_research_market`` (no full ``01_Filters/`` queue scan).
 
 ```bash
 export OPENCLAW_PHASE3_LIVE=1
@@ -136,14 +137,14 @@ def run_phase3_isolated() -> int:
     print(f"market_id={market.market_id}")
     print(f"title={market.market_title!r}")
 
-    out = phases.phase3_qualitative_pipeline(vault, runner=spawn_agent)
+    result = phases.phase3_research_market(vault, market.market_id, runner=spawn_agent)
 
-    if len(out) != 1:
+    if result is None:
         filt = vault.read_filter_log(market.market_id)
-        print(f"phase3 returned {len(out)} markets; filter={filt!r}", file=sys.stderr)
+        print(f"phase3_research_market returned None; filter={filt!r}", file=sys.stderr)
         return 1
 
-    row = out[0]
+    row = result
     active = vault.read_active_research(market.market_id)
     bundle = vault.read_research_bundle(market.market_id)
     print(f"p_value={row.get('p_value')}")
@@ -190,7 +191,7 @@ def phase3_vault(tmp_path):
 
 
 def test_phase3_live_one_market_from_db(phase3_live_env, phase3_vault):
-    """Live Phase 3 on one market fetched via poly-scan (phases 1–2 skipped)."""
+    """Live Phase 3 on one fetched market only (no vault queue scan)."""
     market = _resolve_market_row()
     vault = phase3_vault
     _seed_filter_for_phase3(vault, market)
@@ -200,12 +201,12 @@ def test_phase3_live_one_market_from_db(phase3_live_env, phase3_vault):
     assert hydrated.market_id == market.market_id
     assert hydrated.market_title == market.market_title
 
-    out = phases.phase3_qualitative_pipeline(vault, runner=spawn_agent)
-    assert len(out) == 1, (
-        f"expected one researched market; filter={vault.read_filter_log(market.market_id)!r}"
+    result = phases.phase3_research_market(vault, market.market_id, runner=spawn_agent)
+    assert result is not None, (
+        f"phase3_research_market failed; filter={vault.read_filter_log(market.market_id)!r}"
     )
-    assert out[0]["market_id"] == market.market_id
-    assert 0.0 <= out[0]["p_value"] <= 1.0
+    assert result["market_id"] == market.market_id
+    assert 0.0 <= result["p_value"] <= 1.0
 
     active = vault.read_active_research(market.market_id)
     assert active is not None
