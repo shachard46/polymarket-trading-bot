@@ -50,8 +50,10 @@ from orchestrator.config import FORCED_SYNTHESIS_OVERRIDE, MAX_RESEARCH_ITERATIO
 from orchestrator.parse import (
     AgentOutputParseError,
     agent_error_reason,
+    coerce_deep_researcher_state_machine,
     normalize_structured_output,
     parse_agent_json_or_yaml,
+    preprocess_agent_text,
     run_agent_with_format_retries,
 )
 from orchestrator.research import parse_deep_researcher, split_yaml_frontmatter_markdown
@@ -555,6 +557,18 @@ def _invoke_deep_researcher(
 ) -> DeepResearcherComplete | DeepResearcherNeedsMore:
     payload = dict(dr_in)
 
+    def _parse_dr_response(raw: Any) -> dict[str, Any]:
+        if isinstance(raw, dict):
+            base: Any = raw
+        elif isinstance(raw, str):
+            try:
+                base = parse_agent_json_or_yaml(preprocess_agent_text(raw))
+            except AgentOutputParseError:
+                base = raw
+        else:
+            base = raw
+        return coerce_deep_researcher_state_machine(base, payload)
+
     def _validate_dr(parsed: dict[str, Any]) -> DeepResearcherComplete | DeepResearcherNeedsMore:
         normalized = normalize_structured_output(
             "deep_researcher",
@@ -565,7 +579,11 @@ def _invoke_deep_researcher(
         return parse_deep_researcher_json(normalized)
 
     return run_agent_with_format_retries(
-        runner, "deep_researcher", payload, validate_fn=_validate_dr
+        runner,
+        "deep_researcher",
+        payload,
+        validate_fn=_validate_dr,
+        parse_response=_parse_dr_response,
     )
 
 

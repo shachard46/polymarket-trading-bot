@@ -29,6 +29,7 @@ from orchestrator.agent_outputs import parse_deep_researcher_json
 from orchestrator.parse import (
     AgentOutputParseError,
     coerce_deep_researcher_markdown,
+    coerce_deep_researcher_state_machine,
     normalize_structured_output,
     parse_agent_json_or_yaml,
     preprocess_agent_text,
@@ -95,11 +96,15 @@ def _validate_response(
     if spec.get("output_is_state_machine"):
         try:
             if isinstance(result, dict):
-                parsed = result
+                base: Any = result
             else:
                 text = result if isinstance(result, str) else str(result)
-                parsed = parse_agent_json_or_yaml(preprocess_agent_text(text))
-            parse_deep_researcher_json(parsed)
+                try:
+                    base = parse_agent_json_or_yaml(preprocess_agent_text(text))
+                except AgentOutputParseError:
+                    base = result
+            coerced = coerce_deep_researcher_state_machine(base, payload)
+            parse_deep_researcher_json(coerced)
         except (AgentOutputParseError, ValueError) as exc:
             raise AgentSchemaError(role, "output", str(exc)) from exc
         return

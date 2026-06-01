@@ -17,6 +17,7 @@ import yaml
 from pydantic import BaseModel, ValidationError
 
 from orchestrator.config import MAX_FORMAT_RETRIES
+from orchestrator.research import parse_deep_researcher
 
 log = logging.getLogger(__name__)
 
@@ -146,6 +147,12 @@ def normalize_structured_output(
     output_schema: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Backfill known output fields from the orchestrator payload when missing."""
+    if role == "briefer" and "research_queries" not in parsed and parsed.get("summary"):
+        raise ValueError(
+            "legacy field 'summary' removed; emit research_queries (1-3 strings). "
+            "Hub runs A-IQ from research_queries — you do not call tools."
+        )
+
     schema = output_schema or {}
     if "market_id" not in schema:
         return parsed
@@ -158,6 +165,53 @@ def normalize_structured_output(
         )
         return {**parsed, "market_id": payload_mid}
     return parsed
+
+
+def _legacy_markdown_to_complete(markdown: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Wrap pre–state-machine Deep Researcher markdown as ``status: complete``."""
+    log.info("[deep_researcher] coerced legacy markdown to status=complete")
+    market_id = str(payload.get("market_id") or "")
+    estimated_p = 0.5
+    try:
+        research = parse_deep_researcher(markdown)
+        estimated_p = research.estimated_p
+        if research.market_id:
+            market_id = research.market_id
+    except ValueError:
+        pass
+    return {
+        "status": "complete",
+        "market_id": market_id,
+        "estimated_p": estimated_p,
+        "markdown": markdown,
+    }
+
+
+def coerce_deep_researcher_state_machine(
+    raw: Any,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Normalize Deep Researcher output to the JSON state-machine shape.
+
+    Accepts legacy raw markdown (or markdown-only dicts) and maps them to
+    ``status: complete`` for rollout compatibility.
+    """
+    if isinstance(raw, dict):
+        status = raw.get("status")
+        if status in ("needs_more_data", "complete"):
+            return raw
+        if status is None:
+            return _legacy_markdown_to_complete(coerce_deep_researcher_markdown(raw), payload)
+        raise AgentOutputParseError(
+            f"deep researcher unexpected status: {status!r}",
+            raw=json.dumps(raw, default=str),
+        )
+    if isinstance(raw, str):
+        return _legacy_markdown_to_complete(coerce_deep_researcher_markdown(raw), payload)
+    raise AgentOutputParseError(
+        f"deep researcher returned unsupported type: {type(raw).__name__}",
+        raw=repr(raw),
+    )
 
 
 def coerce_deep_researcher_markdown(raw: Any) -> str:
@@ -204,11 +258,15 @@ def run_agent_with_format_retries(
     *,
     validate_fn: Callable[[dict[str, Any]], T],
     max_retries: int = MAX_FORMAT_RETRIES,
+    parse_response: Callable[[Any], dict[str, Any]] | None = None,
 ) -> T:
     """Invoke ``runner`` until ``validate_fn`` accepts the parsed JSON mapping.
 
     On :class:`ValidationError`, append ``format_validation_error`` to the payload
     and retry up to ``max_retries`` times after the first failure.
+
+    Optional ``parse_response`` maps the raw agent return value to a dict before
+    ``validate_fn`` (e.g. legacy markdown coercion for Deep Researcher).
     """
     attempt_payload = dict(payload)
     last_error: ValidationError | None = None
@@ -217,7 +275,9 @@ def run_agent_with_format_retries(
     for attempt in range(max_attempts):
         raw = runner(role, attempt_payload)
         try:
-            if isinstance(raw, dict):
+            if parse_response is not None:
+                parsed = parse_response(raw)
+            elif isinstance(raw, dict):
                 parsed = raw
             else:
                 text = raw if isinstance(raw, str) else str(raw)
@@ -267,6 +327,7 @@ __all__ = [
     "parse_agent_json_or_yaml",
     "normalize_structured_output",
     "coerce_deep_researcher_markdown",
+    "coerce_deep_researcher_state_machine",
     "run_agent_with_format_retries",
     "agent_error_reason",
 ]

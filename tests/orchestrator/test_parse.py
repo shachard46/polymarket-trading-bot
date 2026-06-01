@@ -6,12 +6,18 @@ import json
 
 import pytest
 
+from orchestrator.agent_outputs import (
+    DeepResearcherComplete,
+    parse_deep_researcher_json,
+)
 from orchestrator.parse import (
     AgentOutputParseError,
+    coerce_deep_researcher_state_machine,
     extract_fenced_block,
     normalize_structured_output,
     parse_agent_json_or_yaml,
 )
+from orchestrator.runner import _stub_deep_researcher_markdown
 from orchestrator.schema_validation import build_model, validate_payload
 
 
@@ -128,3 +134,36 @@ def test_parse_double_encoded_json_string():
     parsed = parse_agent_json_or_yaml(json.dumps(inner))
     assert parsed["passed"] is False
     assert parsed["market_id"].startswith("0x")
+
+
+def test_coerce_deep_researcher_state_machine_from_legacy_markdown():
+    payload = {"market_id": "0xabc"}
+    markdown = _stub_deep_researcher_markdown("0xabc", estimated_p=0.42)
+    coerced = coerce_deep_researcher_state_machine(markdown, payload)
+    out = parse_deep_researcher_json(coerced)
+    assert isinstance(out, DeepResearcherComplete)
+    assert out.market_id == "0xabc"
+    assert out.estimated_p == 0.42
+
+
+def test_coerce_deep_researcher_state_machine_needs_more_unchanged():
+    raw = {"status": "needs_more_data", "new_queries": ["follow-up"]}
+    assert coerce_deep_researcher_state_machine(raw, {"market_id": "x"}) == raw
+
+
+def test_coerce_deep_researcher_state_machine_markdown_dict():
+    markdown = _stub_deep_researcher_markdown("0xabc", estimated_p=0.55)
+    coerced = coerce_deep_researcher_state_machine({"markdown": markdown}, {"market_id": "0xabc"})
+    out = parse_deep_researcher_json(coerced)
+    assert isinstance(out, DeepResearcherComplete)
+    assert out.estimated_p == 0.55
+
+
+def test_normalize_structured_output_rejects_legacy_briefer_summary():
+    with pytest.raises(ValueError, match="research_queries"):
+        normalize_structured_output(
+            "briefer",
+            {"market_id": "0xabc"},
+            {"market_id": "0xabc", "summary": "old style context"},
+            output_schema={"market_id": "string"},
+        )

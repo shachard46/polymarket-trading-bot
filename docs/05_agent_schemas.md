@@ -131,3 +131,16 @@ Hub persistence: cumulative A-IQ results live in `02_Active_Research/research_bu
   "error": "string | null"
 }
 ```
+
+## Phase 3 rollout checklist (breaking changes)
+
+After the Hub-managed qualitative pipeline lands, sync each OpenClaw workspace from [`agents_blueprint/<role>/`](../agents_blueprint/) before running live orchestrator ticks:
+
+| Role | OpenClaw agent id | Critical contract changes |
+|------|-------------------|---------------------------|
+| **briefer** | `polymarket-briefer` | Output `research_queries` (1–3 strings), not `summary`. `tools.allow` is empty — Hub runs `execute_aiq_query`. |
+| **deep_researcher** | `polymarket-deep-researcher` | Input `research_bundle` (list), not `context_summary`. Output JSON state machine (`status: needs_more_data` \| `complete`), not raw markdown. No agent tools. |
+
+**Hub behavior:** The orchestrator always populates `research_bundle` before spawning Deep Researcher. A-IQ fetches are never invoked from agent workspaces.
+
+**Temporary compatibility:** Legacy Deep Researcher raw-markdown responses are coerced to `status: complete` in [`orchestrator/parse.py`](../orchestrator/parse.py) (`coerce_deep_researcher_state_machine`) so rollout does not immediately flag markets inactive. Legacy briefer `summary`-only JSON receives a retryable `format_validation_error` directing the model to emit `research_queries`. Remove reliance on these adapters once live workspaces are validated.

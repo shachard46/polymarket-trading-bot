@@ -49,6 +49,36 @@ def test_write_research_bundle_merges_and_dedupes(vault):
     assert loaded[0]["research_data"] == "a"
 
 
+def test_write_research_bundle_retry_after_error_replaces_entry(vault):
+    vault.write_research_bundle(
+        "0xabc",
+        [{"query": "q1", "research_data": "", "error": "timeout"}],
+    )
+    vault.write_research_bundle(
+        "0xabc",
+        [{"query": "q1", "research_data": "recovered", "error": None}],
+    )
+    loaded = vault.read_research_bundle("0xabc")
+    assert loaded is not None
+    assert len(loaded) == 1
+    assert loaded[0]["research_data"] == "recovered"
+    assert loaded[0]["error"] is None
+
+
+def test_write_research_bundle_does_not_clobber_success_with_error(vault):
+    vault.write_research_bundle(
+        "0xabc",
+        [{"query": "q1", "research_data": "good", "error": None}],
+    )
+    vault.write_research_bundle(
+        "0xabc",
+        [{"query": "q1", "research_data": "", "error": "still failing"}],
+    )
+    loaded = vault.read_research_bundle("0xabc")
+    assert loaded is not None
+    assert loaded[0]["research_data"] == "good"
+
+
 def test_read_research_bundle_empty_queries_returns_empty_list(vault):
     path = vault._research_bundle_path("0xabc")
     path.parent.mkdir(parents=True, exist_ok=True)
