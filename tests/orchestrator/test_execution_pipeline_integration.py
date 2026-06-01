@@ -36,12 +36,19 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
-from agents_blueprint import AGENTS
+# Allow ``python tests/orchestrator/test_execution_pipeline_integration.py`` from repo root.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 from config.vault import VAULT_PATH_ENV
 from obsidian_utils import ObsidianManager, TradeLogPayload
 from orchestrator import phases, scraper
@@ -57,6 +64,21 @@ _PHASE4_MARKET_ENV = "OPENCLAW_PHASE4_MARKET_ID"
 _LOG_LEVEL_ENV = "OPENCLAW_PHASE4_LOG_LEVEL"
 
 log = logging.getLogger(__name__)
+
+_EXECUTIONER_AGENT_YAML = (
+    _REPO_ROOT / "agents_blueprint" / "executioner" / "agent.yaml"
+)
+
+
+@lru_cache(maxsize=1)
+def _executioner_output_schema() -> dict[str, Any]:
+    """Load executioner output_schema without importing ``agents_blueprint`` (avoids circular import)."""
+    with _EXECUTIONER_AGENT_YAML.open(encoding="utf-8") as fh:
+        spec = yaml.safe_load(fh)
+    schema = spec.get("output_schema")
+    if not isinstance(schema, dict):
+        raise RuntimeError(f"invalid output_schema in {_EXECUTIONER_AGENT_YAML}")
+    return schema
 
 
 def _configure_logging() -> None:
@@ -177,7 +199,7 @@ def _assert_trade_log_ok(vault: ObsidianManager, market_id: str) -> dict[str, An
 
     output_model = build_model(
         "executioner_output",
-        AGENTS["executioner"]["output_schema"],
+        _executioner_output_schema(),
     )
     assert output_model is not None
     validate_payload("executioner", "output", output_model, trade)
