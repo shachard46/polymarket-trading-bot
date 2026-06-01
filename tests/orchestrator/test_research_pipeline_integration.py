@@ -20,11 +20,16 @@ export POLYMARKET_DB_PATH=/path/to/polymarket.db
 # export OPENCLAW_PHASE3_MARKET_ID=0x...
 
 python tests/orchestrator/test_research_pipeline_integration.py
+
+# pytest with live logs:
+pytest tests/orchestrator/test_research_pipeline_integration.py -v -s --log-cli-level=INFO
+# optional: export OPENCLAW_PHASE3_LOG_LEVEL=DEBUG
 ```
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from pathlib import Path
@@ -41,6 +46,27 @@ from orchestrator.scraper import MarketRow
 
 _PHASE3_LIVE_ENV = "OPENCLAW_PHASE3_LIVE"
 _PHASE3_MARKET_ENV = "OPENCLAW_PHASE3_MARKET_ID"
+_LOG_LEVEL_ENV = "OPENCLAW_PHASE3_LOG_LEVEL"
+
+log = logging.getLogger(__name__)
+
+
+def _configure_logging() -> None:
+    level_name = os.environ.get(_LOG_LEVEL_ENV, "INFO").upper()
+    level = getattr(logging, level_name, logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        force=True,
+    )
+
+
+def _log_status(step: str, **details: object) -> None:
+    if details:
+        detail_str = " ".join(f"{key}={value!r}" for key, value in details.items())
+        log.info("[phase3_live] %s — %s", step, detail_str)
+    else:
+        log.info("[phase3_live] %s", step)
 
 
 def _phase3_live_requested() -> bool:
@@ -63,18 +89,23 @@ def _resolve_market_row() -> MarketRow:
     _wire_scraper_env()
     pinned = os.environ.get(_PHASE3_MARKET_ENV, "").strip()
     if pinned:
+        _log_status("fetching pinned market", market_id=pinned)
         row = scraper.fetch_market_row(pinned)
         if row is None:
             raise RuntimeError(f"scraper.fetch_market_row returned None for market_id={pinned!r}")
+        _log_status("market resolved (pinned)", market_id=row.market_id, title=row.market_title)
         return row
 
+    _log_status("fetching one open market", ingest_limit=os.environ.get("OPENCLAW_INGEST_LIMIT", "1"))
     rows = scraper.fetch_target_markets()
     if not rows:
         raise RuntimeError(
             "scraper.fetch_target_markets returned no rows. "
             "Check POLYMARKET_DB_PATH and that poly-scan is on PATH (or POLY_SCAN_BIN)."
         )
-    return rows[0]
+    row = rows[0]
+    _log_status("market resolved (ingest)", market_id=row.market_id, title=row.market_title)
+    return row
 
 
 def _make_vault(*, base: Path | None = None):
@@ -88,6 +119,7 @@ def _make_vault(*, base: Path | None = None):
 
 
 def _seed_filter_for_phase3(vault, market: MarketRow) -> None:
+    _log_status("seeding filter log", market_id=market.market_id, vault=str(vault._base))
     vault.write_filter_log(
         market.market_id,
         {
@@ -101,85 +133,121 @@ def _seed_filter_for_phase3(vault, market: MarketRow) -> None:
     )
 
 
+def _run_live_research(vault, market: MarketRow):
+    """Execute single-market Phase 3 and log progress."""
+    _log_status(
+        "hydrating market row",
+        market_id=market.market_id,
+        runner_mode=os.environ.get(RUNNER_MODE_ENV, RUNNER_MODE_LIVE),
+    )
+    hydrated = scraper.fetch_market_row(market.market_id)
+    if hydrated is None:
+        _log_status("hydration failed", market_id=market.market_id)
+        return None
+    _log_status("hydration ok", market_id=hydrated.market_id, title=hydrated.market_title)
+
+    _log_status("starting phase3_research_market", market_id=market.market_id)
+    result = phases.phase3_research_market(vault, market.market_id, runner=spawn_agent)
+    if result is None:
+        filt = vault.read_filter_log(market.market_id)
+        _log_status("phase3_research_market failed", market_id=market.market_id, filter=filt)
+        return None
+
+    bundle = vault.read_research_bundle(market.market_id)
+    active = vault.read_active_research(market.market_id)
+    _log_status(
+        "phase3_research_market complete",
+        market_id=result.get("market_id"),
+        p_value=result.get("p_value"),
+        bundle_queries=len(bundle or []),
+        active_research=bool(active),
+    )
+    return result
+
+
 def run_phase3_isolated() -> int:
     """Run Phase 3 once with live agents and real A-IQ; return process exit code."""
+    _configure_logging()
     os.environ.setdefault(_PHASE3_LIVE_ENV, "1")
     os.environ.setdefault(RUNNER_MODE_ENV, RUNNER_MODE_LIVE)
 
+    _log_status("run started", live_env=_PHASE3_LIVE_ENV, runner_mode=os.environ.get(RUNNER_MODE_ENV))
+
     if not _phase3_live_requested():
-        print(f"Set {_PHASE3_LIVE_ENV}=1 to run.", file=sys.stderr)
+        log.error("Set %s=1 to run.", _PHASE3_LIVE_ENV)
         return 2
 
     try:
+        _log_status("checking OpenClaw gateway")
         require_gateway()
+        _log_status("gateway ok")
     except Exception as exc:
-        print(f"OpenClaw gateway not ready: {exc}", file=sys.stderr)
+        log.error("OpenClaw gateway not ready: %s", exc)
         return 2
 
     try:
+        _log_status("wiring scraper env", db_path=os.environ.get("POLYMARKET_DB_PATH", ""))
         _wire_scraper_env()
         market = _resolve_market_row()
     except Exception as exc:
-        print(f"Setup failed: {exc}", file=sys.stderr)
+        log.error("Setup failed: %s", exc)
         return 2
 
     if not os.environ.get(VAULT_PATH_ENV, "").strip():
-        print(
-            f"Hint: set {VAULT_PATH_ENV} to keep vault artifacts after this run.",
-            file=sys.stderr,
-        )
+        log.warning("Hint: set %s to keep vault artifacts after this run.", VAULT_PATH_ENV)
 
+    _log_status("initializing vault")
     vault = _make_vault()
     _seed_filter_for_phase3(vault, market)
 
-    print(f"vault={vault._base}")
-    print(f"db={os.environ.get('POLYMARKET_DB_PATH')}")
-    print(f"market_id={market.market_id}")
-    print(f"title={market.market_title!r}")
-
-    result = phases.phase3_research_market(vault, market.market_id, runner=spawn_agent)
-
+    result = _run_live_research(vault, market)
     if result is None:
-        filt = vault.read_filter_log(market.market_id)
-        print(f"phase3_research_market returned None; filter={filt!r}", file=sys.stderr)
         return 1
 
-    row = result
     active = vault.read_active_research(market.market_id)
-    bundle = vault.read_research_bundle(market.market_id)
-    print(f"p_value={row.get('p_value')}")
-    print(f"bundle_queries={len(bundle or [])}")
     if active:
         try:
             research = parse_deep_researcher(active)
-            print(f"estimated_p={research.estimated_p}")
+            _log_status("active research parsed", estimated_p=research.estimated_p)
         except ValueError as exc:
-            print(f"active research parse warning: {exc}", file=sys.stderr)
-    print("Phase 3 live run finished OK.")
+            log.warning("active research parse warning: %s", exc)
+
+    _log_status("run finished OK", market_id=market.market_id, p_value=result.get("p_value"))
     return 0
 
 
 @pytest.fixture()
 def phase3_live_env(monkeypatch):
+    _configure_logging()
     if not _phase3_live_requested():
+        _log_status("skipped", reason=f"{_PHASE3_LIVE_ENV} not set")
         pytest.skip(
             f"Set {_PHASE3_LIVE_ENV}=1 for live Phase 3. "
             "Or: python tests/orchestrator/test_research_pipeline_integration.py"
         )
 
+    _log_status("pytest live env: checking prerequisites")
     monkeypatch.setenv(RUNNER_MODE_ENV, RUNNER_MODE_LIVE)
     try:
         require_gateway()
+        _log_status("pytest live env: gateway ok")
     except Exception as exc:
+        _log_status("pytest live env: skipped", reason=f"gateway: {exc}")
         pytest.skip(f"OpenClaw gateway not ready: {exc}")
 
     try:
         _wire_scraper_env(monkeypatch)
         if not scraper.fetch_target_markets():
+            _log_status(
+                "pytest live env: skipped",
+                reason="fetch_target_markets returned no rows",
+            )
             pytest.skip(
                 "scraper.fetch_target_markets returned no rows (check POLYMARKET_DB_PATH and poly-scan)."
             )
+        _log_status("pytest live env: scraper ok")
     except Exception as exc:
+        _log_status("pytest live env: skipped", reason=str(exc))
         pytest.skip(str(exc))
 
 
@@ -192,22 +260,19 @@ def phase3_vault(tmp_path):
 
 def test_phase3_live_one_market_from_db(phase3_live_env, phase3_vault):
     """Live Phase 3 on one fetched market only (no vault queue scan)."""
+    _log_status("pytest test started")
     market = _resolve_market_row()
     vault = phase3_vault
     _seed_filter_for_phase3(vault, market)
 
-    hydrated = scraper.fetch_market_row(market.market_id)
-    assert hydrated is not None
-    assert hydrated.market_id == market.market_id
-    assert hydrated.market_title == market.market_title
-
-    result = phases.phase3_research_market(vault, market.market_id, runner=spawn_agent)
+    result = _run_live_research(vault, market)
     assert result is not None, (
         f"phase3_research_market failed; filter={vault.read_filter_log(market.market_id)!r}"
     )
     assert result["market_id"] == market.market_id
     assert 0.0 <= result["p_value"] <= 1.0
 
+    _log_status("validating vault artifacts", market_id=market.market_id)
     active = vault.read_active_research(market.market_id)
     assert active is not None
     research = parse_deep_researcher(active)
@@ -221,6 +286,7 @@ def test_phase3_live_one_market_from_db(phase3_live_env, phase3_vault):
         (entry.get("research_data") or "").strip() or entry.get("error")
         for entry in bundle
     )
+    _log_status("pytest test passed", market_id=market.market_id, p_value=result["p_value"])
 
 
 if __name__ == "__main__":
