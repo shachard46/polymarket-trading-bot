@@ -29,7 +29,8 @@ DEFAULT_OPENCLAW_AGENT_MAX_ATTEMPTS = 3
 OPENCLAW_AGENT_RETRY_BACKOFF_ENV = "OPENCLAW_AGENT_RETRY_BACKOFF"
 DEFAULT_OPENCLAW_AGENT_RETRY_BACKOFF = 2.0
 
-AUTO_REPLAY_DLQ_ENV = "OPENCLAW_AUTO_REPLAY_DLQ"
+AUTO_REPLAY_ENV = "OPENCLAW_AUTO_REPLAY"
+AUTO_REPLAY_DLQ_ENV = "OPENCLAW_AUTO_REPLAY_DLQ"  # deprecated alias
 
 TOP_QUALITATIVE_MARKETS_ENV = "OPENCLAW_TOP_MARKETS"
 
@@ -101,10 +102,15 @@ def openclaw_agent_retry_backoff() -> float:
         return DEFAULT_OPENCLAW_AGENT_RETRY_BACKOFF
 
 
+def auto_replay() -> bool:
+    """Return whether the orchestrator should clear inactive flags at startup."""
+    raw = os.environ.get(AUTO_REPLAY_ENV) or os.environ.get(AUTO_REPLAY_DLQ_ENV, "")
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def auto_replay_dlq() -> bool:
-    """Return whether the orchestrator should replay DLQ markets at startup."""
-    raw = os.environ.get(AUTO_REPLAY_DLQ_ENV, "").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
+    """Deprecated alias for :func:`auto_replay`."""
+    return auto_replay()
 
 
 __all__ = [
@@ -121,7 +127,9 @@ __all__ = [
     "OPENCLAW_AGENT_TIMEOUT_ENV",
     "OPENCLAW_AGENT_MAX_ATTEMPTS_ENV",
     "OPENCLAW_AGENT_RETRY_BACKOFF_ENV",
+    "AUTO_REPLAY_ENV",
     "AUTO_REPLAY_DLQ_ENV",
+    "auto_replay",
     "openclaw_bin",
     "openclaw_agent_timeout",
     "openclaw_agent_max_attempts",

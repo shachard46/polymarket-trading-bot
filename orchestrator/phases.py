@@ -7,21 +7,27 @@ A phase:
 3. Parses the response (JSON/YAML for most agents; markdown for the Deep
    Researcher) using :mod:`orchestrator.parse` and :mod:`orchestrator.research`.
 4. Validates and writes the payload via :class:`obsidian_utils.ObsidianManager`.
-5. Quarantines the market on any error or parse failure.
+5. Flags the market inactive in place on any error or parse failure.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from obsidian_utils import ObsidianManager, VaultWriteError
+from config.trading_constants import PENDING_EDGE_REFRESH_KEY
 from orchestrator import scraper
-from orchestrator.config import PAPER_TRADE_MODE, max_edge_research_refreshes
-from orchestrator.dead_letter import (
+from orchestrator.config import PAPER_TRADE_MODE, max_edge_research_refreshes, top_qualitative_markets
+from orchestrator.state import (
+    flag_inactive,
+    has_pending_edge_refresh,
+    is_error_free_active,
+    is_inactive,
     market_quarantine,
-    quarantine_market,
-    vault_write_or_quarantine,
+    read_edge_refresh_count,
+    vault_write_or_flag,
 )
 from orchestrator.directives import extract_filter_directives
 from orchestrator.scraper import MarketRow
@@ -40,21 +46,30 @@ from orchestrator.schema_validation import AgentSchemaError
 
 log = logging.getLogger(__name__)
 
+Phase3Kind = Literal["initial", "edge_refresh"]
+
+
+@dataclass(frozen=True)
+class Phase3Candidate:
+    """One market eligible for the qualitative pipeline."""
+
+    market_id: str
+    kind: Phase3Kind
+    filter_record: dict[str, Any]
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
 
-def _qualitative_rank_key(row: dict[str, Any]) -> tuple[float, str]:
-    """Sort key: higher ``confidence_multiplier`` first, then ``market_id`` ascending."""
-    ev = row.get("evaluator_output") or {}
+def _qualitative_rank_key(candidate: Phase3Candidate) -> tuple[float, str]:
+    ev = candidate.filter_record
     try:
         cm = float(ev.get("confidence_multiplier", 0.0))
     except (TypeError, ValueError):
         cm = 0.0
-    mid = str(row.get("market_id") or "")
-    return (-cm, mid)
+    return (-cm, candidate.market_id)
 
 
 def _trade_log_has_nonempty_error(data: dict[str, Any]) -> bool:
@@ -94,53 +109,12 @@ def _trade_log_shows_edge_disqualification(data: dict[str, Any]) -> bool:
         return False
 
 
-def _read_edge_research_refresh_count(vault: ObsidianManager, market_id: str) -> int:
-    raw = vault.read_active_research(market_id)
-    if not raw:
-        return 0
-    try:
-        fm, _ = split_yaml_frontmatter_markdown(raw)
-    except ValueError:
-        return 0
-    try:
-        return int(fm.get("edge_research_refresh_count") or 0)
-    except (TypeError, ValueError):
-        return 0
-
-
-def merge_phase3_inputs(
-    primary: list[dict[str, Any]],
-    refresh_only: list[dict[str, Any]],
-    cap: int,
-) -> list[dict[str, Any]]:
-    """Merge primary quantitative passes with edge-refresh rows; dedupe by ``market_id``."""
-    by_id: dict[str, dict[str, Any]] = {}
-    for row in refresh_only:
-        by_id[str(row["market_id"])] = row
-    for row in primary:
-        by_id[str(row["market_id"])] = row
-    merged = list(by_id.values())
-    merged.sort(key=_qualitative_rank_key)
-    if len(merged) > cap:
-        log.info(
-            "[PHASE 2+3 queue] capping qualitative queue: %d -> %d (OPENCLAW_TOP_MARKETS)",
-            len(merged),
-            cap,
-        )
-        return merged[:cap]
-    return merged
-
-
 def _run_structured_agent(
     runner: AgentRunner,
     role: str,
     payload: dict[str, Any],
 ) -> tuple[dict[str, Any] | None, str | None]:
-    """Spawn a JSON/YAML agent. Returns ``(parsed, error_reason)``.
-
-    ``error_reason`` is non-None when the agent failed (parse error, empty
-    response, or explicit ``error`` field). Callers should DLQ on that.
-    """
+    """Spawn a JSON/YAML agent. Returns ``(parsed, error_reason)``."""
     try:
         raw = runner(role, payload)
     except AgentSchemaError as exc:
@@ -161,6 +135,24 @@ def _run_structured_agent(
     if err:
         return parsed, f"{role} error: {err}"
     return parsed, None
+
+
+def _write_filter_with_pending_refresh(
+    vault: ObsidianManager,
+    market_id: str,
+    parsed: dict[str, Any],
+    *,
+    pending_edge_refresh: bool,
+) -> bool:
+    payload = {**parsed, PENDING_EDGE_REFRESH_KEY: pending_edge_refresh}
+    return vault_write_or_flag(
+        vault=vault,
+        market_id=market_id,
+        write_fn=lambda: vault.write_filter_log(market_id, payload),
+        payload=payload,
+        artifact_label="filter log",
+        phase="phase2",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -189,15 +181,10 @@ def phase2_quantitative_routing(
     vault: ObsidianManager,
     target_markets: list[MarketRow],
     runner: AgentRunner = spawn_agent,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Filter markets through the (re-)Evaluator; return ``(passed, edge_refresh_rows)``.
-
-    Caller merges with :func:`merge_phase3_inputs` and ``top_qualitative_markets()``.
-    """
+) -> None:
+    """Filter markets through the (re-)Evaluator; persist to ``01_Filters/``."""
     log.info("[PHASE 2] Quantitative routing")
     filter_directives = extract_filter_directives(vault.read_directives())
-    passed: list[dict[str, Any]] = []
-    edge_refresh: list[dict[str, Any]] = []
 
     for market in target_markets:
         market_id = market.market_id
@@ -222,7 +209,7 @@ def phase2_quantitative_routing(
                 and _trade_log_shows_edge_disqualification(trade)
             ):
                 cap_ref = max_edge_research_refreshes()
-                prev_edge = _read_edge_research_refresh_count(vault, market_id)
+                prev_edge = read_edge_refresh_count(vault, market_id)
                 if prev_edge >= cap_ref:
                     log.info(
                         "[PHASE 2] skip edge research refresh for %s (cap %s)",
@@ -249,15 +236,24 @@ def phase2_quantitative_routing(
                     runner, "re_evaluator", payload_re
                 )
                 if reason_re:
-                    quarantine_market(
-                        vault, market_id, reason_re, parsed_re or payload_re
+                    flag_inactive(
+                        vault, market_id, "phase2", reason_re, parsed_re or payload_re
                     )
                     continue
                 if parsed_re.get("retry_deep_research"):
-                    row_er = market.model_dump()
-                    row_er["evaluator_output"] = parsed_re
-                    row_er["_edge_research_refresh"] = True
-                    edge_refresh.append(row_er)
+                    if not _write_filter_with_pending_refresh(
+                        vault,
+                        market_id,
+                        parsed_re,
+                        pending_edge_refresh=True,
+                    ):
+                        continue
+                else:
+                    vault.patch_frontmatter(
+                        market_id,
+                        "filters",
+                        {PENDING_EDGE_REFRESH_KEY: False},
+                    )
                 continue
 
             role = "re_evaluator" if has_active else "evaluator"
@@ -282,60 +278,169 @@ def phase2_quantitative_routing(
 
             parsed, reason = _run_structured_agent(runner, role, payload)
             if reason:
-                quarantine_market(vault, market_id, reason, parsed or payload)
+                flag_inactive(vault, market_id, "phase2", reason, parsed or payload)
                 continue
 
             if not parsed.get("passed"):
                 log.info("Market %s did not pass quantitative filters", market_id)
                 continue
 
-            if not vault_write_or_quarantine(
+            if not vault_write_or_flag(
                 vault=vault,
                 market_id=market_id,
                 write_fn=lambda: vault.write_filter_log(market_id, parsed),
                 payload=parsed,
                 artifact_label="filter log",
+                phase="phase2",
             ):
                 continue
 
-            row = market.model_dump()
-            row["evaluator_output"] = parsed
-            passed.append(row)
-
-    passed.sort(key=_qualitative_rank_key)
-    log.info(
-        "[PHASE 2] passed_markets count=%d edge_refresh_rows=%d",
-        len(passed),
-        len(edge_refresh),
-    )
-    return passed, edge_refresh
+    log.info("[PHASE 2] quantitative routing complete")
 
 
 # ---------------------------------------------------------------------------
-# Phase 3 — Qualitative pipeline
+# Phase 3 — Qualitative pipeline (decoupled vault scan)
 # ---------------------------------------------------------------------------
+
+
+def build_phase3_queue(vault: ObsidianManager) -> list[Phase3Candidate]:
+    """Scan ``01_Filters/`` for initial research or ``pending_edge_refresh`` work."""
+    cap_ref = max_edge_research_refreshes()
+    candidates: list[Phase3Candidate] = []
+
+    for path in vault.iter_dir_files("filters", ".md"):
+        market_id = path.stem
+        record = vault.read_market_record(market_id, "filters")
+        if record is None or is_inactive(record):
+            continue
+
+        if has_pending_edge_refresh(record):
+            if not is_error_free_active(vault, market_id):
+                continue
+            if read_edge_refresh_count(vault, market_id) >= cap_ref:
+                continue
+            candidates.append(
+                Phase3Candidate(
+                    market_id=market_id,
+                    kind="edge_refresh",
+                    filter_record=record,
+                )
+            )
+            continue
+
+        if not record.get("passed"):
+            continue
+        if is_error_free_active(vault, market_id):
+            continue
+        candidates.append(
+            Phase3Candidate(
+                market_id=market_id,
+                kind="initial",
+                filter_record=record,
+            )
+        )
+
+    candidates.sort(key=_qualitative_rank_key)
+    cap = top_qualitative_markets()
+    if len(candidates) > cap:
+        log.info(
+            "[PHASE 3 queue] capping qualitative queue: %d -> %d (OPENCLAW_TOP_MARKETS)",
+            len(candidates),
+            cap,
+        )
+        return candidates[:cap]
+    return candidates
 
 
 def phase3_qualitative_pipeline(
     vault: ObsidianManager,
-    passed_markets: list[dict[str, Any]],
     runner: AgentRunner = spawn_agent,
 ) -> list[dict[str, Any]]:
     """Briefer → Deep Researcher; persist research to ``02_Active_Research/``."""
     log.info("[PHASE 3] Qualitative pipeline")
     directives = vault.read_directives()
+    queue = build_phase3_queue(vault)
     researched: list[dict[str, Any]] = []
 
-    for row in passed_markets:
-        market_id = row["market_id"]
-        researched_row: dict[str, Any] | None = None
+    for candidate in queue:
+        market_id = candidate.market_id
+        row = scraper.fetch_market_row(market_id)
+        if row is None:
+            log.warning(
+                "[PHASE 3] skip %s: could not hydrate market row from scraper",
+                market_id,
+            )
+            continue
+
+        market_row = row.model_dump()
+        result: dict[str, Any] | None = None
         with market_quarantine(vault, market_id, "phase3"):
-            researched_row = _research_market(vault, runner, row, directives)
-        if researched_row is not None:
-            researched.append(researched_row)
+            if candidate.kind == "edge_refresh":
+                result = _edge_refresh_research(
+                    vault, runner, market_row, directives, candidate
+                )
+            else:
+                result = _research_market(vault, runner, market_row, directives)
+        if result is not None:
+            researched.append(result)
 
     log.info("[PHASE 3] researched count=%d", len(researched))
     return researched
+
+
+def _edge_refresh_research(
+    vault: ObsidianManager,
+    runner: AgentRunner,
+    row: dict[str, Any],
+    directives: str,
+    _candidate: Phase3Candidate,
+) -> dict[str, Any] | None:
+    """Deep Researcher only — overwrite active research; strip pending flag."""
+    market_id = row["market_id"]
+    summary = _context_summary_from_active(vault, market_id)
+    if not summary:
+        brief_in = {
+            "market_id": market_id,
+            "market_title": row.get("market_title", ""),
+            "market_description": row.get("market_description", ""),
+        }
+        brief, reason = _run_structured_agent(runner, "briefer", brief_in)
+        if reason:
+            flag_inactive(vault, market_id, "phase3", reason, brief or brief_in)
+            return None
+        summary = brief.get("summary")
+        if not summary:
+            flag_inactive(vault, market_id, "phase3", "briefer returned no summary", brief)
+            return None
+
+    result = _run_deep_researcher(
+        vault, runner, row, directives, summary, market_id, from_edge=True
+    )
+    if result is None:
+        return None
+
+    vault.strip_keys(market_id, "filters", (PENDING_EDGE_REFRESH_KEY,))
+    return result
+
+
+def _context_summary_from_active(vault: ObsidianManager, market_id: str) -> str | None:
+    """Use Bull thesis excerpt from existing research as context when re-briefing."""
+    raw = vault.read_active_research(market_id)
+    if not raw:
+        return None
+    try:
+        _, body = split_yaml_frontmatter_markdown(raw)
+    except ValueError:
+        return None
+    header = "## Bull Thesis"
+    if header not in body:
+        return None
+    start = body.index(header) + len(header)
+    end = body.find("## Bear Thesis", start)
+    excerpt = body[start:end].strip() if end > start else body[start:].strip()
+    if not excerpt:
+        return None
+    return f"Prior research (bull excerpt):\n{excerpt[:2000]}"
 
 
 def _research_market(
@@ -344,7 +449,7 @@ def _research_market(
     row: dict[str, Any],
     directives: str,
 ) -> dict[str, Any] | None:
-    """Brief + research a single market. Returns row for phase 4 or None on DLQ."""
+    """Brief + research a single market. Returns row for phase 4 or None on failure."""
     market_id = row["market_id"]
 
     brief_in = {
@@ -354,13 +459,28 @@ def _research_market(
     }
     brief, reason = _run_structured_agent(runner, "briefer", brief_in)
     if reason:
-        quarantine_market(vault, market_id, reason, brief or brief_in)
+        flag_inactive(vault, market_id, "phase3", reason, brief or brief_in)
         return None
     summary = brief.get("summary")
     if not summary:
-        quarantine_market(vault, market_id, "briefer returned no summary", brief)
+        flag_inactive(vault, market_id, "phase3", "briefer returned no summary", brief)
         return None
 
+    return _run_deep_researcher(
+        vault, runner, row, directives, summary, market_id, from_edge=False
+    )
+
+
+def _run_deep_researcher(
+    vault: ObsidianManager,
+    runner: AgentRunner,
+    row: dict[str, Any],
+    directives: str,
+    summary: str,
+    market_id: str,
+    *,
+    from_edge: bool,
+) -> dict[str, Any] | None:
     dr_in = {
         "market_id": market_id,
         "market_data": row.get("market_data") or {},
@@ -372,34 +492,36 @@ def _research_market(
         markdown = coerce_deep_researcher_markdown(raw_dr)
         research = parse_deep_researcher(markdown)
     except (AgentOutputParseError, ValueError) as exc:
-        quarantine_market(
+        flag_inactive(
             vault,
             market_id,
+            "phase3",
             f"deep researcher parse error: {exc}",
             {"raw": str(raw_dr)},
         )
         return None
 
     if research.error:
-        quarantine_market(
+        flag_inactive(
             vault,
             market_id,
+            "phase3",
             f"deep researcher error in frontmatter: {research.error}",
             research.frontmatter,
         )
         return None
 
     if research.market_id is not None and research.market_id != market_id:
-        quarantine_market(
+        flag_inactive(
             vault,
             market_id,
+            "phase3",
             f"deep researcher returned mismatched market_id: {research.market_id!r}",
             research.frontmatter,
         )
         return None
 
-    from_edge = bool(row.get("_edge_research_refresh"))
-    prev_edge = _read_edge_research_refresh_count(vault, market_id)
+    prev_edge = read_edge_refresh_count(vault, market_id)
     edge_count = prev_edge + 1 if from_edge else prev_edge
 
     payload = {
@@ -408,12 +530,13 @@ def _research_market(
         "error": None,
         "edge_research_refresh_count": edge_count,
     }
-    if not vault_write_or_quarantine(
+    if not vault_write_or_flag(
         vault=vault,
         market_id=market_id,
         write_fn=lambda: vault.write_research_report(market_id, payload, research.body),
         payload=payload,
         artifact_label="research report",
+        phase="phase3",
     ):
         return None
 
@@ -452,18 +575,19 @@ def phase4_execution(
             }
             parsed, reason = _run_structured_agent(runner, "executioner", payload)
             if reason:
-                quarantine_market(vault, market_id, reason, parsed or payload)
+                flag_inactive(vault, market_id, "phase4", reason, parsed or payload)
                 continue
 
             if PAPER_TRADE_MODE:
                 parsed = {**parsed, "executed": False, "transaction_hash": None}
 
-            vault_write_or_quarantine(
+            vault_write_or_flag(
                 vault=vault,
                 market_id=market_id,
                 write_fn=lambda: vault.write_trade_log(market_id, parsed),
                 payload=parsed,
                 artifact_label="trade log",
+                phase="phase4",
             )
 
 
@@ -508,19 +632,19 @@ def _resolve_market(
     }
     parsed, reason = _run_structured_agent(runner, "post_mortem_analyst", payload)
     if reason:
-        quarantine_market(vault, market_id, reason, parsed or payload)
+        flag_inactive(vault, market_id, "phase5", reason, parsed or payload)
         return
 
-    if not vault_write_or_quarantine(
+    if not vault_write_or_flag(
         vault=vault,
         market_id=market_id,
         write_fn=lambda: vault.append_post_mortem(market_id, parsed),
         payload=parsed,
         artifact_label="post-mortem append",
+        phase="phase5",
     ):
         return
 
-    # Archive so subsequent ticks don't re-resolve already-analysed markets.
     try:
         vault.archive_trade(market_id)
     except FileNotFoundError:
@@ -548,29 +672,24 @@ def phase6_macro_learning_loop(
     }
     parsed, reason = _run_structured_agent(runner, "overseer", payload)
     if reason:
-        log.error("Overseer failed: %s", reason)
-        vault.write_error_log(
-            "__overseer__",
-            parsed or payload,
-            f"overseer rejected: {reason}",
-        )
+        log.error("Overseer failed: %s — keeping prior directives", reason)
         return
 
     try:
         vault.write_directives(parsed)
     except VaultWriteError as exc:
-        log.error("Directives validation failed: %s", exc.cause)
-        vault.write_error_log(
-            "__overseer__",
-            parsed,
-            f"directives validation failed: {exc.cause}",
+        log.error(
+            "Directives validation failed: %s — keeping prior directives",
+            exc.cause,
         )
 
 
 __all__ = [
+    "Phase3Candidate",
+    "Phase3Kind",
     "phase1_data_ingestion",
     "phase2_quantitative_routing",
-    "merge_phase3_inputs",
+    "build_phase3_queue",
     "phase3_qualitative_pipeline",
     "phase4_execution",
     "phase5_resolution_and_post_mortem",

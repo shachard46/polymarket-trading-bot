@@ -1,43 +1,28 @@
-"""Phase 2 caps the qualitative queue at OPENCLAW_TOP_MARKETS (default 20)."""
+"""Phase 3 caps the qualitative queue at OPENCLAW_TOP_MARKETS (default 20)."""
 
 from __future__ import annotations
 
-from typing import Any
-
 from obsidian_utils import ObsidianManager
-from orchestrator import phases, scraper
-from orchestrator import config as orch_config
-from orchestrator.scraper import MarketRow
+from orchestrator import phases
 
 
-def test_phase2_sorts_by_confidence_multiplier_and_caps(monkeypatch, tmp_path):
+def test_build_phase3_queue_sorts_and_caps(monkeypatch, tmp_path):
     vault = ObsidianManager(vault_base=tmp_path)
-    monkeypatch.setattr(scraper, "get_market_trends", lambda mid, limit: [])
-    monkeypatch.setattr(scraper, "trends_limit_for_filters", lambda: 10)
-    monkeypatch.setattr(orch_config, "top_qualitative_markets", lambda: 2)
+    monkeypatch.setattr(phases, "top_qualitative_markets", lambda: 2)
 
     mult_by_id = {"low": 1.0, "high": 5.0, "mid": 3.0}
+    for mid, mult in mult_by_id.items():
+        vault.write_filter_log(
+            mid,
+            {
+                "market_id": mid,
+                "passed": True,
+                "trigger": "stub",
+                "confidence_multiplier": mult,
+                "details": "ok",
+                "error": None,
+            },
+        )
 
-    def fake_runner(role: str, payload: dict[str, Any]) -> dict[str, Any]:
-        mid = payload["market_id"]
-        assert role == "evaluator"
-        return {
-            "market_id": mid,
-            "passed": True,
-            "trigger": "stub",
-            "confidence_multiplier": mult_by_id[mid],
-            "details": "ok",
-            "error": None,
-        }
-
-    markets = [
-        MarketRow(market_id="low", market_title="L", market_data={}),
-        MarketRow(market_id="high", market_title="H", market_data={}),
-        MarketRow(market_id="mid", market_title="M", market_data={}),
-    ]
-    passed, refresh = phases.phase2_quantitative_routing(vault, markets, runner=fake_runner)
-    out = phases.merge_phase3_inputs(
-        passed, refresh, orch_config.top_qualitative_markets()
-    )
-
-    assert [r["market_id"] for r in out] == ["high", "mid"]
+    queue = phases.build_phase3_queue(vault)
+    assert [c.market_id for c in queue] == ["high", "mid"]

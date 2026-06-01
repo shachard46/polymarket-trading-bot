@@ -234,6 +234,14 @@ def fetch_target_markets() -> list[MarketRow]:
     return rows
 
 
+def fetch_market_row(market_id: str) -> MarketRow | None:
+    """Return a validated :class:`MarketRow` for one market (open or closed)."""
+    market = _run_poly_scan("get_market", market_id)
+    if not isinstance(market, dict):
+        return None
+    return _market_row_from_scraper(market)
+
+
 def fetch_resolution(market_id: str) -> dict[str, Any] | None:
     """Return resolution metadata for ``market_id`` if the market has closed.
 
@@ -262,5 +270,6 @@ __all__ = [
     "trends_limit_for_filters",
     "get_market_trends",
     "fetch_target_markets",
+    "fetch_market_row",
     "fetch_resolution",
 ]

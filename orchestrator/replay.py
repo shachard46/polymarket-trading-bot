@@ -1,4 +1,4 @@
-"""CLI for restoring quarantined markets from the Dead Letter Queue."""
+"""CLI for clearing inactive flags from native vault directories."""
 
 from __future__ import annotations
 
@@ -8,28 +8,27 @@ import logging
 import sys
 
 from obsidian_utils import ObsidianManager
-from orchestrator.dead_letter import VALID_REPLAY_PHASES, replay_from_dlq
+from orchestrator.state import VALID_REPLAY_DIRS, replay_inactive
 
 log = logging.getLogger(__name__)
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Restore quarantined market artifacts from Vault/05_Errors/.",
+        description=(
+            "Clear status: inactive and error_log from Vault artifacts in place."
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
-            "Phase filters (repeatable, AND): only replay DLQ entries whose "
-            "quarantined manifest shows the market completed every listed phase. "
-            "Phase 1 (ingestion) has no vault artifact and is always implied.\n"
-            "  --phase 2   passed quantitative routing (filter log)\n"
-            "  --phase 3   reached active research\n"
-            "  --phase 4   reached trade log\n"
-            "  --phase 5   reached post-mortem\n"
+            "Directory filters (repeatable):\n"
+            "  --dir filters   01_Filters/\n"
+            "  --dir active    02_Active_Research/\n"
+            "  --dir trades    03_Trades/\n"
             "\n"
             "Examples:\n"
-            "  %(prog)s --all --phase 2\n"
-            "  %(prog)s --all --phase 2 --phase 3\n"
-            "  %(prog)s --market-id 0xabc --phase2\n"
+            "  %(prog)s --all\n"
+            "  %(prog)s --market-id 0xabc --dir filters\n"
+            "  %(prog)s --all --dry-run\n"
         ),
     )
     parser.add_argument(
@@ -43,29 +42,16 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--all",
         action="store_true",
-        help="Replay every market with a DLQ error log.",
+        help="Replay every market with status: inactive in scanned directories.",
     )
-    phase_group = parser.add_argument_group(
-        "phase filter",
-        "Restrict replay to markets that had completed the given pipeline phases.",
-    )
-    phase_group.add_argument(
-        "--phase",
-        type=int,
+    parser.add_argument(
+        "--dir",
         action="append",
-        dest="phases",
-        choices=sorted(VALID_REPLAY_PHASES),
-        metavar="N",
-        help="Require phase N completed (1–5). Repeat for AND (e.g. --phase 2 --phase 3).",
+        dest="dirs",
+        choices=sorted(VALID_REPLAY_DIRS),
+        metavar="KEY",
+        help="Vault directory to scan (repeatable). Default: all of filters, active, trades.",
     )
-    for phase in sorted(VALID_REPLAY_PHASES):
-        phase_group.add_argument(
-            f"--phase{phase}",
-            action="append_const",
-            const=phase,
-            dest="phases",
-            help=argparse.SUPPRESS,
-        )
     parser.add_argument(
         "--vault-path",
         default=None,
@@ -74,15 +60,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Report what would be restored without moving files.",
+        help="Report what would be cleared without rewriting files.",
     )
     return parser
-
-
-def _normalize_passed_phases(phases: list[int] | None) -> frozenset[int] | None:
-    if not phases:
-        return None
-    return frozenset(phases)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -93,31 +73,27 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    passed_phases = _normalize_passed_phases(args.phases)
-    if not args.all and not args.market_ids and not passed_phases:
-        parser.error("Specify --all, at least one --market-id, or a --phase filter")
-
     if not args.all and not args.market_ids:
-        market_ids = None
-    else:
-        market_ids = None if args.all else args.market_ids
+        parser.error("Specify --all or at least one --market-id")
+
+    market_ids = None if args.all else args.market_ids
+    dir_keys = tuple(args.dirs) if args.dirs else None
 
     vault = ObsidianManager(args.vault_path)
-    summary = replay_from_dlq(
+    summary = replay_inactive(
         vault,
         market_ids=market_ids,
-        passed_phases=passed_phases,
+        dir_keys=dir_keys,
         dry_run=args.dry_run,
     )
 
     print(json.dumps(summary, indent=2))
     if (
-        summary["restored"] == 0
-        and summary["logs_cleared"] == 0
-        and summary.get("logs_filtered", 0) == 0
+        summary["cleared"] == 0
         and not args.dry_run
+        and (args.all or args.market_ids)
     ):
-        log.warning("No artifacts restored")
+        log.warning("No inactive flags cleared")
     return 0
 
 

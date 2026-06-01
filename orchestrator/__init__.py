@@ -7,7 +7,7 @@ agents. Modules are split by responsibility:
 - :mod:`orchestrator.config`      — env flags and tunables
 - :mod:`orchestrator.parse`       — JSON/YAML/fenced-block parsing
 - :mod:`orchestrator.research`    — Deep Researcher frontmatter parsing
-- :mod:`orchestrator.dead_letter` — DLQ quarantine + error helpers
+- :mod:`orchestrator.state` — in-place inactive flagging + replay helpers
 - :mod:`orchestrator.scraper`     — polymarket-scraper integration stubs
 - :mod:`orchestrator.runner`      — OpenClaw agent execution adapter
 - :mod:`orchestrator.phases`      — six pipeline phases

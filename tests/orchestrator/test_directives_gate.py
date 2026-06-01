@@ -82,9 +82,8 @@ def test_phase6_quarantines_malformed_overseer_output(tmp_path):
     # Directives must NOT have been overwritten.
     assert vault.read_directives() == seed_before
 
-    # And the rejected payload must be archived in the DLQ.
-    err_files = list((tmp_path / "Vault" / "05_Errors").glob("__overseer__*.json"))
-    assert err_files, "expected an overseer DLQ artifact"
+    # No separate error vault — prior directives are retained in place.
+    assert (tmp_path / "Vault" / "05_Errors").exists() is False
 
 
 def test_phase6_writes_directives_when_valid(tmp_path):

@@ -9,18 +9,18 @@ This document defines _what_ happens and _where_ data moves. Do not implement ag
 
 ## 2. Quantitative Routing
 
-- **Action:** Orchestrator iterates over `target_market_ids`.
+- **Action:** Orchestrator iterates over `target_market_ids` (edge refresh only runs when Phase 1 includes the market — not on every tick).
   - If an **open** trade log in `/03_Trades/` shows a **bet** (not edge-disqualified: `below_edge_threshold` is false, or legacy `allocation_usd` > 0 with no error), **skip** quantitative routing for that market on this tick.
   - Otherwise: pass `market_id` and parsed `filter_directives` from `active_directives.md` to **Evaluator** (no active research) or **Re-Evaluator** (`review_kind: quantitative` when active research exists and the trade log is not edge-only disqualified). The agent calls `evaluate_market_metrics`, which loads trends internally via `poly-scan`.
-  - If active research exists and the open trade log is **edge-disqualified** (`below_edge_threshold` true, or legacy zero allocation with no error), spawn **Re-Evaluator** with `review_kind: edge_research_refresh`, prior filter log, research markdown, and trade JSON; on `retry_deep_research`, enqueue a qualitative row without rewriting the filter log (subject to a cap on `edge_research_refresh_count` in research frontmatter).
-- **State:** Primary quantitative passes plus edge-refresh rows are **merged** (primary wins on duplicate `market_id`), sorted by evaluator confidence, then capped with `OPENCLAW_TOP_MARKETS` before Phase 3.
+  - If active research exists and the open trade log is **edge-disqualified** (`below_edge_threshold` true, or legacy zero allocation with no error), spawn **Re-Evaluator** with `review_kind: edge_research_refresh`, prior filter log, research markdown, and trade JSON. On `retry_deep_research`, update `/01_Filters/{market_id}.md` with new quantitative data and set **`pending_edge_refresh: true`** in frontmatter. Phase 2 does **not** run the Deep Researcher.
+- **State:** Passing evaluations are written to `/01_Filters/`. Failures set `status: inactive` and `error_log` on the filter file in place.
 
-## 3. Qualitative Pipeline
+## 3. Qualitative Pipeline (Decoupled)
 
-- **Action:** For each market in `passed_markets`:
-  1. Spawn **Briefer** $\rightarrow$ Save Context Summary string.
-  2. Spawn **Deep Researcher** (inject Context Summary + `active_directives.md`) $\rightarrow$ Save Markdown report to `/02_Active_Research/`.
-  3. Parse estimated probability ($p$) from the Markdown report.
+- **Action:** Phase 3 scans `/01_Filters/` only (does not poll `/03_Trades/` for edge refresh). A market is eligible if it is not `status: inactive` and **either**:
+  - **A)** `passed: true` and no error-free file in `/02_Active_Research/` → Briefer → Deep Researcher → write active research.
+  - **B)** `pending_edge_refresh: true` and `edge_research_refresh_count` in active research is below the cap → Deep Researcher only (overwrite active), increment count, strip `pending_edge_refresh` from the filter file.
+- Queue is sorted by `confidence_multiplier` and capped with `OPENCLAW_TOP_MARKETS`.
 
 ## 4. Execution
 
@@ -36,48 +36,37 @@ This document defines _what_ happens and _where_ data moves. Do not implement ag
 
 - **Action:** Orchestrator aggregates all updated files in `/04_Post_Mortems/`.
 - **Action:** Spawn **Overseer** (inject aggregated post-mortems and current `/00_System/active_directives.md`).
-- **State Management:** Orchestrator completely overwrites `/00_System/active_directives.md` with the Overseer's `new_directives_markdown` output.
+- **State Management:** Orchestrator completely overwrites `/00_System/active_directives.md` with the Overseer's `new_directives_markdown` output. Overseer failures are logged; prior directives are retained.
 
-## 7. Error Handling & The Dead Letter Queue
+## 7. Error Handling (In-Place State Machine)
 
-- **Action:** At any phase in the pipeline, if an agent's output contains a non-null `error` string, or if the Orchestrator fails to parse the agent's YAML/JSON output:
-- **State Management:** The Orchestrator halts the current market's progression, moves any existing files for that market into `/Vault/05_Errors/`, and immediately logs the exception details in that file. The pipeline then seamlessly continues to the next market ID.
-- **Manifest:** Each DLQ error log (`{market_id}__{timestamp}.json`) records a `quarantined_artifacts` manifest listing every moved file's `origin_key` (e.g. `active`, `filters`, `trades`, `post_mortem`) and `stored_filename` in `05_Errors/`.
+- **Action:** At any phase, if an agent's output contains a non-null `error` string, or if the Orchestrator fails to parse or validate output:
+- **State Management:** The Orchestrator halts progression for that `market_id`, sets **`status: inactive`** and **`error_log`** on the native artifact (YAML frontmatter for `/01_Filters/`, `/02_Active_Research/`, `/04_Post_Mortems/`; JSON root for `/03_Trades/`). Files are **not** moved to a separate errors directory. The pipeline continues with the next market.
 
-### DLQ Recovery (`replay_from_dlq`)
+### Recovery (`replay`)
 
-When the root cause is fixed (e.g. Gateway restarted, bad prompt corrected), an operator can restore quarantined markets:
+When the root cause is fixed, clear inactive flags in place:
 
 ```bash
 python -m orchestrator.replay --market-id 0xabc
 python -m orchestrator.replay --all
+python -m orchestrator.replay --all --dir filters
 python -m orchestrator.replay --market-id 0xabc --dry-run
-# Only markets that passed quantitative routing (filter log was quarantined):
-python -m orchestrator.replay --all --phase 2
-# Shorthand: --phase2 is equivalent to --phase 2
-python -m orchestrator.replay --all --phase2
-# AND filter: passed phases 2 and 3 (filter + active research artifacts):
-python -m orchestrator.replay --all --phase 2 --phase 3
 ```
 
 Or enable automatic replay at orchestrator startup:
 
 ```bash
-export OPENCLAW_AUTO_REPLAY_DLQ=1
+export OPENCLAW_AUTO_REPLAY=1
 ```
-
-**Phase filters (`--phase N` / `--phaseN`, repeatable, AND):** A market is considered to have passed phase N when the DLQ manifest lists that phase’s success artifact (`filters` for phase 2, `active` for phase 3, `trades` for phase 4, `post_mortem` for phase 5). Phase 1 (ingestion) leaves no artifact and is always implied. Example: `--phase 2` replays failures that had reached qualitative routing (e.g. Briefer / Deep Researcher errors) without requiring `--phase 3`.
 
 **What replay does:**
 
-1. Reads each matching DLQ error log and its `quarantined_artifacts` manifest (optionally filtered by `--phase`).
-2. Moves each quarantined file from `05_Errors/` back to its recorded origin directory (canonical filename restored; collision suffix stripped).
-3. Deletes the processed error log.
-4. Skips any artifact whose destination already exists (live artifact wins — never clobber).
+1. Scans `/01_Filters/`, `/02_Active_Research/`, and `/03_Trades/` for `status: inactive`.
+2. Strips `status` and `error_log` from matching files in place.
+3. Does not immediately re-run agents; the next pipeline tick picks up restored artifacts organically.
 
-**Re-entry nuance:** Replay restores vault artifacts only; it does not immediately re-run agents. On the next pipeline tick:
+**Re-entry nuance:**
 
-- Restored **trade logs** in `03_Trades/` are picked up by Phase 5 (`iter_open_trades`).
-- Restored **filter / active research** artifacts are reused when the scraper returns that `market_id` again in Phases 2–4.
-
-Legacy error logs without a manifest fall back to best-effort restore: `.json` → `trades`, `.md` → `active` (ambiguous; logged as a warning).
+- Cleared **trade logs** in `03_Trades/` are picked up by Phase 5 (`iter_open_trades`).
+- Cleared **filter / active research** artifacts are reused when the scraper returns that `market_id` in Phase 1–2 or when Phase 3's filter scan finds eligible work.

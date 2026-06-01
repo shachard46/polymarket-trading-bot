@@ -51,7 +51,7 @@ def test_phase2_passes_prior_filter_context_to_re_evaluator(monkeypatch, tmp_pat
         }
 
     market = MarketRow(market_id=market_id, market_title="T", market_data={})
-    passed, refresh = phases.phase2_quantitative_routing(vault, [market], runner=fake_runner)
+    phases.phase2_quantitative_routing(vault, [market], runner=fake_runner)
 
     assert captured["role"] == "re_evaluator"
     assert captured["payload"]["review_kind"] == "quantitative"
@@ -61,4 +61,6 @@ def test_phase2_passes_prior_filter_context_to_re_evaluator(monkeypatch, tmp_pat
         "signals": {"volume_shock": {"ratio": 3.5}}
     }
     assert captured["payload"]["prior_filter_log"] is None
-    assert passed and refresh == []
+    filt = vault.read_filter_log(market_id)
+    assert filt is not None
+    assert filt["passed"] is True

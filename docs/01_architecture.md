@@ -13,7 +13,7 @@
 All system states, research, and logs are maintained in a local Obsidian Vault.
 
 - **CRITICAL RULE:** Agents NEVER write directly to the file system. Agents return raw dictionary payloads to the Orchestrator.
-- **The Gatekeeper:** The `ObsidianManager` utility uses strict `Pydantic` models to validate the agent's payload. If the payload fails schema validation, the write is aborted, and the market is routed to the Dead Letter Queue (`/05_Errors/`).
+- **The Gatekeeper:** The `ObsidianManager` utility uses strict `Pydantic` models to validate the agent's payload. If the payload fails schema validation, the write is aborted, and the market is flagged `status: inactive` in its native vault directory.
 
 ## 3. Obsidian Vault Directory Schemas
 
@@ -22,7 +22,6 @@ All system states, research, and logs are maintained in a local Obsidian Vault.
 - **`/Vault/02_Active_Research/`**: Active workspace. Format: Strict YAML Frontmatter containing `market_id` and `estimated_p`, followed by Markdown headers (`## Bull Thesis`, `## Bear Thesis`, `## Post-Mortem`).
 - **`/Vault/03_Trades/`**: Execution logs and position-sizing calculations. Format: Pure JSON deterministic dump.
 - **`/Vault/04_Post_Mortems/`**: Resolved markets moved here. The Post-Mortem analyst appends text directly under the existing `## Post-Mortem` header.
-- **`/Vault/05_Errors/`**: Dead Letter Queue for markets that failed execution or Pydantic schema validation.
 
 ## 4. The Cold Start Protocol
 

@@ -45,7 +45,7 @@ def test_market_row_drops_rows_without_title():
     assert _market_row_from_scraper({"market_id": "", "question": "Q"}) is None
 
 
-def test_phase2_forwards_full_market_row_to_phase3(monkeypatch, vault):
+def test_phase2_writes_filter_for_phase3_scan(monkeypatch, vault):
     vault.cold_start_protocol()
     market = MarketRow(
         market_id="0xabc",
@@ -53,6 +53,7 @@ def test_phase2_forwards_full_market_row_to_phase3(monkeypatch, vault):
         market_description="Background.",
         market_data={"yes_price": 0.42, "volume": 100.0, "liquidity": 200.0},
     )
+
     def evaluator_runner(role: str, payload: dict[str, Any]) -> dict[str, Any]:
         return {
             "market_id": payload["market_id"],
@@ -63,20 +64,41 @@ def test_phase2_forwards_full_market_row_to_phase3(monkeypatch, vault):
             "error": None,
         }
 
-    passed, refresh = phases.phase2_quantitative_routing(vault, [market], runner=evaluator_runner)
-    rows = phases.merge_phase3_inputs(passed, refresh, 100)
-    assert len(rows) == 1
-    forwarded = rows[0]
-    assert forwarded["market_id"] == "0xabc"
-    assert forwarded["market_title"] == "Will X happen?"
-    assert forwarded["market_description"] == "Background."
-    assert forwarded["market_data"]["yes_price"] == 0.42
-    assert forwarded["market_data"]["liquidity"] == 200.0
-    assert forwarded["evaluator_output"]["passed"] is True
+    phases.phase2_quantitative_routing(vault, [market], runner=evaluator_runner)
+    filt = vault.read_filter_log("0xabc")
+    assert filt is not None
+    assert filt["passed"] is True
+
+    queue = phases.build_phase3_queue(vault)
+    assert len(queue) == 1
+    assert queue[0].market_id == "0xabc"
 
 
 def test_phase3_passes_real_title_and_description_to_briefer(monkeypatch, vault):
     captured: dict[str, Any] = {}
+
+    vault.write_filter_log(
+        "0xabc",
+        {
+            "market_id": "0xabc",
+            "passed": True,
+            "trigger": "stub",
+            "confidence_multiplier": 1.0,
+            "details": "ok",
+            "error": None,
+        },
+    )
+
+    monkeypatch.setattr(
+        scraper,
+        "fetch_market_row",
+        lambda mid: MarketRow(
+            market_id=mid,
+            market_title="Real title",
+            market_description="Real desc.",
+            market_data={"yes_price": 0.42, "volume": 1.0, "liquidity": 2.0},
+        ),
+    )
 
     def runner(role: str, payload: dict[str, Any]) -> Any:
         captured.setdefault(role, []).append(payload)
@@ -89,7 +111,7 @@ def test_phase3_passes_real_title_and_description_to_briefer(monkeypatch, vault)
         if role == "deep_researcher":
             return (
                 "---\n"
-                f"market_id: \"{payload['market_id']}\"\n"
+                f'market_id: "{payload["market_id"]}"\n'
                 "estimated_p: 0.5\n"
                 "error: null\n"
                 "---\n\n"
@@ -97,15 +119,7 @@ def test_phase3_passes_real_title_and_description_to_briefer(monkeypatch, vault)
             )
         raise AssertionError(f"unexpected role {role}")
 
-    rows = [
-        {
-            "market_id": "0xabc",
-            "market_title": "Real title",
-            "market_description": "Real desc.",
-            "market_data": {"yes_price": 0.42, "volume": 1.0, "liquidity": 2.0},
-        }
-    ]
-    out = phases.phase3_qualitative_pipeline(vault, rows, runner=runner)
+    out = phases.phase3_qualitative_pipeline(vault, runner=runner)
     assert len(out) == 1
 
     brief_payload = captured["briefer"][0]

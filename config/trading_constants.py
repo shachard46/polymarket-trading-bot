@@ -39,12 +39,19 @@ PAPER_TRADE_MODE = True  # If True, executioner logs trade but does NOT hit live
 PIPELINE_INTERVAL_SEC = 5 * 3600       # 5 hours
 OVERSEER_INTERVAL_SEC = 24 * 3600      # 24 hours
 
-# Vault Paths (Updated to include Errors)
+# Vault directory paths (relative to workspace root)
 VAULT_PATHS = {
     "system": "Vault/00_System/",
     "filters": "Vault/01_Filters/",
     "active": "Vault/02_Active_Research/",
     "trades": "Vault/03_Trades/",
     "post_mortem": "Vault/04_Post_Mortems/",
-    "errors": "Vault/05_Errors/"           # Dead letter queue for failed agents
 }
+
+# In-place pipeline state keys (filter frontmatter / trade JSON / research frontmatter)
+STATUS_KEY = "status"
+ERROR_LOG_KEY = "error_log"
+STATUS_ACTIVE = "active"
+STATUS_INACTIVE = "inactive"
+BELOW_EDGE_KEY = "below_edge_threshold"
+PENDING_EDGE_REFRESH_KEY = "pending_edge_refresh"

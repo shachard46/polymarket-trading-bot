@@ -4,7 +4,7 @@ ObsidianManager — Pydantic-gated file system layer for the Obsidian Vault.
 The Orchestrator is the ONLY caller.  Agents never touch the file system
 directly; they return raw dicts that are validated here before any write
 is committed.  A ValidationError raises VaultWriteError, which the
-Orchestrator catches to route the market into the Dead Letter Queue.
+Orchestrator catches to flag the market inactive in its native vault directory.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ log = logging.getLogger(__name__)
 class VaultWriteError(Exception):
     """Raised when an agent payload fails Pydantic validation.
 
-    The Orchestrator must catch this, call write_error_log, and skip the
+    The Orchestrator must catch this, flag the market inactive in place, and skip the
     current market — never re-raise into the outer pipeline loop.
     """
 
@@ -65,6 +65,9 @@ class FilterLogPayload(BaseModel):
     details: str
     error: Optional[str] = None
     signal_bundle: Optional[dict[str, Any]] = None
+    status: Optional[str] = None
+    error_log: Optional[dict[str, Any]] = None
+    pending_edge_refresh: bool = False
 
 
 class ResearchFrontmatter(BaseModel):
@@ -74,6 +77,8 @@ class ResearchFrontmatter(BaseModel):
     estimated_p: float
     error: Optional[str] = None
     edge_research_refresh_count: int = 0
+    status: Optional[str] = None
+    error_log: Optional[dict[str, Any]] = None
 
     @field_validator("estimated_p")
     @classmethod
@@ -100,6 +105,8 @@ class TradeLogPayload(BaseModel):
     executed: bool
     transaction_hash: Optional[str] = None
     error: Optional[str] = None
+    status: Optional[str] = None
+    error_log: Optional[dict[str, Any]] = None
 
 
 class PostMortemPayload(BaseModel):
@@ -108,6 +115,8 @@ class PostMortemPayload(BaseModel):
     market_id: str
     post_mortem_analysis: str
     error: Optional[str] = None
+    status: Optional[str] = None
+    error_log: Optional[dict[str, Any]] = None
 
 
 # Headers the seed directives ship with and the Overseer must keep
@@ -199,8 +208,9 @@ _DIR_EXTENSIONS: dict[str, str] = {
     "active": ".md",
     "trades": ".json",
     "post_mortem": ".md",
-    "errors": ".json",
 }
+
+_FRONTMATTER_DIR_KEYS: frozenset[str] = frozenset({"filters", "active", "post_mortem"})
 
 
 class ObsidianManager:
@@ -498,147 +508,126 @@ class ObsidianManager:
         dest.write_text(validated.new_directives_markdown, encoding="utf-8")
         return dest
 
-    def write_error_log(
+    # ------------------------------------------------------------------
+    # In-place state patching (frontmatter / JSON)
+    # ------------------------------------------------------------------
+
+    def market_file(self, market_id: str, dir_key: str) -> Path | None:
+        """Return the on-disk path for ``market_id`` in ``dir_key``, if it exists."""
+        if dir_key not in self._dirs:
+            raise KeyError(f"Unknown dir_key {dir_key!r}")
+        primary_ext = _DIR_EXTENSIONS.get(dir_key, ".md")
+        fallback_ext = ".json" if primary_ext == ".md" else ".md"
+        for ext in (primary_ext, fallback_ext):
+            path = self._dirs[dir_key] / f"{market_id}{ext}"
+            if path.exists():
+                return path
+        return None
+
+    def read_market_record(self, market_id: str, dir_key: str) -> dict[str, Any] | None:
+        """Read parsed frontmatter or JSON root for a market artifact."""
+        path = self.market_file(market_id, dir_key)
+        if path is None:
+            return None
+        if dir_key in _FRONTMATTER_DIR_KEYS or path.suffix == ".md":
+            from orchestrator.research import split_yaml_frontmatter_markdown
+
+            try:
+                fm, _ = split_yaml_frontmatter_markdown(
+                    path.read_text(encoding="utf-8")
+                )
+            except ValueError:
+                return None
+            return fm
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return None
+        return raw if isinstance(raw, dict) else None
+
+    def iter_dir_files(self, dir_key: str, suffix: str) -> list[Path]:
+        """Return sorted files under a vault directory matching ``suffix``."""
+        if dir_key not in self._dirs:
+            raise KeyError(f"Unknown dir_key {dir_key!r}")
+        return sorted(self._dirs[dir_key].glob(f"*{suffix}"))
+
+    def patch_frontmatter(
         self,
         market_id: str,
-        payload: dict,
-        reason: str,
-        *,
-        quarantined_artifacts: list[dict[str, str]] | None = None,
-    ) -> Path:
-        """Write an error entry to the Dead Letter Queue (``05_Errors/``).
+        dir_key: str,
+        updates: dict[str, Any],
+    ) -> Path | None:
+        """Merge ``updates`` into YAML frontmatter; preserve markdown body."""
+        path = self.market_file(market_id, dir_key)
+        if path is None:
+            return None
+        from orchestrator.research import split_yaml_frontmatter_markdown
 
-        This method never raises on payload content — it is the last resort
-        and must always succeed to avoid swallowing pipeline errors silently.
+        text = path.read_text(encoding="utf-8")
+        try:
+            fm, body = split_yaml_frontmatter_markdown(text)
+        except ValueError:
+            return None
+        merged = {**fm, **updates}
+        path.write_text(_dump_frontmatter(merged, body), encoding="utf-8")
+        return path
 
-        Parameters
-        ----------
-        market_id:
-            Polymarket condition_id; used as the filename stem.
-        payload:
-            The raw dict that caused the failure (may be malformed).
-        reason:
-            Human-readable description of why the market was rejected.
-        quarantined_artifacts:
-            Optional manifest of artifacts moved into ``05_Errors/`` during
-            quarantine, each with ``origin_key`` and ``stored_filename``.
-
-        Returns
-        -------
-        Path
-            Absolute path of the written error file.
-        """
-        suffix = _dlq_timestamp()
-        error_record = {
-            "market_id": market_id,
-            "logged_at": datetime.now(tz=timezone.utc).isoformat(),
-            "reason": reason,
-            "payload": payload,
-            "quarantined_artifacts": quarantined_artifacts or [],
-        }
-        dest = self._dirs["errors"] / f"{market_id}__{suffix}.json"
-        dest.write_text(json.dumps(error_record, indent=2), encoding="utf-8")
-        return dest
-
-    def iter_error_logs(self, market_id: str) -> list[Path]:
-        """Return every DLQ error log recorded for ``market_id``, oldest-first."""
-        return sorted(self._dirs["errors"].glob(f"{market_id}__*.json"))
-
-    def iter_dlq_error_logs(self, market_id: str | None = None) -> list[Path]:
-        """Return DLQ error log JSON files, optionally filtered by ``market_id``."""
-        if market_id is not None:
-            return self.iter_error_logs(market_id)
-        return sorted(self._dirs["errors"].glob("*__*.json"))
-
-    def read_error_log(self, path: Path) -> dict[str, Any]:
-        """Parse a DLQ error log JSON file."""
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(raw, dict):
-            raise ValueError(f"error log {path} is not a JSON object")
-        return raw
-
-    def _canonical_artifact_name(self, stored_filename: str) -> str:
-        """Strip a DLQ collision suffix to recover the canonical vault filename."""
-        stem, ext = Path(stored_filename).stem, Path(stored_filename).suffix
-        if "__" in stem:
-            stem = stem.rsplit("__", 1)[0]
-        return f"{stem}{ext}"
-
-    def restore_artifact(
+    def patch_json(
         self,
-        stored_filename: str,
-        origin_key: str,
+        market_id: str,
+        dir_key: str,
+        updates: dict[str, Any],
+    ) -> Path | None:
+        """Merge ``updates`` into a JSON trade log root object."""
+        path = self.market_file(market_id, dir_key)
+        if path is None:
+            return None
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(raw, dict):
+            return None
+        merged = {**raw, **updates}
+        path.write_text(json.dumps(merged, indent=2), encoding="utf-8")
+        return path
+
+    def strip_keys(
+        self,
+        market_id: str,
+        dir_key: str,
+        keys: tuple[str, ...],
         *,
         dry_run: bool = False,
     ) -> Path | None:
-        """Move a quarantined artifact from ``05_Errors/`` back to ``origin_key``.
-
-        Returns the destination path, or ``None`` when the destination already
-        exists (live artifact wins — never clobber).
-        """
-        if origin_key not in self._dirs:
-            raise KeyError(
-                f"Unknown origin_key '{origin_key}'. "
-                f"Valid keys: {list(self._dirs)}"
-            )
-
-        src = self._dirs["errors"] / stored_filename
-        if not src.exists():
-            raise FileNotFoundError(
-                f"Quarantined artifact not found: {src}"
-            )
-
-        canonical = self._canonical_artifact_name(stored_filename)
-        dst = self._dirs[origin_key] / canonical
-        if dst.exists():
-            log.warning(
-                "Skipping restore of %s -> %s (destination already exists)",
-                stored_filename,
-                dst,
-            )
+        """Remove keys from frontmatter or JSON; rewrite file in place."""
+        path = self.market_file(market_id, dir_key)
+        if path is None:
             return None
-
         if dry_run:
-            return dst
+            return path
+        if dir_key in _FRONTMATTER_DIR_KEYS or path.suffix == ".md":
+            from orchestrator.research import split_yaml_frontmatter_markdown
 
-        shutil.move(str(src), str(dst))
-        return dst
-
-    def discard_error_log(self, path: Path) -> None:
-        """Delete a processed DLQ error log."""
-        path.unlink(missing_ok=True)
-
-    def iter_quarantined_artifact_paths(
-        self,
-        market_id: str,
-        *,
-        exclude: Path | None = None,
-    ) -> list[Path]:
-        """Return non-log artifact files for ``market_id`` still in ``05_Errors/``."""
-        results: list[Path] = []
-        for path in sorted(self._dirs["errors"].iterdir()):
-            if not path.is_file() or path == exclude:
-                continue
-            stem = path.stem
-            if stem != market_id and not stem.startswith(f"{market_id}__"):
-                continue
-            if path.suffix not in {".md", ".json"}:
-                continue
-            if path.suffix == ".json" and self._looks_like_error_log(path):
-                continue
-            results.append(path)
-        return results
-
-    @staticmethod
-    def _looks_like_error_log(path: Path) -> bool:
-        """Heuristic: DLQ error logs are JSON objects with ``reason`` + ``logged_at``."""
-        if path.suffix != ".json":
-            return False
+            text = path.read_text(encoding="utf-8")
+            try:
+                fm, body = split_yaml_frontmatter_markdown(text)
+            except ValueError:
+                return None
+            for key in keys:
+                fm.pop(key, None)
+            path.write_text(_dump_frontmatter(fm, body), encoding="utf-8")
+            return path
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return False
-        return isinstance(raw, dict) and "reason" in raw and "logged_at" in raw
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(raw, dict):
+            return None
+        for key in keys:
+            raw.pop(key, None)
+        path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+        return path
 
     # ------------------------------------------------------------------
     # Trade archival (phase 5)
@@ -781,11 +770,6 @@ class ObsidianManager:
             )
 
         dst_file = dst_dir / src_file.name
-        # DLQ moves must never overwrite a prior failure's artifact for the
-        # same market; suffix with a UTC timestamp on collision.
-        if dst_dir_key == "errors" and dst_file.exists():
-            stem, ext = src_file.stem, src_file.suffix
-            dst_file = dst_dir / f"{stem}__{_dlq_timestamp()}{ext}"
         shutil.move(str(src_file), str(dst_file))
         return dst_file
 
