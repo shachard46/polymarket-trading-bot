@@ -267,6 +267,16 @@ def vault_write_or_flag(
     return True
 
 
+def _filter_confidence(vault: ObsidianManager, market_id: str) -> float:
+    record = vault.read_market_record(market_id, "filters")
+    if record is None:
+        return 0.0
+    try:
+        return float(record.get("confidence_multiplier") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def iter_inactive_market_ids(
     vault: ObsidianManager,
     dir_key: str,
@@ -287,8 +297,14 @@ def replay_inactive(
     *,
     dir_keys: tuple[str, ...] | None = None,
     dry_run: bool = False,
+    min_confidence: float | None = None,
 ) -> dict[str, Any]:
-    """Clear ``status: inactive`` and ``error_log`` from native vault directories."""
+    """Clear ``status: inactive`` and ``error_log`` from native vault directories.
+
+    When *min_confidence* is given and ``"filters"`` is among the scanned dirs,
+    only markets whose ``confidence_multiplier`` strictly exceeds the threshold
+    are revived.  Pass ``1.0`` to skip truly-failed phase-2 markets.
+    """
     keys = dir_keys or REPLAY_DIRS
     unknown = set(keys) - VALID_REPLAY_DIRS
     if unknown:
@@ -308,6 +324,12 @@ def replay_inactive(
         for dir_key in keys:
             target_ids.update(iter_inactive_market_ids(vault, dir_key))
         market_ids = sorted(target_ids)
+
+    if min_confidence is not None and "filters" in keys:
+        market_ids = [
+            mid for mid in market_ids
+            if _filter_confidence(vault, mid) > min_confidence
+        ]
 
     for market_id in market_ids:
         detail: dict[str, Any] = {"cleared": 0, "skipped": 0, "missing": 0, "dirs": {}}

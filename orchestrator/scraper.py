@@ -249,15 +249,33 @@ def market_data_pricing_error(market_data: dict[str, Any] | None) -> str | None:
     return _missing_pricing_error(market_data or {})
 
 
+def _is_positive_number(value: Any) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and float(value) > 0.0
+    )
+
+
 def market_data_hydration_error(market_data: dict[str, Any] | None) -> str | None:
-    """Return a reason when snapshot is unusable for execution (phase 4), else ``None``."""
+    """Return a reason when snapshot is unusable for execution (phase 4), else ``None``.
+
+    ``volume`` and ``liquidity`` must be present and strictly positive: the
+    allocation skill divides by ``log1p(V)`` / ``log1p(L)``, so a zero value
+    (typically stale data scanned without enriched fields) would crash. Treat
+    it as unusable and direct the operator to refresh via ``poly-scan``.
+    """
     data = market_data or {}
     pricing_err = _missing_pricing_error(data)
     if pricing_err:
         return pricing_err
-    missing = [key for key in ("volume", "liquidity") if data.get(key) is None]
-    if missing:
-        return f"missing market snapshot fields: {', '.join(missing)}"
+    unusable = [key for key in ("volume", "liquidity") if not _is_positive_number(data.get(key))]
+    if unusable:
+        details = ", ".join(f"{key}={data.get(key)!r}" for key in unusable)
+        return (
+            f"market snapshot has missing or non-positive {', '.join(unusable)} ({details}); "
+            "run poly-scan scan --market <id> to refresh the snapshot"
+        )
     return None
 
 

@@ -63,6 +63,17 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Report what would be cleared without rewriting files.",
     )
+    parser.add_argument(
+        "--min-confidence",
+        type=float,
+        default=None,
+        metavar="THRESHOLD",
+        dest="min_confidence",
+        help=(
+            "Only revive markets whose confidence_multiplier strictly exceeds "
+            "THRESHOLD (filters dir only). Use 1.0 to skip truly-failed phase-2 markets."
+        ),
+    )
     return parser
 
 
@@ -86,6 +97,7 @@ def main(argv: list[str] | None = None) -> int:
         market_ids=market_ids,
         dir_keys=dir_keys,
         dry_run=args.dry_run,
+        min_confidence=args.min_confidence,
     )
 
     print(json.dumps(summary, indent=2))

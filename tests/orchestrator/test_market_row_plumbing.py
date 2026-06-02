@@ -112,6 +112,23 @@ def test_market_data_hydration_error_when_volume_liquidity_missing():
     assert market_data_hydration_error({"yes_price": 0.42}) is not None
 
 
+def test_market_data_hydration_error_when_volume_nonpositive():
+    err = market_data_hydration_error(
+        {"yes_price": 0.42, "volume": 0.0, "liquidity": 200.0}
+    )
+    assert err is not None
+    assert "volume" in err
+    assert "poly-scan scan --market" in err
+
+
+def test_market_data_hydration_error_when_liquidity_nonpositive():
+    err = market_data_hydration_error(
+        {"yes_price": 0.42, "volume": 100.0, "liquidity": -1.0}
+    )
+    assert err is not None
+    assert "liquidity" in err
+
+
 def test_market_data_hydration_error_ok_with_q_and_liquidity_fields():
     assert market_data_hydration_error(
         {"yes_price": 0.42, "volume": 100.0, "liquidity": 200.0}
