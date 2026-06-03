@@ -93,7 +93,10 @@ def execute_aiq_query(
             )
             status_resp.raise_for_status()
             status_body = status_resp.json()
-            status: str = status_body.get("status", "")
+            status: str = status_body.get("status", "").upper()
+
+            if status not in _TERMINAL_STATUSES:
+                continue
 
             if status == "SUCCESS":
                 # Step 3 — fetch final report
@@ -106,9 +109,8 @@ def execute_aiq_query(
                 research_data: str = report_body.get("report", "")
                 return ExecuteAiqQueryOutput(research_data=research_data, error=None)
 
-            if status in ("FAILURE", "INTERRUPTED"):
-                job_error = status_body.get("error") or f"A-IQ job ended with status {status}"
-                return ExecuteAiqQueryOutput(research_data="", error=job_error)
+            job_error = status_body.get("error") or f"A-IQ job ended with status {status}"
+            return ExecuteAiqQueryOutput(research_data="", error=job_error)
 
         return ExecuteAiqQueryOutput(
             research_data="",
