@@ -21,13 +21,13 @@ AIQ_TIMEOUT_SEC = 300.0
 
 # Filter Thresholds
 FILTERS = {
-    "volume_shock_ma_multiplier": 2.0,
-    "breakout_pct_shift": 0.06,
+    "volume_shock_ma_multiplier": 2.5,   # was 2.0 — require a stronger volume spike
+    "breakout_pct_shift": 0.08,           # was 0.06 — cut routine 4h drift
     "breakout_time_window_hrs": 4,
-    "spread_anomaly_multiplier": 1.5,
-    "info_drift_sequential_trades": 7,
+    "spread_anomaly_multiplier": 2.0,    # was 1.5 — proper anomaly, not just wider
+    "info_drift_sequential_trades": 9,   # was 7 — tighter consecutive-move streak
     "low_liquidity_breakout_max_liq": 2000,
-    "low_liquidity_breakout_pct": 0.03,
+    "low_liquidity_breakout_pct": 0.05,  # was 0.03 — raise thin-market bar
     "low_liquidity_dead_window_hrs": 48,
     "arbitrage_max_combined_ask": 0.98
 }
