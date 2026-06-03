@@ -155,6 +155,22 @@ def _parse_dt(raw: str | datetime) -> datetime:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
+# Price fields in priority order. The scanner's book-derived ``midpoint`` is
+# unreliable on illiquid books (it pins to 0.5 with a ~1.0 spread when the BBO
+# only has far-out resting orders), so the canonical display price ``yes_price``
+# — and ``last_trade_price`` as a final fallback — drive the movement signals.
+_PRICE_FIELDS: tuple[str, ...] = ("yes_price", "last_trade_price", "midpoint")
+
+
+def _price(snap: dict[str, Any]) -> float | None:
+    """Return the most reliable traded price for a snapshot, or ``None``."""
+    for field in _PRICE_FIELDS:
+        value = snap.get(field)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+    return None
+
+
 def _snapshot_near_hours_ago(series: list[dict], hours: float) -> dict | None:
     latest_dt = _parse_dt(series[-1]["datetime"])
     target_dt = latest_dt.timestamp() - hours * 3600
@@ -202,7 +218,7 @@ def _compute_info_drift_metrics(
     series: list[dict],
     threshold: int,
 ) -> dict[str, Any]:
-    mids = [s["midpoint"] for s in series if s.get("midpoint") is not None]
+    mids = [p for s in series if (p := _price(s)) is not None]
     if len(mids) < 2:
         return {
             "max_run": 0,
@@ -289,13 +305,15 @@ def _compute_signals_from_series(
     # breakout
     window_hrs = filters["breakout_time_window_hrs"]
     ref = _snapshot_near_hours_ago(series, window_hrs)
-    if ref and ref.get("midpoint") and ref["midpoint"] != 0:
-        start_price = ref["midpoint"]
-        end_price = latest.get("midpoint") or start_price
+    ref_price = _price(ref) if ref else None
+    latest_price = _price(latest)
+    if ref_price:
+        start_price = ref_price
+        end_price = latest_price if latest_price is not None else start_price
         pct_move = abs(end_price - start_price) / start_price
     else:
         start_price = None
-        end_price = latest.get("midpoint")
+        end_price = latest_price
         pct_move = 0.0
 
     # spread_anomaly
@@ -315,14 +333,13 @@ def _compute_signals_from_series(
     liq = latest.get("liquidity")
     dead_hrs = filters["low_liquidity_dead_window_hrs"]
     ref_liq = _snapshot_near_hours_ago(series, dead_hrs)
+    ref_liq_price = _price(ref_liq) if ref_liq else None
     if (
         liq is not None
         and liq < filters["low_liquidity_breakout_max_liq"]
-        and ref_liq
-        and ref_liq.get("midpoint")
-        and ref_liq["midpoint"] != 0
+        and ref_liq_price
     ):
-        liq_pct = abs((latest.get("midpoint") or 0) - ref_liq["midpoint"]) / ref_liq["midpoint"]
+        liq_pct = abs((latest_price or 0) - ref_liq_price) / ref_liq_price
         liq_fired = liq_pct > filters["low_liquidity_breakout_pct"]
     else:
         liq_pct = 0.0

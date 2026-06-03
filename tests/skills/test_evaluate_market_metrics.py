@@ -94,9 +94,11 @@ class TestComputeSignalBundle:
         assert out.hard_veto.passed is False
 
     def test_breakout_start_end_prices(self):
+        # Breakout tracks yes_price (the canonical traded price), not the
+        # book-derived midpoint, which is unreliable on illiquid books.
         series = [
-            _snap(0, midpoint=0.40),
-            _snap(4, midpoint=0.50),
+            _snap(0, midpoint=0.40, yes=0.40),
+            _snap(4, midpoint=0.50, yes=0.50),
         ]
         out = compute_signal_bundle_from_series(
             "0xbo",
@@ -106,7 +108,7 @@ class TestComputeSignalBundle:
             start_date_available=True,
         )
         br = out.signals["breakout"]
-        assert br["start_price"] is not None
+        assert br["start_price"] == 0.40
         assert br["end_price"] == 0.50
         assert br["pct_move"] > 0
 
