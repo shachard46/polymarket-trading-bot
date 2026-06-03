@@ -45,7 +45,7 @@ Each role's [`agents_blueprint/<role>/agent.yaml`](../agents_blueprint/) declare
 
 ## 2. The Surgical Query Planner (briefer)
 
-- **System Prompt:** "**Surgical Query Planner** in the Phase 3 **Forensic Pipeline** (high velocity + high rigor). Engineer 1–3 unevadable verification questions per turn targeting vulnerabilities, legal conditions, and structural anomalies in the market copy. Forbidden: open-ended thematic queries. The Hub runs `execute_aiq_query` in parallel (300s batch timeout, 4k chars per result) — you do not call tools."
+- **System Prompt:** "**Surgical Query Planner** in the Phase 3 **Forensic Pipeline** (high velocity + high rigor). Engineer 1–3 unevadable verification questions per turn targeting vulnerabilities, legal conditions, and structural anomalies in the market copy. Forbidden: open-ended thematic queries. The Hub runs `execute_aiq_query` in parallel (`AIQ_TIMEOUT_SEC` poll timeout, 4k chars per result) — you do not call tools."
 - **Input Schema:** `{"market_id": "string", "market_title": "string", "market_description": "string", "planning_context": "string | null"}`
 - **Output Schema:**
 
@@ -83,7 +83,7 @@ On success: `research_queries` must contain **1–3** non-empty strings and `err
 
 `markdown` is the full `02_Active_Research/{market_id}.md` wire format (YAML frontmatter + `## Bull Thesis`, `## Bear Thesis`, empty `## Post-Mortem`).
 
-**Hub caps (Forensic Pipeline):** Up to **4** Deep Researcher iterations (`MAX_RESEARCH_ITERATIONS`); per-query `research_data` capped at **4000** characters; Phase 3 A-IQ batch poll timeout **300s** (`AIQ_BATCH_POLL_TIMEOUT`, batch-only). After the iteration cap, forced synthesis requires `status: complete`.
+**Hub caps (Forensic Pipeline):** Up to **4** Deep Researcher iterations (`MAX_RESEARCH_ITERATIONS`); per-query `research_data` capped at **4000** characters; Phase 3 A-IQ poll timeout **`AIQ_TIMEOUT_SEC`** (`config/trading_constants`, overridable via env). After the iteration cap, forced synthesis requires `status: complete`.
 
 Hub persistence: cumulative A-IQ results live in `02_Active_Research/research_bundles/{market_id}.json`.
 

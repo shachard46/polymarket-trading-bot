@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import pytest
 
 import orchestrator.aiq_bundle as aiq_bundle
-from orchestrator.config import AIQ_BATCH_POLL_TIMEOUT, RESEARCH_DATA_MAX_CHARS
+from orchestrator.config import RESEARCH_DATA_MAX_CHARS
 
 
 @dataclass
@@ -118,7 +118,7 @@ def test_fetch_research_bundle_truncates_long_research_data(monkeypatch):
     assert data.startswith("x")
 
 
-def test_fetch_research_bundle_sets_batch_aiq_timeout(monkeypatch):
+def test_fetch_research_bundle_respects_aiq_timeout_env(monkeypatch):
     seen: list[str | None] = []
 
     def fake_execute(query: str) -> FakeAiqOutput:
@@ -129,7 +129,7 @@ def test_fetch_research_bundle_sets_batch_aiq_timeout(monkeypatch):
     monkeypatch.setenv("AIQ_TIMEOUT_SEC", "1200")
 
     aiq_bundle.fetch_research_bundle(["q1"])
-    assert seen == [str(AIQ_BATCH_POLL_TIMEOUT)]
+    assert seen == ["1200"]
     assert os.environ.get("AIQ_TIMEOUT_SEC") == "1200"
 
 

@@ -8,14 +8,12 @@ and map all failures into per-query JSON payloads so the main thread never crash
 from __future__ import annotations
 
 import importlib.util
-import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Callable
 
-from orchestrator.config import AIQ_BATCH_POLL_TIMEOUT, RESEARCH_DATA_MAX_CHARS
+from orchestrator.config import RESEARCH_DATA_MAX_CHARS
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SKILL_PATH = _REPO_ROOT / "skills" / "execute-aiq-query" / "execute_aiq_query.py"
@@ -59,21 +57,6 @@ def _load_execute_aiq_query() -> Callable[[str], Any]:
     return fn
 
 
-@contextmanager
-def _batch_aiq_timeout() -> Iterator[None]:
-    """Apply Phase 3 batch poll timeout for one A-IQ call; restore prior env after."""
-    key = "AIQ_TIMEOUT_SEC"
-    previous = os.environ.get(key)
-    os.environ[key] = str(AIQ_BATCH_POLL_TIMEOUT)
-    try:
-        yield
-    finally:
-        if previous is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = previous
-
-
 def _truncate_research_data(research_data: str) -> str:
     """Cap per-query payload size for multi-iteration Forensic Pipeline runs."""
     if len(research_data) <= RESEARCH_DATA_MAX_CHARS:
@@ -87,8 +70,7 @@ def _truncate_research_data(research_data: str) -> str:
 def _run_single_query(query: str) -> dict[str, Any]:
     """Execute one A-IQ query; never raise — errors are embedded in the payload."""
     try:
-        with _batch_aiq_timeout():
-            result = _load_execute_aiq_query()(query)
+        result = _load_execute_aiq_query()(query)
         research_data = getattr(result, "research_data", "") or ""
         err = getattr(result, "error", None)
         if not err and research_data:

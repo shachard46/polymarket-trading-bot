@@ -9,7 +9,7 @@ the final report.
 Runtime config (env vars override trading_constants defaults):
   AIQ_BASE_URL          — base URL of the A-IQ service  (default: http://localhost:8000)
   AIQ_POLL_INTERVAL_SEC — seconds between status polls  (default: 2.0)
-  AIQ_TIMEOUT_SEC       — max seconds to wait for result (default: 120.0)
+  AIQ_TIMEOUT_SEC       — max seconds to wait for result (default: trading_constants.AIQ_TIMEOUT_SEC)
 """
 from __future__ import annotations
 
