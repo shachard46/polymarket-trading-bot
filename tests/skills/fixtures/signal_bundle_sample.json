@@ -19,32 +19,32 @@
   "signals": {
     "volume_shock": {
       "ratio": 2.1,
-      "threshold": 3.0,
+      "threshold": 2.0,
       "baseline_median": 1200,
       "current": 2520
     },
     "breakout": {
       "pct_move": 0.08,
-      "threshold": 0.10,
+      "threshold": 0.06,
       "window_hrs": 4,
       "start_price": 0.38,
       "end_price": 0.42
     },
     "spread_anomaly": {
       "ratio": 1.4,
-      "threshold": 2.0,
+      "threshold": 1.5,
       "baseline_median": 0.02,
       "current": 0.028
     },
     "low_liquidity_breakout": {
       "liquidity": 3200,
       "pct_move": 0.07,
-      "threshold": 0.05,
-      "fired": false
+      "threshold": 0.03,
+      "fired": true
     },
     "info_drift": {
       "max_run": 8,
-      "threshold": 10,
+      "threshold": 7,
       "direction": "up",
       "net_pct_change": 0.12,
       "proxy": "snapshot"

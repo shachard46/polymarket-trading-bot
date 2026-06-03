@@ -21,13 +21,13 @@ AIQ_TIMEOUT_SEC = 1200.0
 
 # Filter Thresholds
 FILTERS = {
-    "volume_shock_ma_multiplier": 3.0,
-    "breakout_pct_shift": 0.10,
+    "volume_shock_ma_multiplier": 2.0,
+    "breakout_pct_shift": 0.06,
     "breakout_time_window_hrs": 4,
-    "spread_anomaly_multiplier": 2.0,
-    "info_drift_sequential_trades": 10,
+    "spread_anomaly_multiplier": 1.5,
+    "info_drift_sequential_trades": 7,
     "low_liquidity_breakout_max_liq": 2000,
-    "low_liquidity_breakout_pct": 0.05,
+    "low_liquidity_breakout_pct": 0.03,
     "low_liquidity_dead_window_hrs": 48,
     "arbitrage_max_combined_ask": 0.98
 }
