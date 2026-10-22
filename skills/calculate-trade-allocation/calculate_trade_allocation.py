@@ -1,72 +1,103 @@
 """calculate_trade_allocation — OpenClaw skill execution module.
 
-Contract: docs/04_skills_contracts.md §3
+Contract: docs/04_skills_contracts.md §2
 Math:     docs/03_strategy_math.md
 """
 from __future__ import annotations
 
-import math
-
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from config.trading_constants import (
-    ALPHA,
-    BANKROLL_USD,
-    BETA,
-    C1,
-    C2,
-    D_MIN,
-    EPSILON,
+    EVENT_CAP,
     F_MAX,
+    KELLY_FRAC,
+    LAMBDA,
     LIQ_FRAC,
-    MU_X,
-    S_0,
-    SIGMA_X,
+    MIN_EDGE,
+    MIN_ORDER_USD,
+    TAX,
+    TOTAL_EXPOSURE_CAP,
+    UNCERTAINTY_WIDTH,
 )
 
 
 class CalculateTradeAllocationInput(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
-    p: float = Field(gt=0, le=1)
-    q: float = Field(gt=0, lt=1)
-    D: int = Field(ge=0)
+    p: float = Field(ge=0, le=1)
+    p_low: float | None = Field(default=None, ge=0, le=1)
+    p_high: float | None = Field(default=None, ge=0, le=1)
+    q_yes_ask: float = Field(gt=0, lt=1)
+    q_no_ask: float | None = Field(default=None, gt=0, lt=1)
     L: float = Field(gt=0)
-    V: float = Field(gt=0)
-    remaining_bankroll: float | None = Field(default=None, ge=0)
+    D: float = Field(ge=0)
+    bankroll: float = Field(gt=0)
+    open_exposure_total: float = Field(default=0.0, ge=0)
+    open_exposure_event: float = Field(default=0.0, ge=0)
+    lam: float = Field(default=LAMBDA, ge=0, le=1)
+
+    @model_validator(mode="after")
+    def _range(self) -> "CalculateTradeAllocationInput":
+        if (self.p_low is None) != (self.p_high is None):
+            raise ValueError("p_low and p_high must be given together")
+        if self.p_low is not None and self.p_high is not None:
+            if self.p_low > self.p_high:
+                raise ValueError("p_low must be <= p_high")
+            if not (self.p_low <= self.p <= self.p_high):
+                raise ValueError("p must lie within [p_low, p_high]")
+        return self
 
 
 class CalculateTradeAllocationOutput(BaseModel):
-    """``below_edge_threshold`` is ``True`` iff ``S <= S_0`` (edge gate); ``None`` on tool error."""
+    """``below_edge_threshold`` is ``True`` iff best edge < MIN_EDGE; ``None`` on error."""
 
     model_config = ConfigDict(extra="forbid")
 
     allocation_usd: float
-    score: float
+    side: str | None
+    price: float | None
+    shares: float
+    p_adj: float
+    edge: float
+    kelly_fraction: float
     below_edge_threshold: bool | None
+    binding_cap: str | None
+    edge_per_day: float
     error: str | None
 
 
 def _error(message: str) -> CalculateTradeAllocationOutput:
     return CalculateTradeAllocationOutput(
-        allocation_usd=0.0,
-        score=0.0,
-        below_edge_threshold=None,
-        error=message,
+        allocation_usd=0.0, side=None, price=None, shares=0.0, p_adj=0.0, edge=0.0,
+        kelly_fraction=0.0, below_edge_threshold=None, binding_cap=None,
+        edge_per_day=0.0, error=message,
     )
 
 
 def calculate_trade_allocation(
     p: float,
-    q: float,
-    D: int,
-    L: float,
-    V: float,
-    remaining_bankroll: float | None = None,
+    q_yes_ask: float | None = None,
+    L: float | None = None,
+    D: float | None = None,
+    bankroll: float | None = None,
+    open_exposure_total: float = 0.0,
+    open_exposure_event: float = 0.0,
+    p_low: float | None = None,
+    p_high: float | None = None,
+    q_no_ask: float | None = None,
+    lam: float | None = None,
+    q: float | None = None,
 ) -> CalculateTradeAllocationOutput:
+    """``q`` is accepted as an alias for ``q_yes_ask``."""
+    if q_yes_ask is None:
+        q_yes_ask = q
     try:
         args = CalculateTradeAllocationInput(
-            p=p, q=q, D=D, L=L, V=V, remaining_bankroll=remaining_bankroll
+            p=p, p_low=p_low, p_high=p_high, q_yes_ask=q_yes_ask, q_no_ask=q_no_ask,
+            L=L, D=D, bankroll=bankroll,
+            open_exposure_total=open_exposure_total,
+            open_exposure_event=open_exposure_event,
+            **({} if lam is None else {"lam": lam}),
         )
     except ValidationError as exc:
         details = "; ".join(
@@ -75,49 +106,51 @@ def calculate_trade_allocation(
         return _error(f"invalid input: {details}")
 
     try:
-        p, q, D, L, V = args.p, args.q, args.D, args.L, args.V
-        remaining = (
-            BANKROLL_USD if args.remaining_bankroll is None else args.remaining_bankroll
-        )
+        qy = args.q_yes_ask
+        qn = args.q_no_ask if args.q_no_ask is not None else 1.0 - qy
+        shrink = args.lam
+        if args.p_low is not None and args.p_high is not None:
+            w = args.p_high - args.p_low
+            shrink *= max(0.0, 1.0 - w / UNCERTAINTY_WIDTH)
+        p_adj = qy + shrink * (args.p - qy)
 
-        # Step 1: expected return after 25% tax on winnings
-        e_tax = (0.75 * p - q + 0.25 * p * q) / q
-
-        # Step 2: time adjustment — penalise long capital lock-up
-        time_adj = e_tax / max(D, D_MIN)
-
-        # Step 3: rarity bonus — rewards statistical outliers in p vs q
-        z = (abs(p - q) - MU_X) / (SIGMA_X + EPSILON)
-        B_rarity = 1.0 + BETA * math.tanh(max(0.0, z))
-
-        # Step 4: execution penalty for thin markets
-        P_exec = C1 / math.log1p(L) + C2 / math.log1p(V)
-
-        # Step 5: final score
-        S = time_adj * B_rarity - P_exec
-
-        if not math.isfinite(S):
-            return _error(f"non-finite score: {S}")
-
-        # Step 6: bankroll fraction → USD allocation, capped by per-trade
-        # bankroll fraction, market liquidity share, and remaining bankroll.
-        below_edge = not (S > S_0)
-        if below_edge:
-            allocation_usd = 0.0
+        edge_yes = p_adj - qy
+        edge_no = (1.0 - p_adj) - qn
+        if edge_yes >= edge_no:
+            side, price, p_side, edge = "YES", qy, p_adj, edge_yes
         else:
-            f = min(F_MAX, ALPHA * (S - S_0))
-            allocation_usd = min(
-                f * BANKROLL_USD,
-                F_MAX * BANKROLL_USD,
-                LIQ_FRAC * L,
-                remaining,
+            side, price, p_side, edge = "NO", qn, 1.0 - p_adj, edge_no
+        edge_per_day = edge / max(args.D, 1.0)
+
+        def out(alloc=0.0, kelly=0.0, below=False, cap=None):
+            return CalculateTradeAllocationOutput(
+                allocation_usd=alloc, side=side, price=price,
+                shares=alloc / price if alloc > 0 else 0.0, p_adj=p_adj, edge=edge,
+                kelly_fraction=kelly, below_edge_threshold=below, binding_cap=cap,
+                edge_per_day=edge_per_day, error=None,
             )
 
-        return CalculateTradeAllocationOutput(
-            allocation_usd=allocation_usd,
-            score=S,
-            below_edge_threshold=below_edge,
-            error=None,
-        )
+        if edge < MIN_EDGE:
+            return out(below=True, cap="min_edge")
+
+        b = (1.0 - price) * (1.0 - TAX) / price
+        f_star = (p_side * b - (1.0 - p_side)) / b
+        if f_star <= 0:
+            return out(cap="kelly_nonpositive")
+        f = KELLY_FRAC * f_star
+
+        B = args.bankroll
+        caps = {
+            "kelly": f * B,
+            "f_max": F_MAX * B,
+            "liquidity": LIQ_FRAC * args.L,
+            "event": EVENT_CAP * B - args.open_exposure_event,
+            "total": TOTAL_EXPOSURE_CAP * B - args.open_exposure_total,
+        }
+        binding = min(caps, key=caps.get)
+        alloc = max(0.0, caps[binding])
+        if alloc < MIN_ORDER_USD:
+            return out(kelly=f, cap="min_order" if alloc > 0 else binding)
+        return out(alloc=alloc, kelly=f, cap=binding)
     except Exception as exc:
         return _error(str(exc))

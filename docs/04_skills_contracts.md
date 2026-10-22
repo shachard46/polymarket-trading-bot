@@ -97,9 +97,10 @@ description: Deterministic math engine. Use this to calculate the exact USD allo
 ---
 ```
 
-* **Input Schema:** `{"p": float, "q": float, "D": int, "L": float, "V": float, "remaining_bankroll": float | null}` — validated: `0 < p <= 1`, `0 < q < 1`, `D >= 0`, `L > 0`, `V > 0`, all finite; `remaining_bankroll` optional (default `BANKROLL_USD`). Invalid input returns zero allocation and a non-null `error`.
-* **Cap:** `allocation_usd = min(f * BANKROLL_USD, F_MAX * BANKROLL_USD, LIQ_FRAC * L, remaining_bankroll)` with `F_MAX = 0.10`, `LIQ_FRAC = 0.05` (`config/trading_constants`); zero when `S` is non-finite or `S <= S_0`.
-* **Output Schema:** `{"allocation_usd": float, "score": float, "below_edge_threshold": bool | null, "error": str | null}` — `below_edge_threshold` is `true` when the score is at or below the minimum edge threshold `S_0` (no allocation for that reason), `false` when above threshold, and `null` when the score could not be computed (same cases as a non-null `error`).
+* **Input Schema:** `{"p": float, "p_low": float|null, "p_high": float|null, "q_yes_ask": float, "q_no_ask": float|null, "L": float, "D": number, "bankroll": float, "open_exposure_total": float, "open_exposure_event": float, "lam": float|null}` — validated: `0 <= p <= 1`, `0 < q < 1`, `L > 0`, `D >= 0`, `bankroll > 0`, exposures `>= 0`, all finite; `p_low`/`p_high` given together with `p_low <= p <= p_high`; `q_no_ask` defaults to `1 - q_yes_ask`; `lam` overrides `LAMBDA` (0.3). Legacy `q` is an alias of `q_yes_ask`. Invalid input returns zero allocation and a non-null `error`.
+* **Math:** shrunk estimate, best-edge side (`edge >= MIN_EDGE = 0.04`), tax-aware (`TAX = 0.25`) quarter-Kelly; see `docs/03_strategy_math.md`.
+* **Cap:** `allocation_usd = max(0, min(f*bankroll, F_MAX*bankroll, LIQ_FRAC*L, EVENT_CAP*bankroll - open_exposure_event, TOTAL_EXPOSURE_CAP*bankroll - open_exposure_total))` (0.10 / 0.05 / 0.15 / 0.60); under `MIN_ORDER_USD` -> 0.
+* **Output Schema:** `{"allocation_usd", "side": "YES"|"NO"|null, "price", "shares", "p_adj", "edge", "kelly_fraction", "below_edge_threshold": bool|null, "binding_cap": str|null, "edge_per_day", "error"}` — `below_edge_threshold` is `true` when the best edge is under `MIN_EDGE`, `false` otherwise, `null` when `error` is set.
 
 ## 3. Skill: execute_polymarket_trade
 

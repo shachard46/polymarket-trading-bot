@@ -1,8 +1,8 @@
 """CLI entrypoint for calculate_trade_allocation.
 
 Usage:
-    python3 run.py '{"p": 0.7, "q": 0.5, "D": 30, "L": 50000, "V": 100000}'
-    echo '{"p": 0.7, "q": 0.5, "D": 30, "L": 50000, "V": 100000}' | python3 run.py
+    python3 run.py '{"p": 0.7, "q_yes_ask": 0.5, "L": 50000, "D": 30, "bankroll": 1000}'
+    echo '{"p": 0.7, "q_yes_ask": 0.5, "L": 50000, "D": 30, "bankroll": 1000}' | python3 run.py
 """
 from __future__ import annotations
 

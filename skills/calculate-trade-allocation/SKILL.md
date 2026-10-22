@@ -1,14 +1,13 @@
 ---
 name: calculate_trade_allocation
-description: Deterministic math engine. Use this to calculate the exact USD allocation for a trade based on the researcher's probability (p) and live market conditions.
+description: Deterministic math engine. Use this to size a trade (side, USD, shares) from the researcher's blind probability estimate and live market prices. Tax-aware fractional Kelly with shrinkage and exposure caps.
 ---
 
-* **Input Schema:** `{"p": float, "q": float, "D": int, "L": float, "V": float, "remaining_bankroll": float | null}` — `remaining_bankroll` optional (default `BANKROLL_USD`). Validated: `0<p<=1`, `0<q<1`, `D>=0`, `L>0`, `V>0`, all finite; invalid input returns `error` with zero allocation.
-* **Output Schema:** `{"allocation_usd": float, "score": float, "below_edge_threshold": bool | null, "error": str | null}`
-* **Cap:** `allocation_usd = min(f*BANKROLL_USD, F_MAX*BANKROLL_USD, LIQ_FRAC*L, remaining_bankroll)`; zero when `S` is non-finite or `S <= S_0`.
+* **Input Schema:** `{"p": float, "p_low": float|null, "p_high": float|null, "q_yes_ask": float, "q_no_ask": float|null, "L": float, "D": number, "bankroll": float, "open_exposure_total": float, "open_exposure_event": float, "lam": float|null}` — `0<=p<=1`, `0<q<1`, `L>0`, `D>=0`, `bankroll>0`, exposures `>=0`, all finite; `p_low/p_high` together with `p_low<=p<=p_high`; `q_no_ask` defaults to `1-q_yes_ask`; `lam` overrides `LAMBDA`. The legacy keyword `q` is accepted as an alias of `q_yes_ask`. Invalid input returns `error` with zero allocation.
+* **Output Schema:** `{"allocation_usd", "side": "YES"|"NO"|null, "price", "shares", "p_adj", "edge", "kelly_fraction", "below_edge_threshold": bool|null, "binding_cap": str|null, "edge_per_day", "error"}`
+* **Math:** see `docs/03_strategy_math.md`. `p_adj = q + LAMBDA*(p-q)*max(0,1-w/0.5)`; best-edge side; edge >= `MIN_EDGE`; tax-aware Kelly x `KELLY_FRAC`; capped by `F_MAX`, `LIQ_FRAC*L`, `EVENT_CAP`, `TOTAL_EXPOSURE_CAP`; below `MIN_ORDER_USD` -> 0. `D` only feeds the informational `edge_per_day`.
 
 ## Invocation
 
 - **Command:** `python3 {baseDir}/run.py '<json>'`
-- **Args JSON:** `{"p": <float>, "q": <float>, "D": <int>, "L": <float>, "V": <float>}` (optionally `"remaining_bankroll"`)
-- **Return:** parse stdout as JSON `{"allocation_usd": float, "score": float, "below_edge_threshold": bool | null, "error": str | null}`; do not read source files or recompute the math
+- **Return:** parse stdout as the output JSON above; do not read source files or recompute the math
