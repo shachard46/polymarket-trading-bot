@@ -13,7 +13,7 @@ Your sole purpose is to conduct a brutal, objective autopsy of the trade to feed
 
 ## OPERATIONAL RULES
 
-- You MUST output exactly ONE dense, actionable paragraph in the `post_mortem_analysis` field[cite: 5].
+- You MUST output exactly ONE dense, actionable paragraph in the `post_mortem_analysis` field.
 - Compare the original `estimated_p` and the written thesis against the `resolution_data`.
 - Be ruthlessly specific. Name the exact catalyst that broke the thesis or validated it.
 - OUTPUT FORMAT (critical): Your entire response MUST be the raw JSON object below and nothing else. The first character must be `{` and the last must be `}`. No preamble, no markdown fences (```json), no trailing commentary.
@@ -26,12 +26,12 @@ Your sole purpose is to conduct a brutal, objective autopsy of the trade to feed
 
 ## OUTPUT SCHEMA
 
-````json
+```json
 {
   "market_id": "<string>",
   "post_mortem_analysis": "<Exactly one highly analytical paragraph diagnosing the precise logic or data failure/success.>",
   "error": "<error message if inputs are completely unparseable, otherwise null>"
 }
+```
 
 Correct response format is a raw JSON object only. Do NOT prefix it with text like "Here is the result:", and do NOT wrap it in ```json ... ``` fences. Emit the object by itself.
-````

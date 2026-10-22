@@ -8,6 +8,8 @@ Pass/fail for soft filters is agent-judged; only arbitrage and insufficient data
 from __future__ import annotations
 
 import json
+import logging
+import math
 import os
 import shutil
 import statistics
@@ -19,7 +21,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from config.trading_constants import FILTERS
 
+logger = logging.getLogger(__name__)
+
 _ERROR_DB_LOCKED = "DB_LOCKED"
+_ERROR_SCANNER = "SCANNER_ERROR"
 _ERROR_INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
 _MIN_SNAPSHOTS = 2
 
@@ -82,10 +87,15 @@ def _trends_limit(filters: dict[str, Any]) -> int:
 
 
 def _run_poly_scan(*args: str) -> tuple[Any | None, str | None]:
-    """Run poly-scan; return (parsed_json, error_code)."""
+    """Run poly-scan; return (parsed_json, error_code).
+
+    ``DB_LOCKED`` is reserved for real lock/busy conditions (and subprocess
+    timeouts); every other scanner failure is ``SCANNER_ERROR``.
+    """
     binary = _poly_scan_bin()
     if shutil.which(binary) is None:
-        return None, _ERROR_DB_LOCKED
+        logger.error("poly-scan binary not found: %s", binary)
+        return None, _ERROR_SCANNER
 
     cmd = [binary, *args]
     try:
@@ -98,22 +108,26 @@ def _run_poly_scan(*args: str) -> tuple[Any | None, str | None]:
         )
     except subprocess.TimeoutExpired:
         return None, _ERROR_DB_LOCKED
-    except OSError:
-        return None, _ERROR_DB_LOCKED
+    except OSError as exc:
+        logger.error("poly-scan failed to start: %s", exc)
+        return None, _ERROR_SCANNER
 
     stderr = (completed.stderr or "").strip().lower()
-    if "database is locked" in stderr or "database is locked" in (completed.stdout or "").lower():
+    stdout = (completed.stdout or "").lower()
+    if "database is locked" in stderr or "database is locked" in stdout:
         return None, _ERROR_DB_LOCKED
 
     if completed.returncode != 0:
         if "locked" in stderr or "busy" in stderr:
             return None, _ERROR_DB_LOCKED
-        return None, _ERROR_DB_LOCKED
+        logger.error("poly-scan exited %s: %s", completed.returncode, stderr[:500])
+        return None, _ERROR_SCANNER
 
     try:
         return json.loads(completed.stdout), None
     except json.JSONDecodeError:
-        return None, _ERROR_DB_LOCKED
+        logger.error("poly-scan returned invalid JSON")
+        return None, _ERROR_SCANNER
 
 
 def load_market_trends(market_id: str, limit: int) -> tuple[list[dict[str, Any]], str | None]:
@@ -132,14 +146,34 @@ def load_market_metadata(market_id: str) -> tuple[dict[str, Any], str | None]:
     if err:
         return {}, err
     if not isinstance(data, dict):
-        return {}, _ERROR_DB_LOCKED
+        return {}, _ERROR_SCANNER
     return data, None
 
 
 def merge_filters(filter_overrides: dict[str, Any] | None) -> dict[str, Any]:
     merged = dict(FILTERS)
-    if filter_overrides:
-        merged.update(filter_overrides)
+    for key, value in (filter_overrides or {}).items():
+        if key not in FILTERS:
+            logger.warning("ignoring unknown filter override %r", key)
+            continue
+        default = FILTERS[key]
+        try:
+            if isinstance(value, bool) or value is None:
+                raise TypeError("not a number")
+            coerced = type(default)(value)
+            if isinstance(coerced, float) and not math.isfinite(coerced):
+                raise ValueError("not finite")
+            if coerced < 0:
+                raise ValueError("negative")
+            if isinstance(default, int) and float(value) != coerced:
+                raise ValueError("not integral")
+        except (TypeError, ValueError, OverflowError) as exc:
+            logger.warning(
+                "ignoring invalid filter override %s=%r (%s); using default %r",
+                key, value, exc, default,
+            )
+            continue
+        merged[key] = coerced
     return merged
 
 
@@ -176,11 +210,16 @@ def _snapshot_near_hours_ago(series: list[dict], hours: float) -> dict | None:
     target_dt = latest_dt.timestamp() - hours * 3600
     best = None
     best_delta = float("inf")
+    target_age = hours * 3600
     for snap in series[:-1]:
         delta = abs(_parse_dt(snap["datetime"]).timestamp() - target_dt)
         if delta < best_delta:
             best_delta = delta
             best = snap
+    if best is not None:
+        best_age = latest_dt.timestamp() - _parse_dt(best["datetime"]).timestamp()
+        if abs(best_age - target_age) > 0.5 * target_age:
+            return None
     return best
 
 
@@ -236,6 +275,7 @@ def _compute_info_drift_metrics(
     best_run = 1
     best_direction: str | None = None
     best_start_idx = 0
+    best_end_idx = len(mids) - 1
 
     for i in range(1, len(mids)):
         if mids[i] > mids[i - 1]:
@@ -262,11 +302,12 @@ def _compute_info_drift_metrics(
             best_run = current_run
             best_direction = "up" if dir_i > 0 else "down"
             best_start_idx = run_start_idx
+            best_end_idx = i
 
     max_run = best_run
     direction = best_direction
     start_mid = mids[best_start_idx] if best_start_idx < len(mids) else mids[0]
-    end_mid = mids[-1]
+    end_mid = mids[best_end_idx]
     if start_mid and start_mid != 0:
         net_pct_change = abs(end_mid - start_mid) / abs(start_mid)
     else:
@@ -295,12 +336,12 @@ def _compute_signals_from_series(
         baseline_vol = statistics.median(volumes)
         current_vol = latest.get("volume") or 0
         vol_threshold = baseline_vol * filters["volume_shock_ma_multiplier"]
-        vol_ratio = current_vol / baseline_vol if baseline_vol else 0.0
+        vol_ratio = current_vol / baseline_vol if baseline_vol else None
     else:
         baseline_vol = None
         current_vol = latest.get("volume")
         vol_threshold = filters["volume_shock_ma_multiplier"]
-        vol_ratio = 0.0
+        vol_ratio = None
 
     # breakout
     window_hrs = filters["breakout_time_window_hrs"]
@@ -338,8 +379,9 @@ def _compute_signals_from_series(
         liq is not None
         and liq < filters["low_liquidity_breakout_max_liq"]
         and ref_liq_price
+        and latest_price is not None
     ):
-        liq_pct = abs((latest_price or 0) - ref_liq_price) / ref_liq_price
+        liq_pct = abs(latest_price - ref_liq_price) / ref_liq_price
         liq_fired = liq_pct > filters["low_liquidity_breakout_pct"]
     else:
         liq_pct = 0.0
@@ -351,7 +393,14 @@ def _compute_signals_from_series(
 
     return {
         "volume_shock": {
-            "ratio": round(vol_ratio, 4),
+            # ``ratio`` is null when the baseline median is 0 or absent (no divide);
+            # ``fired`` is true on a zero baseline with any current volume.
+            "ratio": round(vol_ratio, 4) if vol_ratio is not None else None,
+            "fired": (
+                bool(current_vol and current_vol > 0)
+                if baseline_vol == 0
+                else (vol_ratio is not None and vol_ratio > filters["volume_shock_ma_multiplier"])
+            ),
             "threshold": filters["volume_shock_ma_multiplier"],
             "baseline_median": baseline_vol,
             "current": current_vol,
@@ -380,7 +429,16 @@ def _compute_signals_from_series(
 
 
 def _check_arbitrage_hard_veto(latest: dict, filters: dict[str, Any]) -> HardVeto | None:
-    combined = latest["yes_price"] + latest["no_price"]
+    yes, no = latest.get("yes_price"), latest.get("no_price")
+    for v in (yes, no):
+        if (
+            isinstance(v, bool)
+            or not isinstance(v, (int, float))
+            or not math.isfinite(v)
+            or not (0 < v < 1)
+        ):
+            return None
+    combined = yes + no
     threshold = filters["arbitrage_max_combined_ask"]
     if combined < threshold:
         return HardVeto(
@@ -470,6 +528,17 @@ def evaluate_market_metrics(
     market_id: str,
     filter_overrides: dict[str, Any] | None = None,
 ) -> EvaluateMarketMetricsOutput:
+    try:
+        return _evaluate_market_metrics(market_id, filter_overrides)
+    except Exception:  # structured error instead of a traceback
+        logger.exception("evaluate_market_metrics failed for %s", market_id)
+        return _empty_output(market_id, _ERROR_SCANNER)
+
+
+def _evaluate_market_metrics(
+    market_id: str,
+    filter_overrides: dict[str, Any] | None,
+) -> EvaluateMarketMetricsOutput:
     filters = merge_filters(filter_overrides)
     limit = _trends_limit(filters)
 
@@ -479,8 +548,8 @@ def evaluate_market_metrics(
     start_date_available = start_date is not None and days_since is not None
 
     series, trends_err = load_market_trends(market_id, limit)
-    if trends_err == _ERROR_DB_LOCKED:
-        return _empty_output(market_id, _ERROR_DB_LOCKED)
+    if trends_err in (_ERROR_DB_LOCKED, _ERROR_SCANNER):
+        return _empty_output(market_id, trends_err)
     if trends_err or not series:
         return EvaluateMarketMetricsOutput(
             market_id=market_id,

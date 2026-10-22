@@ -18,6 +18,7 @@ _RE_EVALUATOR_IN = {
     "prior_filter_trigger": None,
     "prior_evaluator_details": None,
     "prior_filter_log": None,
+    "prior_filter_result": None,
     "research_markdown": None,
     "trade_log": None,
 }
@@ -94,6 +95,7 @@ def test_run_structured_agent_attaches_bundle_for_re_evaluator():
         "prior_filter_trigger": None,
         "prior_evaluator_details": None,
         "prior_filter_log": None,
+        "prior_filter_result": None,
         "research_markdown": None,
         "trade_log": None,
     }
@@ -115,6 +117,7 @@ def test_spawn_agent_returns_slim_re_evaluator_without_signal_bundle():
             "prior_filter_trigger": None,
             "prior_evaluator_details": None,
             "prior_filter_log": None,
+            "prior_filter_result": None,
             "research_markdown": None,
             "trade_log": None,
         },

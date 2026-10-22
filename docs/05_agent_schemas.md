@@ -8,7 +8,9 @@ Each role's [`agents_blueprint/<role>/agent.yaml`](../agents_blueprint/) declare
 
 - **System Prompt:** Evaluator: first-time quantitative gate; calls `evaluate_market_metrics` and reasons over the returned signal_bundle. Re-Evaluator: same skill contract when Active Research already exists; receives `historic_signal_bundle` from the prior filter log for regime comparison.
 - **Input Schema — Evaluator:** `{"market_id": "string", "filter_directives": "dict"}`
-- **Input Schema — Re-Evaluator:** `{"market_id": "string", "review_kind": "string", "filter_directives": "dict", "historic_signal_bundle": "dict | null", "prior_filter_trigger": "string | null", "prior_evaluator_details": "string | null", "prior_filter_log": "dict | null", "research_markdown": "string | null", "trade_log": "dict | null"}`
+- **Input Schema — Re-Evaluator:** `{"market_id": "string", "review_kind": "string", "filter_directives": "dict", "historic_signal_bundle": "dict | null", "prior_filter_trigger": "string | null", "prior_evaluator_details": "string | null", "prior_filter_log": "dict | null", "prior_filter_result": "dict | null", "research_markdown": "string | null", "trade_log": "dict | null"}`
+- Re-Evaluator also receives markets that previously failed the filters; `prior_filter_result` carries the earlier filter decision so the agent can re-check whether the signal changed. When a hard veto is copied, the agent sets `retry_deep_research=false` and `refresh_reason=null`.
+- **Signal bundle:** the agent's own output schema (`agent.yaml`) does not include `signal_bundle`; the Hub attaches the authoritative bundle returned by `evaluate_market_metrics` to the stored result after the run. The JSON shapes below show the persisted result.
 - **Output Schema (Re-Evaluator):**
 
 ```json
@@ -61,8 +63,10 @@ On success: `research_queries` must contain **1–3** non-empty strings and `err
 
 ## 3. The Forensic Fact Verifier (deep_researcher)
 
+`q` is the Hub-computed market-implied YES price (`yes_price`, then `last_trade_price`, then midpoint); the agent uses it as its anchor and as the zero-edge `estimated_p`.
+
 - **System Prompt:** "**Forensic Fact Verifier** in the Phase 3 **Forensic Pipeline**. Verify `research_bundle` with prosecutorial rigor; use `needs_more_data` as exhaustive interrogation when any pricing-critical fact is not 100% verified (1–3 surgical follow-up queries). Output `status: complete` only with ironclad conviction in `estimated_p`. Bull/Bear sections: exactly 2–3 maximum-density, fact-backed asymmetric bullets each (not narrative summaries)."
-- **Input Schema:** `{"market_id": "string", "market_data": "dict", "directives": "string", "research_bundle": "list[dict]", "system_override": "string | null", "format_validation_error": "string | null"}`
+- **Input Schema:** `{"market_id": "string", "market_data": "dict", "q": float, "directives": "string", "research_bundle": "list[dict]", "system_override": "string | null", "format_validation_error": "string | null"}`
 - **Output Schema (state machine):**
 
 ```json
@@ -89,8 +93,8 @@ Hub persistence: cumulative A-IQ results live in `02_Active_Research/research_bu
 
 ## 4. The Trade Executioner
 
-- **System Prompt:** "You are a deterministic executor. Map `market_data` to `(q, D, L, V)` per the prompt, call `calculate_trade_allocation`, then call `execute_polymarket_trade` only when `paper_trade_mode` is false and allocation > 0."
-- **Input Schema:** `{"market_id": "string", "p_value": float, "market_data": "dict", "paper_trade_mode": boolean}` (`paper_trade_mode` mirrors `PAPER_TRADE_MODE` from the Hub).
+- **System Prompt:** "You are a deterministic executor. Use the Hub-computed `allocation` (the Hub runs `calculate_trade_allocation` with `q`, `D`, `L`, `V`), then call `execute_polymarket_trade` (outcome `YES` only) when `paper_trade_mode` is false and `allocation.allocation_usd` > 0."
+- **Input Schema:** `{"market_id": "string", "p_value": float, "q": float, "allocation": "dict", "market_data": "dict", "paper_trade_mode": boolean}` (`paper_trade_mode` mirrors `PAPER_TRADE_MODE` from the Hub).
 - **Output Schema:**
 
 ```json

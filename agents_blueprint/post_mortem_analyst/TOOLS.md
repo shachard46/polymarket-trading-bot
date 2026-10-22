@@ -1,5 +1,5 @@
 # Tools
 
-Source of truth: runtime-enforced tool access is defined in `agent.yaml` and validated by the orchestrator.
+Declared tool allowlist lives in `agent.yaml` (`tools.allow`). It is documentation / agent-runtime configuration only; the orchestrator does not enforce it at runtime.
 
 None — analysis is from orchestrator-provided strings and resolution_data only.

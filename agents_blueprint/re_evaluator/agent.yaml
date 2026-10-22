@@ -13,6 +13,7 @@ input_schema:
   prior_filter_trigger: "string | null"
   prior_evaluator_details: "string | null"
   prior_filter_log: "dict | null"
+  prior_filter_result: "dict | null"
   research_markdown: "string | null"
   trade_log: "dict | null"
 output_schema:

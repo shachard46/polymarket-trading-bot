@@ -1,5 +1,5 @@
 # Tools
 
-Source of truth: runtime-enforced tool access is defined in `agent.yaml` and validated by the orchestrator.
+Declared tool allowlist lives in `agent.yaml` (`tools.allow`). It is documentation / agent-runtime configuration only; the orchestrator does not enforce it at runtime.
 
-- `calculate_trade_allocation` then `execute_polymarket_trade` only when allocation_usd > 0.
+- `execute_polymarket_trade` only when the Hub-provided `allocation.allocation_usd` > 0 and `paper_trade_mode` is false. The Hub computes allocation (`calculate_trade_allocation`) itself.

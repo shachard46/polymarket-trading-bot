@@ -32,3 +32,5 @@ $$S = \frac{e_{\mathrm{tax}}(p,q)}{\max(D,D_{\min})} \cdot B_{\mathrm{rarity}} -
 ## Step 6: Bankroll Allocation
 Determines the fraction of the available bankroll to deploy ($f$). If $S$ does not exceed the threshold $S_0$, no trade is placed.
 $$f= \begin{cases} 0, & S\le S_0 \\ \min\big(f_{\max}, \alpha(S-S_0)\big), & S>S_0 \end{cases}$$
+
+With $f_{\max}=0.10$. The USD allocation is further capped: $\min(f\cdot B,\ f_{\max}B,\ \text{LIQ\_FRAC}\cdot L,\ B_{\text{remaining}})$ with $\text{LIQ\_FRAC}=0.05$ and $B$ = `BANKROLL_USD`.

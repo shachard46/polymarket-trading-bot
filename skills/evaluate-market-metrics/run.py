@@ -7,10 +7,11 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 
-_OPENCLAW_ROOT = "/home/boldplane/.openclaw"
-if _OPENCLAW_ROOT not in sys.path:
-    sys.path.insert(0, _OPENCLAW_ROOT)
+_REPO_ROOT = str(Path(__file__).resolve().parents[2])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 from pydantic import ValidationError
 

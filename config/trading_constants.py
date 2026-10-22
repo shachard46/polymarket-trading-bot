@@ -8,11 +8,15 @@ C2 = 0.01
 D_MIN = 7
 S_0 = 0.002
 ALPHA = 25
-F_MAX = 0.95
+F_MAX = 0.10             # max bankroll fraction per trade
 EPSILON = 1e-8
 MU_X = 0.05            # Historical mean of |p - q| for rarity bonus
 SIGMA_X = 0.10         # Historical std-dev of |p - q| for rarity bonus
 BANKROLL_USD = 1000.0  # allocation_usd = f * BANKROLL_USD
+LIQ_FRAC = 0.05        # max fraction of market liquidity L a single order may consume
+MAX_ORDER_USD = F_MAX * BANKROLL_USD  # hard per-order ceiling enforced by execute_polymarket_trade
+LIQ_FRAC = 0.05        # max fraction of market liquidity L a single order may consume
+MAX_ORDER_USD = F_MAX * BANKROLL_USD  # hard per-order ceiling enforced by execute_polymarket_trade
 
 # A-IQ Service (overridable via env vars AIQ_BASE_URL, AIQ_POLL_INTERVAL_SEC, AIQ_TIMEOUT_SEC)
 AIQ_BASE_URL = "http://localhost:8000"

@@ -47,11 +47,11 @@ description: Loads market history from polymarket-scraper via poly-scan, compute
     "details": "yes+no=0.96 < 0.98"
   },
   "signals": {
-    "volume_shock": { "ratio": 2.1, "threshold": 3.0, "baseline_median": 1200, "current": 2520 },
-    "breakout": { "pct_move": 0.08, "threshold": 0.10, "window_hrs": 4, "start_price": 0.05, "end_price": 0.054 },
+    "volume_shock": { "ratio": 2.1, "fired": false, "threshold": 2.5, "baseline_median": 1200, "current": 2520 },
+    "breakout": { "pct_move": 0.08, "threshold": 0.08, "window_hrs": 4, "start_price": 0.05, "end_price": 0.054 },
     "spread_anomaly": { "ratio": 1.4, "threshold": 2.0, "baseline_median": 0.02, "current": 0.028 },
     "low_liquidity_breakout": { "liquidity": 900, "pct_move": 0.07, "threshold": 0.05, "fired": false },
-    "info_drift": { "max_run": 8, "threshold": 10, "direction": "up", "net_pct_change": 0.12, "proxy": "snapshot" }
+    "info_drift": { "max_run": 8, "threshold": 9, "direction": "up", "net_pct_change": 0.12, "proxy": "snapshot" }
   },
   "thresholds_applied": {},
   "data_quality": {
@@ -69,18 +69,22 @@ description: Loads market history from polymarket-scraper via poly-scan, compute
 - `latest_snapshot.days_since_creation` — `(now - Market.start_date)` from `poly-scan get_market`; `null` if `start_date` missing. Do **not** use API end dates.
 - `latest_snapshot.total_volume` — cumulative volume from the latest trend row.
 - `signals.breakout.start_price` / `end_price` — midpoint at window start and latest.
-- `signals.info_drift.net_pct_change` — absolute percent midpoint change over the drift run window.
+- `signals.info_drift.net_pct_change` — absolute percent price change from the start to the **end of the best run** (not the latest snapshot).
+- `signals.volume_shock` — when the baseline median is `0` (or absent) no division is done: `ratio` is `null` and `fired` is `true` iff current volume `> 0`.
+- `low_liquidity_breakout` treats a missing latest price as missing (not `0`); a reference snapshot more than 50% off the requested age is rejected (treated as no reference).
+- `filter_overrides` values are coerced to the type of the default in `FILTERS`; unknown keys, non-numeric or negative values are ignored (logged) and the default is used.
 - `hard_veto.passed` — `true` for arbitrage pass, `false` for insufficient data hard reject, `null` when agent must reason over soft signals.
 
 **Error strings (exact literals, case-sensitive):**
 
 - `"DB_LOCKED"` — SQLite busy/locked or `poly-scan` subprocess timeout.
+- `"SCANNER_ERROR"` — `poly-scan` binary missing, nonzero exit (not a lock), invalid JSON, market not found, or an unexpected exception inside the skill.
 - `"INSUFFICIENT_DATA"` — empty or below-minimum trend series.
 - On non-null `error`, `hard_veto.passed` is `null` and `signals` may be partial/empty.
 
 **Hard veto (deterministic, agent cannot override):**
 
-- **Pass:** `arbitrage` only when `yes_price + no_price < arbitrage_max_combined_ask`.
+- **Pass:** `arbitrage` only when both `yes_price` and `no_price` are numbers in `(0, 1)` and `yes_price + no_price < arbitrage_max_combined_ask`.
 - **Reject:** insufficient data (`snapshots_used` below minimum).
 - All other filters appear in `signals` only; the Evaluator agent decides pass/fail.
 
@@ -93,7 +97,8 @@ description: Deterministic math engine. Use this to calculate the exact USD allo
 ---
 ```
 
-* **Input Schema:** `{"p": float, "q": float, "D": int, "L": float, "V": float}`
+* **Input Schema:** `{"p": float, "q": float, "D": int, "L": float, "V": float, "remaining_bankroll": float | null}` — validated: `0 < p <= 1`, `0 < q < 1`, `D >= 0`, `L > 0`, `V > 0`, all finite; `remaining_bankroll` optional (default `BANKROLL_USD`). Invalid input returns zero allocation and a non-null `error`.
+* **Cap:** `allocation_usd = min(f * BANKROLL_USD, F_MAX * BANKROLL_USD, LIQ_FRAC * L, remaining_bankroll)` with `F_MAX = 0.10`, `LIQ_FRAC = 0.05` (`config/trading_constants`); zero when `S` is non-finite or `S <= S_0`.
 * **Output Schema:** `{"allocation_usd": float, "score": float, "below_edge_threshold": bool | null, "error": str | null}` — `below_edge_threshold` is `true` when the score is at or below the minimum edge threshold `S_0` (no allocation for that reason), `false` when above threshold, and `null` when the score could not be computed (same cases as a non-null `error`).
 
 ## 3. Skill: execute_polymarket_trade
@@ -105,8 +110,10 @@ description: Polymarket API wrapper. Use this to officially place a trade on the
 ---
 ```
 
-* **Input Schema:** `{"market_id": str, "outcome": str, "amount": float}`
-* **Output Schema:** `{"success": bool, "transaction_hash": str | null, "error": str | null}`
+* **Input Schema:** `{"market_id": str (non-empty), "outcome": "YES" | "NO", "amount": float}` — `0 < amount <= MAX_ORDER_USD` (`F_MAX * BANKROLL_USD`), finite.
+* **Output Schema:** `{"success": bool, "transaction_hash": str | null, "paper": bool, "error": str | null}` — `paper` is `true` when simulated.
+
+**Invocation:** `python3 {baseDir}/run.py '<json>'` (JSON also accepted on stdin); `calculate_trade_allocation` has an equivalent `run.py`.
 
 ## 4. Skill: execute_aiq_query
 

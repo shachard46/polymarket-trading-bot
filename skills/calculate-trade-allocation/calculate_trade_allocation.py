@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import math
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from config.trading_constants import (
     ALPHA,
@@ -18,6 +18,7 @@ from config.trading_constants import (
     D_MIN,
     EPSILON,
     F_MAX,
+    LIQ_FRAC,
     MU_X,
     S_0,
     SIGMA_X,
@@ -25,13 +26,14 @@ from config.trading_constants import (
 
 
 class CalculateTradeAllocationInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
-    p: float
-    q: float
-    D: int
-    L: float
-    V: float
+    p: float = Field(gt=0, le=1)
+    q: float = Field(gt=0, lt=1)
+    D: int = Field(ge=0)
+    L: float = Field(gt=0)
+    V: float = Field(gt=0)
+    remaining_bankroll: float | None = Field(default=None, ge=0)
 
 
 class CalculateTradeAllocationOutput(BaseModel):
@@ -45,14 +47,39 @@ class CalculateTradeAllocationOutput(BaseModel):
     error: str | None
 
 
+def _error(message: str) -> CalculateTradeAllocationOutput:
+    return CalculateTradeAllocationOutput(
+        allocation_usd=0.0,
+        score=0.0,
+        below_edge_threshold=None,
+        error=message,
+    )
+
+
 def calculate_trade_allocation(
     p: float,
     q: float,
     D: int,
     L: float,
     V: float,
+    remaining_bankroll: float | None = None,
 ) -> CalculateTradeAllocationOutput:
     try:
+        args = CalculateTradeAllocationInput(
+            p=p, q=q, D=D, L=L, V=V, remaining_bankroll=remaining_bankroll
+        )
+    except ValidationError as exc:
+        details = "; ".join(
+            f"{'.'.join(str(x) for x in e['loc'])}: {e['msg']}" for e in exc.errors()
+        )
+        return _error(f"invalid input: {details}")
+
+    try:
+        p, q, D, L, V = args.p, args.q, args.D, args.L, args.V
+        remaining = (
+            BANKROLL_USD if args.remaining_bankroll is None else args.remaining_bankroll
+        )
+
         # Step 1: expected return after 25% tax on winnings
         e_tax = (0.75 * p - q + 0.25 * p * q) / q
 
@@ -69,10 +96,22 @@ def calculate_trade_allocation(
         # Step 5: final score
         S = time_adj * B_rarity - P_exec
 
-        # Step 6: bankroll fraction → USD allocation
-        below_edge = S <= S_0
-        f = 0.0 if below_edge else min(F_MAX, ALPHA * (S - S_0))
-        allocation_usd = f * BANKROLL_USD
+        if not math.isfinite(S):
+            return _error(f"non-finite score: {S}")
+
+        # Step 6: bankroll fraction → USD allocation, capped by per-trade
+        # bankroll fraction, market liquidity share, and remaining bankroll.
+        below_edge = not (S > S_0)
+        if below_edge:
+            allocation_usd = 0.0
+        else:
+            f = min(F_MAX, ALPHA * (S - S_0))
+            allocation_usd = min(
+                f * BANKROLL_USD,
+                F_MAX * BANKROLL_USD,
+                LIQ_FRAC * L,
+                remaining,
+            )
 
         return CalculateTradeAllocationOutput(
             allocation_usd=allocation_usd,
@@ -81,9 +120,4 @@ def calculate_trade_allocation(
             error=None,
         )
     except Exception as exc:
-        return CalculateTradeAllocationOutput(
-            allocation_usd=0.0,
-            score=0.0,
-            below_edge_threshold=None,
-            error=str(exc),
-        )
+        return _error(str(exc))

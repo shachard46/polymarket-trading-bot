@@ -7,6 +7,7 @@ with ``AGENTS.md`` (operating instructions / system prompt) and ``agent.yaml``
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,8 @@ from orchestrator.schema_validation import (
     is_markdown_output,
     is_state_machine_output,
 )
+
+logger = logging.getLogger(__name__)
 
 _AGENTS_MD = "AGENTS.md"
 _AGENT_YAML = "agent.yaml"
@@ -43,7 +46,7 @@ def load_agents_from_dir(agents_root: Path | None = None) -> dict[str, dict[str,
 
             meta = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
             if not isinstance(meta, dict):
-                raise ValueError(f"{yaml_path} must contain a YAML mapping")
+                raise ValueError(f"{yaml_path} must contain a YAML mapping, got {type(meta).__name__}")
 
             role = str(meta.get("id") or child.name)
             if role != child.name:
@@ -83,10 +86,7 @@ def load_agents_from_dir(agents_root: Path | None = None) -> dict[str, dict[str,
                     "tools": meta.get("tools"),
                 },
             }
-        except FileNotFoundError as e:
-            print(f"missing {yaml_path}")
-        except ValueError as e:
-            print(f"{yaml_path} must contain a YAML mapping")
-        except Exception as e:
-            print(f"error loading {yaml_path}")
+        except Exception:
+            logger.exception("failed to load agent workspace %s", child)
+            raise
     return agents

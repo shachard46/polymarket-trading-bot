@@ -11,20 +11,21 @@ from __future__ import annotations
 
 import logging
 import uuid
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from config.trading_constants import PAPER_TRADE_MODE
+from config.trading_constants import MAX_ORDER_USD, PAPER_TRADE_MODE
 
 logger = logging.getLogger(__name__)
 
 
 class ExecutePolymarketTradeInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
-    market_id: str
-    outcome: str
-    amount: float
+    market_id: str = Field(min_length=1)
+    outcome: Literal["YES", "NO"]
+    amount: float = Field(gt=0, le=MAX_ORDER_USD)
 
 
 class ExecutePolymarketTradeOutput(BaseModel):
@@ -32,6 +33,7 @@ class ExecutePolymarketTradeOutput(BaseModel):
 
     success: bool
     transaction_hash: str | None
+    paper: bool
     error: str | None
 
 
@@ -40,6 +42,24 @@ def execute_polymarket_trade(
     outcome: str,
     amount: float,
 ) -> ExecutePolymarketTradeOutput:
+    try:
+        args = ExecutePolymarketTradeInput(
+            market_id=market_id.strip() if isinstance(market_id, str) else market_id,
+            outcome=outcome,
+            amount=amount,
+        )
+    except ValidationError as exc:
+        details = "; ".join(
+            f"{'.'.join(str(x) for x in e['loc'])}: {e['msg']}" for e in exc.errors()
+        )
+        return ExecutePolymarketTradeOutput(
+            success=False,
+            transaction_hash=None,
+            paper=PAPER_TRADE_MODE,
+            error=f"invalid input: {details}",
+        )
+
+    market_id, outcome, amount = args.market_id, args.outcome, args.amount
     try:
         if PAPER_TRADE_MODE:
             tx_hash = f"PAPER-{uuid.uuid4().hex[:16].upper()}"
@@ -53,12 +73,14 @@ def execute_polymarket_trade(
             return ExecutePolymarketTradeOutput(
                 success=True,
                 transaction_hash=tx_hash,
+                paper=True,
                 error=None,
             )
 
         return ExecutePolymarketTradeOutput(
             success=False,
             transaction_hash=None,
+            paper=PAPER_TRADE_MODE,
             error=(
                 "Live trading not implemented: requires Polymarket CLOB API "
                 "private-key signing (EIP-712). Set PAPER_TRADE_MODE=True in "
@@ -69,5 +91,6 @@ def execute_polymarket_trade(
         return ExecutePolymarketTradeOutput(
             success=False,
             transaction_hash=None,
+            paper=PAPER_TRADE_MODE,
             error=str(exc),
         )

@@ -25,7 +25,10 @@ Body.
 
 ## Filter Weightings
 
-Body.
+```yaml
+filters:
+  min_liquidity: 1000
+```
 
 ## Risk Constraints
 
@@ -103,6 +106,7 @@ def test_spawn_agent_re_evaluator_accepts_quantitative_payload():
             "prior_filter_trigger": None,
             "prior_evaluator_details": None,
             "prior_filter_log": None,
+            "prior_filter_result": None,
             "research_markdown": None,
             "trade_log": None,
         },
@@ -124,6 +128,7 @@ def test_spawn_agent_re_evaluator_accepts_edge_research_refresh_payload():
             "prior_filter_trigger": None,
             "prior_evaluator_details": None,
             "prior_filter_log": {"passed": True},
+            "prior_filter_result": None,
             "research_markdown": "---\nmarket_id: x\n---\n",
             "trade_log": {"below_edge_threshold": True},
         },
@@ -136,7 +141,7 @@ def test_spawn_agent_executioner_requires_paper_trade_mode():
     with pytest.raises(AgentSchemaError):
         spawn_agent(
             "executioner",
-            {"market_id": "m", "p_value": 0.5, "market_data": {}},
+            {"market_id": "m", "p_value": 0.5, "q": 0.5, "allocation": {}, "market_data": {}},
         )
 
 
@@ -146,6 +151,8 @@ def test_spawn_agent_executioner_accepts_paper_mode():
         {
             "market_id": "m",
             "p_value": 0.5,
+            "q": 0.5,
+            "allocation": {"allocation_usd": 0.0, "score": 0.0, "below_edge_threshold": True, "error": None},
             "market_data": {},
             "paper_trade_mode": True,
         },

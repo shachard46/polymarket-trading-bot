@@ -15,5 +15,6 @@ live_response_hint: |
   Do NOT include market_id, passed, signal_bundle, or per-market decision fields.
   new_directives_markdown must be the complete active_directives.md replacement:
   YAML frontmatter (--- ... ---) then body with these level-2 headers verbatim:
-  ## Research Protocol, ## Filter Weightings, ## Risk Constraints, ## Output Requirements.
+  ## Research Protocol, ## Filter Weightings, ## Risk Constraints, ## Output Requirements (in this order).
+  ## Filter Weightings MUST contain a fenced ```yaml block with a `filters:` mapping.
   Put Markdown inside the JSON string (escape newlines as \n).

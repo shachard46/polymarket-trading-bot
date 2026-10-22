@@ -14,7 +14,8 @@ Your sole purpose is to evolve the fund's logic to survive an adversarial market
 
 ## OPERATIONAL RULES
 
-- `new_directives_markdown` MUST be valid markdown with YAML frontmatter (`title`, `last_updated`) and exactly these level-2 headers: `## Filter Weightings`, `## Research Protocol`, `## Risk Constraints`, `## Output Requirements` (spellings must match).
+- `new_directives_markdown` MUST be valid markdown with YAML frontmatter (`title`, `last_updated`) and exactly these level-2 headers, in this order: `## Research Protocol`, `## Filter Weightings`, `## Risk Constraints`, `## Output Requirements` (spellings must match).
+- Under `## Filter Weightings` you MUST include a fenced ```yaml block containing a `filters:` mapping of threshold overrides (keys such as `volume_shock_ma_multiplier`, `breakout_pct_shift`; numeric, non-negative values). The pipeline parses it and rejects the document if the block or the `filters:` mapping is missing or unparseable.
 - You MUST rewrite the ENTIRE `active_directives.md` file in your `new_directives_markdown` output. Do not output "diffs" or partial updates. The pipeline will overwrite the old file entirely with your output.
 - Directives MUST be actionable. Do not write "pay attention to volume." Write "Reject markets with a 24-hour volume below $5,000 unless there is a confirmed SEC filing."
 - Your `rationale` must be empirical, sharp, and brutally honest about what failed and why you are changing the rules.
@@ -29,7 +30,7 @@ Your sole purpose is to evolve the fund's logic to survive an adversarial market
 
 ```json
 {
-  "new_directives_markdown": "# Active Directives\n\n## Filter Weightings\n...\n\n## Research Protocol\n...\n\n## Risk Constraints\n...\n\n## Output Requirements\n...",
+  "new_directives_markdown": "# Active Directives\n\n## Research Protocol\n...\n\n## Filter Weightings\n```yaml\nfilters:\n  volume_shock_ma_multiplier: 2.5\n```\n...\n\n## Risk Constraints\n...\n\n## Output Requirements\n...",
   "rationale": "<A sharp, critical paragraph explaining exactly which failures forced these rule changes>",
   "error": "<error message if you cannot parse the inputs, otherwise null>"
 }

@@ -20,6 +20,7 @@ _RE_EVALUATOR_IN = {
     "prior_filter_trigger": None,
     "prior_evaluator_details": None,
     "prior_filter_log": None,
+    "prior_filter_result": None,
     "research_markdown": None,
     "trade_log": None,
 }
@@ -63,6 +64,7 @@ def test_stub_deep_researcher_returns_parseable_complete_payload():
             "market_data": {},
             "directives": "y",
             "research_bundle": [],
+            "q": 0.5,
             "system_override": None,
             "format_validation_error": None,
         },
@@ -91,6 +93,7 @@ def test_stub_error_deep_researcher_carries_error_in_frontmatter(monkeypatch):
             "market_data": {},
             "directives": "y",
             "research_bundle": [],
+            "q": 0.5,
             "system_override": None,
             "format_validation_error": None,
         },
@@ -114,6 +117,8 @@ def test_stub_executioner_includes_allocation_tool_fields():
         {
             "market_id": "0xabc",
             "p_value": 0.5,
+            "q": 0.5,
+            "allocation": {"allocation_usd": 0.0, "score": 0.0, "below_edge_threshold": True, "error": None},
             "market_data": {},
             "paper_trade_mode": True,
         },
