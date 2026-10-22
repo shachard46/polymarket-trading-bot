@@ -42,13 +42,18 @@ def gateway_reachable(timeout: int = 5) -> tuple[bool, str | None]:
     except OpenClawCLIError as exc:
         return False, str(exc)
 
-    result = subprocess.run(
-        [binary, "gateway", "status", "--json"],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            [binary, "gateway", "status", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"openclaw gateway status timed out after {timeout}s"
+    except OSError as exc:
+        return False, f"openclaw gateway status failed to launch: {exc}"
     if result.returncode == 0:
         return True, None
     detail = (result.stderr or result.stdout).strip()
@@ -80,16 +85,23 @@ def _agent_cli_supports_session_key(binary: str) -> bool:
     if _SESSION_KEY_HELP_FLAG is not None:
         return _SESSION_KEY_HELP_FLAG
 
-    result = subprocess.run(
-        [binary, "agent", "--help"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            [binary, "agent", "--help"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise OpenClawCLIError("openclaw agent --help probe timed out after 10s") from exc
+    except OSError as exc:
+        raise OpenClawCLIError(f"openclaw agent --help probe failed to launch: {exc}") from exc
     help_text = f"{result.stdout}\n{result.stderr}"
-    _SESSION_KEY_HELP_FLAG = "--session-key" in help_text
-    return _SESSION_KEY_HELP_FLAG
+    supported = "--session-key" in help_text
+    if result.returncode == 0:
+        _SESSION_KEY_HELP_FLAG = supported
+    return supported
 
 
 def _scoped_session_suffix(session_key: str, agent_id: str) -> str:
@@ -146,9 +158,12 @@ def _run_agent_once(
     run_timeout: int,
 ) -> dict[str, Any]:
     """Execute a single ``openclaw agent`` invocation."""
+    # Built outside the run try-block so a help-probe timeout is not reported
+    # as an agent timeout (the probe raises OpenClawCLIError itself).
+    cmd = _agent_command(binary, agent_id, message, session_key, run_timeout)
     try:
         result = subprocess.run(
-            _agent_command(binary, agent_id, message, session_key, run_timeout),
+            cmd,
             capture_output=True,
             text=True,
             timeout=run_timeout + 30,
@@ -157,6 +172,10 @@ def _run_agent_once(
     except subprocess.TimeoutExpired as exc:
         raise OpenClawCLIError(
             f"openclaw agent timed out for {agent_id!r} after {run_timeout + 30}s"
+        ) from exc
+    except OSError as exc:
+        raise OpenClawCLIError(
+            f"openclaw agent failed to launch for {agent_id!r}: {exc}"
         ) from exc
 
     if result.returncode != 0:
@@ -169,9 +188,17 @@ def _run_agent_once(
     try:
         parsed = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
-        raise OpenClawCLIError(
-            f"openclaw agent returned non-JSON for {agent_id!r}: {exc}"
-        ) from exc
+        parsed = None
+        start = result.stdout.find("{")
+        if start != -1:
+            try:
+                parsed, _ = json.JSONDecoder().raw_decode(result.stdout, start)
+            except json.JSONDecodeError:
+                parsed = None
+        if parsed is None:
+            raise OpenClawCLIError(
+                f"openclaw agent returned non-JSON for {agent_id!r}: {exc}"
+            ) from exc
     if not isinstance(parsed, dict):
         raise OpenClawCLIError(
             f"openclaw agent returned {type(parsed).__name__}, expected object"
@@ -185,11 +212,18 @@ def run_agent(
     *,
     session_key: str,
     timeout: int | None = None,
+    retry: bool | None = None,
 ) -> dict[str, Any]:
-    """Run an OpenClaw agent through the local Gateway and return CLI JSON."""
+    """Run an OpenClaw agent through the local Gateway and return CLI JSON.
+
+    ``retry=None`` retries read-only roles but never the ``executioner`` (a
+    retry could double-submit a trade); ``retry=False`` forces one attempt.
+    """
     binary = _resolved_openclaw_bin()
     run_timeout = timeout or openclaw_agent_timeout()
-    max_attempts = openclaw_agent_max_attempts()
+    if retry is None:
+        retry = agent_id != "executioner"
+    max_attempts = openclaw_agent_max_attempts() if retry else 1
     backoff = openclaw_agent_retry_backoff()
 
     last_error: OpenClawCLIError | None = None
@@ -217,26 +251,46 @@ def run_agent(
     raise last_error
 
 
+def _parses_whole(candidate: str) -> bool | None:
+    """True if ``candidate`` parses without the embedded-JSON fallback, False if only
+    via the fallback, ``None`` if it does not parse at all."""
+    try:
+        parse_agent_json_or_yaml(candidate)
+        # Re-check without the embedded fallback: a prose-wrapped object counts as partial.
+        stripped = candidate.lstrip()
+        if stripped.startswith(("{", "---", "```")):
+            return True
+        return False
+    except AgentOutputParseError:
+        return None
+
+
 def extract_agent_text(cli_json: dict[str, Any]) -> str:
     """Normalize OpenClaw Gateway/embedded JSON responses into agent text.
 
-    OpenClaw may return reasoning in ``summary`` and the final JSON in
-    ``payloads``. Prefer any candidate that parses as structured agent output
-    so padded Turn-2 responses are not dropped before :mod:`orchestrator.parse`.
+    OpenClaw may return reasoning in ``summary`` and the final answer in
+    ``payloads``. The LAST payload is the final answer and wins; the summary /
+    text fields are only a fallback when no payload parses. Candidates that
+    parse as a whole beat ones that only parse via embedded-JSON recovery.
     """
+    payload_texts = _payload_text_list(cli_json)
     candidates = _collect_agent_text_candidates(cli_json)
     if not candidates:
         raise OpenClawCLIError("openclaw agent JSON did not contain text output")
 
-    for candidate in sorted(candidates, key=len, reverse=True):
-        try:
-            parse_agent_json_or_yaml(candidate)
-        except AgentOutputParseError:
-            continue
-        else:
-            return candidate
+    ordered: list[str] = []
+    for text in [*reversed(payload_texts), *candidates]:
+        if text not in ordered:
+            ordered.append(text)
 
-    return candidates[0]
+    partial: str | None = None
+    for candidate in ordered:
+        verdict = _parses_whole(candidate)
+        if verdict is True:
+            return candidate
+        if verdict is False and partial is None:
+            partial = candidate
+    return partial if partial is not None else candidates[0]
 
 
 def _collect_agent_text_candidates(cli_json: dict[str, Any]) -> list[str]:
@@ -260,16 +314,30 @@ def _collect_agent_text_candidates(cli_json: dict[str, Any]) -> list[str]:
     return out
 
 
-def _payloads_text(payloads: Any) -> str | None:
+def _payload_texts(payloads: Any) -> list[str]:
     if not isinstance(payloads, list):
-        return None
-    texts = [
+        return []
+    return [
         str(payload["text"]).strip()
         for payload in payloads
         if isinstance(payload, dict)
         and isinstance(payload.get("text"), str)
         and payload["text"].strip()
     ]
+
+
+def _payload_text_list(cli_json: dict[str, Any]) -> list[str]:
+    """Individual payload texts in order (result.payloads, then top-level payloads)."""
+    out: list[str] = []
+    result = cli_json.get("result")
+    if isinstance(result, dict):
+        out.extend(_payload_texts(result.get("payloads")))
+    out.extend(_payload_texts(cli_json.get("payloads")))
+    return out
+
+
+def _payloads_text(payloads: Any) -> str | None:
+    texts = _payload_texts(payloads)
     return "\n\n".join(texts) if texts else None
 
 

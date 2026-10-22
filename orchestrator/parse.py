@@ -108,6 +108,16 @@ def parse_agent_json_or_yaml(raw: str | dict[str, Any] | None) -> dict[str, Any]
 
     parsed = _parse_body_candidates(raw)
     if parsed is not None:
+        structured_start = raw.lstrip().startswith(("{", "---", "```"))
+        single_key_wrapper = len(parsed) == 1 and isinstance(
+            next(iter(parsed.values())), dict
+        )
+        if not structured_start or single_key_wrapper:
+            # YAML happily parses prose ("Result: {...}"); prefer a real embedded object.
+            embedded = _find_embedded_json_object(raw)
+            if embedded is not None:
+                log.info("Preferred embedded JSON object over YAML prose parse")
+                return embedded
         return parsed
 
     recovered = _find_embedded_json_object(raw)
@@ -201,17 +211,29 @@ def coerce_deep_researcher_state_machine(
         if status in ("needs_more_data", "complete"):
             return raw
         if status is None:
-            return _legacy_markdown_to_complete(coerce_deep_researcher_markdown(raw), payload)
+            return _legacy_markdown_to_complete(_require_frontmatter_markdown(raw), payload)
         raise AgentOutputParseError(
             f"deep researcher unexpected status: {status!r}",
             raw=json.dumps(raw, default=str),
         )
     if isinstance(raw, str):
-        return _legacy_markdown_to_complete(coerce_deep_researcher_markdown(raw), payload)
+        return _legacy_markdown_to_complete(_require_frontmatter_markdown(raw), payload)
     raise AgentOutputParseError(
         f"deep researcher returned unsupported type: {type(raw).__name__}",
         raw=repr(raw),
     )
+
+
+def _require_frontmatter_markdown(raw: Any) -> str:
+    """Legacy markdown coercion applies only to text starting with ``---``."""
+    text = coerce_deep_researcher_markdown(raw)
+    if not text.lstrip().startswith("---"):
+        raise AgentOutputParseError(
+            "deep researcher output is neither a JSON state-machine object nor "
+            "markdown starting with '---' YAML frontmatter",
+            raw=text,
+        )
+    return text
 
 
 def coerce_deep_researcher_markdown(raw: Any) -> str:

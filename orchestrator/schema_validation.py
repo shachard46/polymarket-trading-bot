@@ -13,6 +13,7 @@ market with a precise reason.
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Any, Optional, Type, Union, get_args, get_origin
 
@@ -78,9 +79,26 @@ def build_model(name: str, schema: Any) -> Optional[Type[BaseModel]]:
         fields[key] = (py_type, ...)
     return create_model(  # type: ignore[call-overload]
         name,
-        __config__=ConfigDict(extra="allow"),
+        __config__=ConfigDict(extra="allow", strict=True),
         **fields,
     )
+
+
+def _find_non_finite(value: Any, path: str = "$") -> str | None:
+    """Return the path of the first NaN/inf float inside ``value``, else ``None``."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return path
+    if isinstance(value, dict):
+        for k, v in value.items():
+            found = _find_non_finite(v, f"{path}.{k}")
+            if found:
+                return found
+    elif isinstance(value, (list, tuple)):
+        for i, v in enumerate(value):
+            found = _find_non_finite(v, f"{path}[{i}]")
+            if found:
+                return found
+    return None
 
 
 def validate_payload(
@@ -89,13 +107,20 @@ def validate_payload(
     model: Optional[Type[BaseModel]],
     payload: Any,
 ) -> None:
-    """Validate ``payload`` against ``model`` (no-op if ``model`` is ``None``)."""
+    """Validate ``payload`` against ``model`` (no-op if ``model`` is ``None``).
+
+    Validation is strict (``"false"`` is not a bool) and rejects NaN/inf floats.
+    The payload is checked, not rewritten; callers keep using their own dict.
+    """
     if model is None:
         return
     if not isinstance(payload, dict):
         raise AgentSchemaError(
             role, direction, f"expected mapping, got {type(payload).__name__}"
         )
+    bad = _find_non_finite(payload)
+    if bad:
+        raise AgentSchemaError(role, direction, f"non-finite float (NaN/inf) at {bad}")
     try:
         model.model_validate(payload)
     except ValidationError as exc:

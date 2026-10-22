@@ -63,6 +63,7 @@ class DeepResearcherComplete(BaseModel):
     market_id: str
     estimated_p: float
     markdown: str
+    error: str | None = None
 
     @field_validator("estimated_p")
     @classmethod
@@ -72,24 +73,40 @@ class DeepResearcherComplete(BaseModel):
         return value
 
 
-def parse_deep_researcher_json(parsed: dict[str, Any]) -> DeepResearcherOutput:
-    """Validate a Deep Researcher state-machine payload by ``status``."""
-    status = parsed.get("status")
-    if status == "needs_more_data":
-        return DeepResearcherNeedsMore.model_validate(parsed)
-    if status == "complete":
-        return DeepResearcherComplete.model_validate(parsed)
-    raise ValidationError.from_exception_data(
+def _validation_error(message: str, loc: tuple[str, ...], value: Any) -> ValidationError:
+    return ValidationError.from_exception_data(
         "DeepResearcherOutput",
         [
             {
-                "type": "literal_error",
-                "loc": ("status",),
-                "msg": f"unexpected status {status!r}",
-                "input": status,
+                "type": "value_error",
+                "loc": loc,
+                "msg": message,
+                "input": value,
+                "ctx": {"error": ValueError(message)},
             }
         ],
     )
+
+
+def parse_deep_researcher_json(parsed: dict[str, Any]) -> DeepResearcherOutput:
+    """Validate a Deep Researcher state-machine payload by ``status``.
+
+    A non-empty ``error`` is surfaced (as a :class:`ValidationError` carrying the
+    agent's message) before ``estimated_p`` / ``markdown`` are validated.
+    """
+    err = parsed.get("error")
+    if err is not None and str(err).strip():
+        raise _validation_error(
+            f"deep researcher reported error: {str(err).strip()}", ("error",), err
+        )
+    status = parsed.get("status")
+    if status == "needs_more_data":
+        return DeepResearcherNeedsMore.model_validate(
+            {k: v for k, v in parsed.items() if k != "error"}
+        )
+    if status == "complete":
+        return DeepResearcherComplete.model_validate(parsed)
+    raise _validation_error(f"unexpected status {status!r}", ("status",), status)
 
 
 __all__ = [

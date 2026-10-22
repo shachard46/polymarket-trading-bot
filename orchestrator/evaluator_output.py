@@ -22,7 +22,13 @@ _SKILL_PATH = _ROOT / "skills/evaluate-market-metrics/evaluate_market_metrics.py
 _fetch_impl: Callable[[str, dict[str, Any] | None], dict[str, Any]] | None = None
 
 
+_evaluate_fn: Callable[..., Any] | None = None
+
+
 def _load_evaluate_market_metrics():
+    global _evaluate_fn
+    if _evaluate_fn is not None:
+        return _evaluate_fn
     spec = importlib.util.spec_from_file_location(
         "evaluate_market_metrics",
         _SKILL_PATH,
@@ -31,7 +37,8 @@ def _load_evaluate_market_metrics():
         raise ImportError(f"cannot load skill from {_SKILL_PATH}")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    return mod.evaluate_market_metrics
+    _evaluate_fn = mod.evaluate_market_metrics
+    return _evaluate_fn
 
 
 def fetch_signal_bundle(
@@ -76,6 +83,7 @@ def attach_signal_bundle(
     if overrides is not None and not isinstance(overrides, dict):
         overrides = None
 
+    out = dict(parsed)
     try:
         bundle = fetch_signal_bundle(market_id, overrides)
     except Exception as exc:
@@ -86,8 +94,31 @@ def attach_signal_bundle(
             exc,
         )
         bundle = {"market_id": market_id, "error": str(exc)}
+        out["passed"] = False
+        out["error"] = f"signal_bundle fetch failed: {exc}"
+        out["details"] = f"{out.get('details') or ''} [signal_bundle fetch failed: {exc}]".strip()
+        out["signal_bundle"] = bundle
+        return out
 
-    return {**parsed, "signal_bundle": bundle}
+    veto = bundle.get("hard_veto") if isinstance(bundle, dict) else None
+    if isinstance(veto, dict) and veto.get("passed") is not None:
+        v_passed = bool(veto["passed"])
+        v_trigger = veto.get("trigger")
+        if out.get("passed") != v_passed or out.get("trigger") != v_trigger:
+            log.warning(
+                "[%s] overriding agent decision for %s to match hard_veto=%r "
+                "(agent passed=%r trigger=%r)",
+                role,
+                market_id,
+                veto,
+                out.get("passed"),
+                out.get("trigger"),
+            )
+        out["passed"] = v_passed
+        out["trigger"] = v_trigger
+
+    out["signal_bundle"] = bundle
+    return out
 
 
 __all__ = [

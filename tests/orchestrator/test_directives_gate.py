@@ -28,7 +28,10 @@ Body.
 
 ## Filter Weightings
 
-Body.
+```yaml
+filters:
+  min_liquidity: 1000
+```
 
 ## Risk Constraints
 

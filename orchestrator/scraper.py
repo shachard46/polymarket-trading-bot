@@ -18,6 +18,7 @@ import json
 import logging
 import math
 import os
+import re
 import shutil
 import subprocess
 from datetime import datetime, timezone
@@ -49,10 +50,13 @@ def _timeout_sec() -> float:
     if not raw:
         return _DEFAULT_TIMEOUT_SEC
     try:
-        return float(raw)
+        value = float(raw)
     except ValueError:
+        value = float("nan")
+    if not (math.isfinite(value) and value > 0.0):
         log.warning("Invalid POLY_SCAN_TIMEOUT_SEC=%r; using default", raw)
         return _DEFAULT_TIMEOUT_SEC
+    return value
 
 
 def _ingest_limit() -> int:
@@ -92,8 +96,8 @@ def _run_poly_scan(*args: str) -> Any | None:
     except subprocess.TimeoutExpired:
         log.warning("poly-scan timed out: %s", " ".join(cmd))
         return None
-    except OSError as exc:
-        log.warning("poly-scan failed to launch (%s): %s", exc, " ".join(cmd))
+    except (OSError, UnicodeDecodeError) as exc:
+        log.warning("poly-scan failed to launch/decode (%s): %s", exc, " ".join(cmd))
         return None
 
     if completed.returncode != 0:
@@ -107,7 +111,7 @@ def _run_poly_scan(*args: str) -> Any | None:
 
     try:
         return json.loads(completed.stdout)
-    except json.JSONDecodeError as exc:
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         log.warning("poly-scan returned non-JSON for %s: %s", " ".join(cmd), exc)
         return None
 
@@ -150,8 +154,10 @@ class MarketRow(BaseModel):
     market_data: dict[str, Any] = Field(default_factory=dict)
 
 
-# Fields executioner / deep researcher use for implied price (q).
-Q_SOURCE_FIELDS: tuple[str, ...] = ("midpoint", "last_trade_price", "yes_price")
+# Fields executioner / deep researcher use for implied price (q), in priority order.
+Q_SOURCE_FIELDS: tuple[str, ...] = ("yes_price", "last_trade_price", "midpoint")
+
+_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
 
 # Minimum snapshot fields required before spawning executioner (phase 4).
 _EXECUTION_REQUIRED_FIELDS: tuple[str, ...] = Q_SOURCE_FIELDS + ("volume", "liquidity")
@@ -235,11 +241,30 @@ def _market_snapshot_from_scraper_row(row: dict[str, Any]) -> dict[str, Any]:
     return market_data
 
 
+def _is_unit_price(value: Any) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(float(value))
+        and 0.0 < float(value) < 1.0
+    )
+
+
+def select_q(row: dict[str, Any] | None) -> float | None:
+    """Implied price q: first of yes_price, last_trade_price, midpoint strictly in (0, 1)."""
+    data = row or {}
+    for key in Q_SOURCE_FIELDS:
+        value = data.get(key)
+        if _is_unit_price(value):
+            return float(value)
+    return None
+
+
 def _missing_pricing_error(data: dict[str, Any]) -> str | None:
-    if any(key in data for key in Q_SOURCE_FIELDS):
+    if select_q(data) is not None:
         return None
     return (
-        "missing market pricing data: no midpoint, last_trade_price, or yes_price "
+        "missing market pricing data: no yes_price, last_trade_price, or midpoint in (0, 1) "
         "(run poly-scan scan --market <id> so latest_change is populated)"
     )
 
@@ -253,6 +278,7 @@ def _is_positive_number(value: Any) -> bool:
     return (
         isinstance(value, (int, float))
         and not isinstance(value, bool)
+        and math.isfinite(float(value))
         and float(value) > 0.0
     )
 
@@ -285,7 +311,12 @@ def _market_row_from_scraper(row: dict[str, Any]) -> MarketRow | None:
     Returns ``None`` if the row lacks a usable ``market_id`` or ``question``.
     """
     market_id = row.get("market_id")
+    if isinstance(market_id, int) and not isinstance(market_id, bool):
+        market_id = str(market_id)
     if not isinstance(market_id, str) or not market_id:
+        return None
+    if not _SAFE_ID_RE.match(market_id) or ".." in market_id:
+        log.warning("Dropping market with unsafe market_id %r", market_id)
         return None
 
     title = row.get("question") or row.get("market_title") or ""
@@ -359,6 +390,11 @@ def fetch_target_markets() -> list[MarketRow]:
         row = _market_row_from_scraper(raw)
         if row is not None:
             rows.append(row)
+        else:
+            log.warning(
+                "Dropped scraper row (market_id=%r): missing/unsafe id or title",
+                raw.get("market_id"),
+            )
     log.info("Ingested %d candidate markets", len(rows))
     return rows
 

@@ -30,9 +30,15 @@ def split_yaml_frontmatter_markdown(markdown: str) -> tuple[dict[str, Any], str]
     match = _FRONTMATTER_RE.match(markdown.strip())
     if not match:
         raise ValueError("missing or invalid YAML frontmatter")
-    fm_raw = yaml.safe_load(match.group("fm"))
+    try:
+        fm_raw = yaml.safe_load(match.group("fm"))
+    except yaml.YAMLError as e:
+        raise ValueError(f"invalid YAML frontmatter: {e}") from e
     if not isinstance(fm_raw, dict):
         raise ValueError("frontmatter must parse to a mapping")
+    # YAML 1.1 may read ids like 0x1f / 123 as ints; ids are always strings.
+    if fm_raw.get("market_id") is not None and not isinstance(fm_raw["market_id"], str):
+        fm_raw["market_id"] = str(fm_raw["market_id"])
     return fm_raw, match.group("body").strip()
 
 
@@ -106,9 +112,6 @@ def _validate_deep_researcher_body(body: str) -> None:
 def parse_deep_researcher(markdown: str) -> ParsedResearch:
     """Parse a complete Deep Researcher response into :class:`ParsedResearch`."""
     frontmatter, body = parse_deep_researcher_frontmatter(markdown)
-    _validate_deep_researcher_body(body)
-    p = _parse_estimated_p(frontmatter)
-
     market_id = frontmatter.get("market_id")
     if market_id is not None:
         market_id = str(market_id)
@@ -116,6 +119,19 @@ def parse_deep_researcher(markdown: str) -> ParsedResearch:
     err = frontmatter.get("error")
     if err is not None:
         err = str(err).strip() or None
+
+    if err:
+        # Agent-reported failure: surface it before validating body / estimated_p.
+        return ParsedResearch(
+            market_id=market_id,
+            estimated_p=0.0,
+            error=err,
+            body=body,
+            frontmatter=frontmatter,
+        )
+
+    _validate_deep_researcher_body(body)
+    p = _parse_estimated_p(frontmatter)
 
     return ParsedResearch(
         market_id=market_id,

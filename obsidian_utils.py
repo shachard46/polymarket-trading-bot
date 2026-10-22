@@ -11,7 +11,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import re
 import shutil
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -51,6 +54,38 @@ class VaultWriteError(Exception):
         super().__init__(
             f"Vault write aborted for market '{market_id}': {cause}"
         )
+
+
+_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
+
+
+def _check_market_id(market_id: str) -> str:
+    """Reject market ids that are unsafe to use as filename stems."""
+    if (
+        not isinstance(market_id, str)
+        or not _SAFE_ID_RE.match(market_id)
+        or ".." in market_id
+    ):
+        raise ValueError(f"unsafe market_id for use in a filename: {market_id!r}")
+    return market_id
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write ``text`` to ``path`` via a same-dir temp file, fsync, and ``os.replace``."""
+    path = Path(path)
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +202,13 @@ class DirectivesPayload(BaseModel):
             raise ValueError(
                 f"new_directives_markdown is missing required headers: {missing!r}"
             )
+        from orchestrator.directives import parse_filters_block
+
+        if parse_filters_block(value) is None:
+            raise ValueError(
+                "new_directives_markdown '## Filter Weightings' section must contain "
+                "a parseable ```yaml block with a 'filters:' mapping"
+            )
         return value
 
 
@@ -197,7 +239,10 @@ def _dump_frontmatter(data: dict, body: str = "") -> str:
 
         <body>
     """
-    fm = yaml.dump(data, default_flow_style=False, allow_unicode=True).rstrip()
+    normalised = json.loads(json.dumps(data, default=str))
+    fm = yaml.safe_dump(
+        normalised, default_flow_style=False, allow_unicode=True, sort_keys=True
+    ).rstrip()
     if body:
         return f"---\n{fm}\n---\n\n{body}"
     return f"---\n{fm}\n---\n"
@@ -327,7 +372,7 @@ class ObsidianManager:
         """
         target = self._base / relative_path
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        _atomic_write_text(target, content)
         return target
 
     # ------------------------------------------------------------------
@@ -358,15 +403,14 @@ class ObsidianManager:
         VaultWriteError
             If ``payload`` fails ``FilterLogPayload`` validation.
         """
+        _check_market_id(market_id)
         try:
             validated = FilterLogPayload.model_validate(payload)
         except ValidationError as exc:
             raise VaultWriteError(market_id, exc) from exc
 
         dest = self._dirs["filters"] / f"{market_id}.md"
-        dest.write_text(
-            _dump_frontmatter(validated.model_dump()), encoding="utf-8"
-        )
+        _atomic_write_text(dest, _dump_frontmatter(validated.model_dump()))
         return dest
 
     def is_market_inactive(self, market_id: str, *, dir_key: str = "filters") -> bool:
@@ -426,15 +470,14 @@ class ObsidianManager:
         VaultWriteError
             If ``payload`` fails ``ResearchFrontmatter`` validation.
         """
+        _check_market_id(market_id)
         try:
             validated = ResearchFrontmatter.model_validate(payload)
         except ValidationError as exc:
             raise VaultWriteError(market_id, exc) from exc
 
         dest = self._dirs["active"] / f"{market_id}.md"
-        dest.write_text(
-            _dump_frontmatter(validated.model_dump(), body), encoding="utf-8"
-        )
+        _atomic_write_text(dest, _dump_frontmatter(validated.model_dump(), body))
         return dest
 
     def write_trade_log(self, market_id: str, payload: dict) -> Path:
@@ -459,15 +502,14 @@ class ObsidianManager:
         VaultWriteError
             If ``payload`` fails ``TradeLogPayload`` validation.
         """
+        _check_market_id(market_id)
         try:
             validated = TradeLogPayload.model_validate(payload)
         except ValidationError as exc:
             raise VaultWriteError(market_id, exc) from exc
 
         dest = self._dirs["trades"] / f"{market_id}.json"
-        dest.write_text(
-            json.dumps(validated.model_dump(), indent=2), encoding="utf-8"
-        )
+        _atomic_write_text(dest, json.dumps(validated.model_dump(), indent=2))
         return dest
 
     def append_post_mortem(self, market_id: str, payload: dict) -> Path:
@@ -496,6 +538,7 @@ class ObsidianManager:
         FileNotFoundError
             If no report file exists in ``04_Post_Mortems/`` for this market.
         """
+        _check_market_id(market_id)
         try:
             validated = PostMortemPayload.model_validate(payload)
         except ValidationError as exc:
@@ -509,19 +552,20 @@ class ObsidianManager:
             )
 
         content = dest.read_text(encoding="utf-8")
-        header = "## Post-Mortem"
-        if header in content:
-            insert_at = content.index(header) + len(header)
-            content = (
-                content[:insert_at]
-                + "\n\n"
-                + validated.post_mortem_analysis
-                + content[insert_at:]
-            )
+        analysis = validated.post_mortem_analysis.strip()
+        header_re = re.compile(r"^## Post-Mortem[ \t]*$", re.MULTILINE)
+        match = header_re.search(content)
+        if match:
+            # Section runs to the next level-2 header (or EOF); replace its content.
+            next_h = re.compile(r"^## ", re.MULTILINE).search(content, match.end())
+            tail = content[next_h.start():] if next_h else ""
+            content = content[: match.end()] + "\n\n" + analysis + "\n"
+            if tail:
+                content += "\n" + tail
         else:
-            content += f"\n\n{header}\n\n{validated.post_mortem_analysis}\n"
+            content = content.rstrip("\n") + f"\n\n## Post-Mortem\n\n{analysis}\n"
 
-        dest.write_text(content, encoding="utf-8")
+        _atomic_write_text(dest, content)
         return dest
 
     def write_directives(self, payload: dict) -> Path:
@@ -552,7 +596,9 @@ class ObsidianManager:
             raise VaultWriteError("__system__", exc) from exc
 
         dest = self._dirs["system"] / _DIRECTIVES_FILENAME
-        dest.write_text(validated.new_directives_markdown, encoding="utf-8")
+        if dest.exists():
+            shutil.copy2(dest, dest.with_name(dest.name + ".bak"))
+        _atomic_write_text(dest, validated.new_directives_markdown)
         return dest
 
     # ------------------------------------------------------------------
@@ -563,6 +609,7 @@ class ObsidianManager:
         """Return the on-disk path for ``market_id`` in ``dir_key``, if it exists."""
         if dir_key not in self._dirs:
             raise KeyError(f"Unknown dir_key {dir_key!r}")
+        _check_market_id(market_id)
         primary_ext = _DIR_EXTENSIONS.get(dir_key, ".md")
         fallback_ext = ".json" if primary_ext == ".md" else ".md"
         for ext in (primary_ext, fallback_ext):
@@ -616,7 +663,7 @@ class ObsidianManager:
         except ValueError:
             return None
         merged = {**fm, **updates}
-        path.write_text(_dump_frontmatter(merged, body), encoding="utf-8")
+        _atomic_write_text(path, _dump_frontmatter(merged, body))
         return path
 
     def patch_json(
@@ -636,7 +683,7 @@ class ObsidianManager:
         if not isinstance(raw, dict):
             return None
         merged = {**raw, **updates}
-        path.write_text(json.dumps(merged, indent=2), encoding="utf-8")
+        _atomic_write_text(path, json.dumps(merged, indent=2))
         return path
 
     def strip_keys(
@@ -663,7 +710,7 @@ class ObsidianManager:
                 return None
             for key in keys:
                 fm.pop(key, None)
-            path.write_text(_dump_frontmatter(fm, body), encoding="utf-8")
+            _atomic_write_text(path, _dump_frontmatter(fm, body))
             return path
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
@@ -673,7 +720,7 @@ class ObsidianManager:
             return None
         for key in keys:
             raw.pop(key, None)
-        path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+        _atomic_write_text(path, json.dumps(raw, indent=2))
         return path
 
     # ------------------------------------------------------------------
@@ -694,6 +741,7 @@ class ObsidianManager:
         return directory
 
     def _research_bundle_path(self, market_id: str) -> Path:
+        _check_market_id(market_id)
         return self._research_bundles_dir / f"{market_id}.json"
 
     def read_research_bundle(self, market_id: str) -> list[dict[str, Any]] | None:
@@ -733,6 +781,14 @@ class ObsidianManager:
             prior = self.read_research_bundle(market_id)
             if prior:
                 existing = prior
+            elif prior is None:
+                corrupt = path.with_name(path.name + ".corrupt")
+                log.error(
+                    "Research bundle %s is unreadable or malformed; backing up to %s",
+                    path,
+                    corrupt,
+                )
+                shutil.copy2(path, corrupt)
 
         merged = _merge_research_bundle_queries(existing, bundle)
         envelope = {
@@ -740,7 +796,7 @@ class ObsidianManager:
             "fetched_at": datetime.now(tz=timezone.utc).isoformat(),
             "queries": merged,
         }
-        path.write_text(json.dumps(envelope, indent=2), encoding="utf-8")
+        _atomic_write_text(path, json.dumps(envelope, indent=2))
         return path
 
     def active_research_path(self, market_id: str) -> Path:
@@ -847,6 +903,7 @@ class ObsidianManager:
             If no file matching ``{market_id}.md`` or ``{market_id}.json``
             exists in the source directory.
         """
+        _check_market_id(market_id)
         if src_dir_key not in self._dirs:
             raise KeyError(
                 f"Unknown src_dir_key '{src_dir_key}'. "
@@ -873,6 +930,10 @@ class ObsidianManager:
             )
 
         dst_file = dst_dir / src_file.name
+        if dst_file.exists():
+            raise FileExistsError(
+                f"Refusing to overwrite existing destination for market '{market_id}': {dst_file}"
+            )
         shutil.move(str(src_file), str(dst_file))
         return dst_file
 
@@ -912,7 +973,7 @@ class ObsidianManager:
             return False
 
         seed_content = _build_seed_directives()
-        directives_path.write_text(seed_content, encoding="utf-8")
+        _atomic_write_text(directives_path, seed_content)
         return True
 
 
