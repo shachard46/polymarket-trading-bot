@@ -26,6 +26,7 @@ class ExecutePolymarketTradeInput(BaseModel):
     market_id: str = Field(min_length=1)
     outcome: Literal["YES", "NO"]
     amount: float = Field(gt=0, le=MAX_ORDER_USD)
+    price: float | None = Field(default=None, gt=0, lt=1)  # limit/reference price of the chosen side
 
 
 class ExecutePolymarketTradeOutput(BaseModel):
@@ -41,12 +42,14 @@ def execute_polymarket_trade(
     market_id: str,
     outcome: str,
     amount: float,
+    price: float | None = None,
 ) -> ExecutePolymarketTradeOutput:
     try:
         args = ExecutePolymarketTradeInput(
             market_id=market_id.strip() if isinstance(market_id, str) else market_id,
             outcome=outcome,
             amount=amount,
+            price=price,
         )
     except ValidationError as exc:
         details = "; ".join(
@@ -59,15 +62,16 @@ def execute_polymarket_trade(
             error=f"invalid input: {details}",
         )
 
-    market_id, outcome, amount = args.market_id, args.outcome, args.amount
+    market_id, outcome, amount, price = args.market_id, args.outcome, args.amount, args.price
     try:
         if PAPER_TRADE_MODE:
             tx_hash = f"PAPER-{uuid.uuid4().hex[:16].upper()}"
             logger.info(
-                "PAPER TRADE: %s on %s for $%.2f [tx=%s]",
+                "PAPER TRADE: %s on %s for $%.2f @ %s [tx=%s]",
                 outcome,
                 market_id,
                 amount,
+                price,
                 tx_hash,
             )
             return ExecutePolymarketTradeOutput(

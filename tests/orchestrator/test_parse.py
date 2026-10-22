@@ -136,9 +136,29 @@ def test_parse_double_encoded_json_string():
     assert parsed["market_id"].startswith("0x")
 
 
+def _legacy_markdown(market_id: str, p: float) -> str:
+    """Frontmatter carrying the full contract (the Hub no longer invents missing fields)."""
+    md = _stub_deep_researcher_markdown(market_id, estimated_p=p)
+    extra = (
+        "confidence: medium\nresolution_checklist: [a]\nkey_assumptions: [b]\n"
+        "as_of: '2026-10-22'\n"
+    )
+    return md.replace("error: null\n", extra + "error: null\n")
+
+
+def test_legacy_markdown_without_contract_fields_is_rejected():
+    from pydantic import ValidationError
+
+    coerced = coerce_deep_researcher_state_machine(
+        _stub_deep_researcher_markdown("0xabc", estimated_p=0.42), {"market_id": "0xabc"}
+    )
+    with pytest.raises(ValidationError):
+        parse_deep_researcher_json(coerced)
+
+
 def test_coerce_deep_researcher_state_machine_from_legacy_markdown():
     payload = {"market_id": "0xabc"}
-    markdown = _stub_deep_researcher_markdown("0xabc", estimated_p=0.42)
+    markdown = _legacy_markdown("0xabc", 0.42)
     coerced = coerce_deep_researcher_state_machine(markdown, payload)
     out = parse_deep_researcher_json(coerced)
     assert isinstance(out, DeepResearcherComplete)
@@ -152,7 +172,7 @@ def test_coerce_deep_researcher_state_machine_needs_more_unchanged():
 
 
 def test_coerce_deep_researcher_state_machine_markdown_dict():
-    markdown = _stub_deep_researcher_markdown("0xabc", estimated_p=0.55)
+    markdown = _legacy_markdown("0xabc", 0.55)
     coerced = coerce_deep_researcher_state_machine({"markdown": markdown}, {"market_id": "0xabc"})
     out = parse_deep_researcher_json(coerced)
     assert isinstance(out, DeepResearcherComplete)

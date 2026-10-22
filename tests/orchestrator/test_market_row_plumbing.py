@@ -142,18 +142,11 @@ def test_market_row_drops_rows_without_title():
 
 def test_phase4_fail_fast_on_empty_market_data(vault):
     vault.cold_start_protocol()
-    spawned: list[str] = []
-
-    def runner(role: str, payload: dict[str, Any]) -> dict[str, Any]:
-        spawned.append(role)
-        raise AssertionError("executioner should not be spawned")
-
     phases.phase4_execution(
         vault,
         [{"market_id": "0xempty", "p_value": 0.5, "market_data": {}}],
-        runner=runner,
     )
-    assert spawned == []
+    assert not vault.has_execution_intent("0xempty")
     trade = vault.read_trade_log_dict("0xempty")
     assert trade is None
 
@@ -239,11 +232,11 @@ def test_phase3_passes_real_title_and_description_to_briefer(monkeypatch, vault)
     assert len(out) == 1
 
     brief_payload = captured["briefer"][0]
-    assert brief_payload["market_title"] == "Real title"
-    assert brief_payload["market_description"] == "Real desc."
+    assert brief_payload["title"] == "Real title"
+    assert brief_payload["description"] == "Real desc."
 
     dr_payload = captured["deep_researcher"][0]
-    assert dr_payload["market_data"]["yes_price"] == 0.42
+    assert dr_payload["title"] == "Real title"
     assert isinstance(dr_payload["research_bundle"], list)
 
     forwarded = out[0]

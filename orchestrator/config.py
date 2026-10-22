@@ -40,18 +40,20 @@ GATE_BUDGET_ENV = "OPENCLAW_GATE_BUDGET"
 DEFAULT_GATE_BUDGET = 15
 TRIAGE_BUDGET_ENV = "OPENCLAW_TRIAGE_BUDGET"
 DEFAULT_TRIAGE_BUDGET = 8
-QUICK_RESEARCH_BUDGET_ENV = "OPENCLAW_QUICK_RESEARCH_BUDGET"  # used in Wave 3
+QUICK_RESEARCH_BUDGET_ENV = "OPENCLAW_QUICK_RESEARCH_BUDGET"
 DEFAULT_QUICK_RESEARCH_BUDGET = 8
-FULL_RESEARCH_BUDGET_ENV = "OPENCLAW_FULL_RESEARCH_BUDGET"  # used in Wave 3
+FULL_RESEARCH_BUDGET_ENV = "OPENCLAW_FULL_RESEARCH_BUDGET"
 DEFAULT_FULL_RESEARCH_BUDGET = 3
 
-# Max completed edge-triggered Deep Researcher refresh cycles per market (initial research is not counted).
-EDGE_RESEARCH_REFRESH_MAX_ENV = "OPENCLAW_EDGE_RESEARCH_REFRESH_MAX"
-DEFAULT_EDGE_RESEARCH_REFRESH_MAX = 3
+# Phase 3 concurrency / wall-clock (FULL stage runs markets in parallel).
+RESEARCH_WORKERS_ENV = "OPENCLAW_RESEARCH_WORKERS"
+DEFAULT_RESEARCH_WORKERS = 3
+RESEARCH_TICK_BUDGET_ENV = "OPENCLAW_RESEARCH_TICK_BUDGET_SEC"
+DEFAULT_RESEARCH_TICK_BUDGET_SEC = 1800
 
-# Phase 3 Forensic Pipeline — iterative research loop
+# Phase 3 Forensic Pipeline — FULL stage: one round + one follow-up, then forced synthesis.
 MAX_FORMAT_RETRIES = 2
-MAX_RESEARCH_ITERATIONS = 4
+MAX_RESEARCH_ITERATIONS = 2
 RESEARCH_DATA_MAX_CHARS = 4000
 
 FORCED_SYNTHESIS_OVERRIDE = (
@@ -92,24 +94,23 @@ def triage_budget() -> int:
 
 
 def quick_research_budget() -> int:
-    """Max markets given a quick research pass per tick (default 8; Wave 3)."""
+    """Max markets given a quick research pass per tick (default 8)."""
     return _int_env(QUICK_RESEARCH_BUDGET_ENV, DEFAULT_QUICK_RESEARCH_BUDGET)
 
 
 def full_research_budget() -> int:
-    """Max markets given full research per tick (default 3; Wave 3)."""
+    """Max markets given full research per tick (default 3)."""
     return _int_env(FULL_RESEARCH_BUDGET_ENV, DEFAULT_FULL_RESEARCH_BUDGET)
 
 
-def max_edge_research_refreshes() -> int:
-    """Cap edge-disqualification research refresh cycles per market (default 3)."""
-    raw = os.environ.get(EDGE_RESEARCH_REFRESH_MAX_ENV)
-    if not raw:
-        return DEFAULT_EDGE_RESEARCH_REFRESH_MAX
-    try:
-        return max(0, int(raw))
-    except ValueError:
-        return DEFAULT_EDGE_RESEARCH_REFRESH_MAX
+def research_workers() -> int:
+    """Concurrent FULL-stage markets per tick (default 3)."""
+    return max(1, _int_env(RESEARCH_WORKERS_ENV, DEFAULT_RESEARCH_WORKERS))
+
+
+def research_tick_budget_sec() -> int:
+    """Wall-clock seconds after which Phase 3 starts no new FULL-stage market (default 1800)."""
+    return _int_env(RESEARCH_TICK_BUDGET_ENV, DEFAULT_RESEARCH_TICK_BUDGET_SEC)
 
 
 def runner_mode() -> str:
@@ -202,8 +203,10 @@ __all__ = [
     "triage_budget",
     "quick_research_budget",
     "full_research_budget",
-    "EDGE_RESEARCH_REFRESH_MAX_ENV",
-    "max_edge_research_refreshes",
+    "RESEARCH_WORKERS_ENV",
+    "RESEARCH_TICK_BUDGET_ENV",
+    "research_workers",
+    "research_tick_budget_sec",
     "MAX_FORMAT_RETRIES",
     "MAX_RESEARCH_ITERATIONS",
     "RESEARCH_DATA_MAX_CHARS",

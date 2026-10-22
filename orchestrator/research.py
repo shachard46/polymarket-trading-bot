@@ -20,6 +20,8 @@ class ParsedResearch:
     error: str | None
     body: str
     frontmatter: dict[str, Any]
+    p_low: float | None = None
+    p_high: float | None = None
 
 
 def split_yaml_frontmatter_markdown(markdown: str) -> tuple[dict[str, Any], str]:
@@ -80,6 +82,21 @@ def _parse_estimated_p(frontmatter: dict[str, Any]) -> float:
     return p
 
 
+def _optional_prob(frontmatter: dict[str, Any], key: str) -> float | None:
+    raw = frontmatter.get(key)
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        raise ValueError(f"'{key}' must be numeric, got {raw!r}")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"'{key}' is not numeric: {raw!r}") from exc
+    if not (0.0 <= value <= 1.0):
+        raise ValueError(f"'{key}' must be in [0.0, 1.0], got {value}")
+    return value
+
+
 def _validate_deep_researcher_body(body: str) -> None:
     """Require Bull / Bear / Post-Mortem sections in order; Post-Mortem body empty."""
     bull_h = "## Bull Thesis"
@@ -132,6 +149,12 @@ def parse_deep_researcher(markdown: str) -> ParsedResearch:
 
     _validate_deep_researcher_body(body)
     p = _parse_estimated_p(frontmatter)
+    p_low = _optional_prob(frontmatter, "p_low")
+    p_high = _optional_prob(frontmatter, "p_high")
+    if p_low is not None and p_low > p + 1e-9:
+        raise ValueError(f"'p_low' {p_low} must be <= 'estimated_p' {p}")
+    if p_high is not None and p_high < p - 1e-9:
+        raise ValueError(f"'p_high' {p_high} must be >= 'estimated_p' {p}")
 
     return ParsedResearch(
         market_id=market_id,
@@ -139,6 +162,8 @@ def parse_deep_researcher(markdown: str) -> ParsedResearch:
         error=err,
         body=body,
         frontmatter=frontmatter,
+        p_low=p_low,
+        p_high=p_high,
     )
 
 

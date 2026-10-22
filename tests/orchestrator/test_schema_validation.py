@@ -106,30 +106,6 @@ def test_triage_payload_is_price_blind():
     assert "yes_price" not in payload and "q" not in payload
 
 
-def test_spawn_agent_executioner_requires_paper_trade_mode():
-    with pytest.raises(AgentSchemaError):
-        spawn_agent(
-            "executioner",
-            {"market_id": "m", "p_value": 0.5, "q": 0.5, "allocation": {}, "market_data": {}},
-        )
-
-
-def test_spawn_agent_executioner_accepts_paper_mode():
-    out = spawn_agent(
-        "executioner",
-        {
-            "market_id": "m",
-            "p_value": 0.5,
-            "q": 0.5,
-            "allocation": {"allocation_usd": 0.0, "score": 0.0, "below_edge_threshold": True, "error": None},
-            "market_data": {},
-            "paper_trade_mode": True,
-        },
-    )
-    assert out["market_id"] == "m"
-    assert out["executed"] is False
-
-
 def test_spawn_agent_overseer_accepts_valid_payload():
     out = spawn_agent(
         "overseer",
@@ -190,8 +166,12 @@ def test_build_live_prompt_lists_briefer_schema_keys():
         spec,
         {
             "market_id": "0xabc",
-            "market_title": "Title",
-            "market_description": "",
+            "title": "Title",
+            "description": "",
+            "resolution_source": None,
+            "end_date": None,
+            "category": None,
+            "today": "2026-10-22",
         },
         agent_id="polymarket-briefer",
     )
@@ -233,9 +213,12 @@ def test_spawn_agent_briefer_rejects_evaluator_shape(monkeypatch):
             "briefer",
             {
                 "market_id": "0xabc",
-                "market_title": "Title",
-                "market_description": "",
-                "planning_context": None,
+                "title": "Title",
+                "description": "",
+                "resolution_source": None,
+                "end_date": None,
+                "category": None,
+                "today": "2026-10-22",
             },
         )
     msg = str(exc_info.value)
@@ -247,9 +230,12 @@ def test_spawn_agent_briefer_accepts_valid_payload():
         "briefer",
         {
             "market_id": "0xabc",
-            "market_title": "Will X happen?",
-            "market_description": "",
-            "planning_context": None,
+            "title": "Will X happen?",
+            "description": "",
+            "resolution_source": None,
+            "end_date": None,
+            "category": None,
+            "today": "2026-10-22",
         },
     )
     assert out["market_id"] == "0xabc"

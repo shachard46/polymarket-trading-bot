@@ -172,7 +172,7 @@ def _spawn_stub_error(role: str, spec: dict[str, Any], payload: dict[str, Any]) 
         return (
             "---\n"
             f'market_id: "{market_id}"\n'
-            "estimated_p: 0.5\n"
+            f"estimated_p: {STUB_ESTIMATED_P}\n"
             'error: "stub_error mode"\n'
             "---\n\n"
             "## Bull Thesis\n\n(stub)\n\n## Bear Thesis\n\n(stub)\n\n## Post-Mortem\n"
@@ -180,9 +180,7 @@ def _spawn_stub_error(role: str, spec: dict[str, Any], payload: dict[str, Any]) 
     if spec.get("output_is_state_machine"):
         market_id = payload.get("market_id", "stub")
         return {
-            "status": "complete",
-            "market_id": market_id,
-            "estimated_p": 0.5,
+            **_deep_researcher_stub(payload),
             "markdown": _stub_deep_researcher_markdown(market_id, error="stub_error mode"),
         }
     builder = STUB_RESPONSES.get(role)
@@ -211,17 +209,31 @@ def _triage_stub(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# Stub estimate: far enough from a q of ~0.26 to escalate, pass the misread guard and
+# clear the shrunk, tax-aware Kelly edge (so the stub pipeline reaches a paper trade),
+# yet inside the range for a q of ~0.55 (quick-stage ``no_divergence``).
+STUB_ESTIMATED_P = 0.55
+STUB_P_LOW = 0.51
+STUB_P_HIGH = 0.59
+
+
 def _stub_deep_researcher_markdown(
     market_id: str,
     *,
-    estimated_p: float = 0.5,
+    estimated_p: float = STUB_ESTIMATED_P,
+    p_low: float | None = None,
+    p_high: float | None = None,
     error: str | None = None,
 ) -> str:
     err_yaml = "null" if error is None else f'"{error}"'
+    p_low = max(0.0, estimated_p - 0.08) if p_low is None else p_low
+    p_high = min(1.0, estimated_p + 0.08) if p_high is None else p_high
     return (
         "---\n"
         f'market_id: "{market_id}"\n'
         f"estimated_p: {estimated_p}\n"
+        f"p_low: {p_low}\n"
+        f"p_high: {p_high}\n"
         f"error: {err_yaml}\n"
         "---\n\n"
         "## Bull Thesis\n\n(stub bull thesis)\n\n"
@@ -231,42 +243,37 @@ def _stub_deep_researcher_markdown(
 
 
 def _briefer_stub(payload: dict[str, Any]) -> dict[str, Any]:
-    title = payload.get("market_title", "")
+    title = str(payload.get("title", "")).strip()
+    today = payload.get("today", "")
+    slots = (
+        "resolution criteria and polarity",
+        "reference class base rate",
+        "current state",
+        "strongest disconfirming evidence",
+    )
     return {
         "market_id": payload.get("market_id", "stub"),
-        "research_queries": [f"stub A-IQ query for {title}".strip()],
+        "research_queries": [f"stub {slot} for {title} as of {today}" for slot in slots],
         "error": None,
     }
 
 
 def _deep_researcher_stub(payload: dict[str, Any]) -> dict[str, Any]:
     market_id = payload.get("market_id", "stub")
-    if payload.get("system_override"):
-        return {
-            "status": "complete",
-            "market_id": market_id,
-            "estimated_p": 0.5,
-            "markdown": _stub_deep_researcher_markdown(market_id),
-        }
+    today = payload.get("today") or "2026-01-01"
     return {
         "status": "complete",
         "market_id": market_id,
-        "estimated_p": 0.5,
-        "markdown": _stub_deep_researcher_markdown(market_id),
-    }
-
-
-def _executioner_stub(payload: dict[str, Any]) -> dict[str, Any]:
-    # Echo the Hub-computed allocation (the real agent must use it verbatim).
-    alloc = payload.get("allocation") or {}
-    return {
-        "market_id": payload.get("market_id", "stub"),
-        "allocation_usd": float(alloc.get("allocation_usd") or 0.0),
-        "score": float(alloc.get("score") or 0.0),
-        "below_edge_threshold": alloc.get("below_edge_threshold", True),
-        "executed": False,
-        "transaction_hash": None,
-        "error": None,
+        "estimated_p": STUB_ESTIMATED_P,
+        "p_low": STUB_P_LOW,
+        "p_high": STUB_P_HIGH,
+        "confidence": "medium",
+        "resolution_checklist": ["stub: YES requires the titled event"],
+        "key_assumptions": ["stub assumption"],
+        "as_of": today,
+        "markdown": _stub_deep_researcher_markdown(
+            market_id, p_low=STUB_P_LOW, p_high=STUB_P_HIGH
+        ),
     }
 
 
@@ -302,7 +309,6 @@ STUB_RESPONSES: dict[str, StubBuilder] = {
     "triage": _triage_stub,
     "briefer": _briefer_stub,
     "deep_researcher": _deep_researcher_stub,
-    "executioner": _executioner_stub,
     "post_mortem_analyst": _post_mortem_stub,
     "overseer": _overseer_stub,
 }
@@ -325,14 +331,19 @@ def _spawn_live(role: str, spec: dict[str, Any], payload: dict[str, Any]) -> Any
 
 
 def _live_session_key(agent_id: str, role: str, payload: dict[str, Any]) -> str:
-    """Scope OpenClaw transcript state to one market per agent."""
+    """Scope OpenClaw transcript state to one market per agent (and per sample ``session_tag``)."""
     if role == "overseer":
         return f"agent:{agent_id}:orch-overseer-directives"
     raw_market_id = str(payload.get("market_id") or "global")
     safe_market_id = "".join(
         char if char.isalnum() or char in "._-" else "-" for char in raw_market_id
     )
-    return f"agent:{agent_id}:orch-{safe_market_id}"
+    key = f"agent:{agent_id}:orch-{safe_market_id}"
+    tag = payload.get("session_tag")
+    if tag:
+        # Independent Deep Researcher samples must not share a transcript.
+        key += "-" + "".join(c if c.isalnum() or c in "._-" else "-" for c in str(tag))
+    return key
 
 
 def _build_live_prompt(

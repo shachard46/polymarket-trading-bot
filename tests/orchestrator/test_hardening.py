@@ -201,7 +201,11 @@ def test_deep_researcher_error_and_unexpected_status():
     with pytest.raises(ValidationError):
         parse_deep_researcher_json({"status": "weird"})
     ok = parse_deep_researcher_json(
-        {"status": "complete", "market_id": "m", "estimated_p": 0.3, "markdown": "x", "error": None}
+        {
+            "status": "complete", "market_id": "m", "estimated_p": 0.3, "p_low": 0.2,
+            "p_high": 0.4, "confidence": "low", "resolution_checklist": [],
+            "key_assumptions": [], "as_of": "2026-10-22", "markdown": "x", "error": None,
+        }
     )
     assert ok.error is None
 

@@ -1,14 +1,17 @@
 id: briefer
 openclaw_agent_id: polymarket-briefer
-description: Surgical Query Planner — 1-3 unevadable A-IQ verification queries per market.
+description: Surgical Query Planner — exactly 4 fixed-slot A-IQ verification queries per market (price-blind).
 model: null
 tools:
   allow: []
 input_schema:
   market_id: string
-  market_title: string
-  market_description: string
-  planning_context: "string | null"
+  title: string
+  description: string
+  resolution_source: "string | null"
+  end_date: "string | null"
+  category: "string | null"
+  today: string
 output_schema:
   market_id: string
   research_queries: list[str]

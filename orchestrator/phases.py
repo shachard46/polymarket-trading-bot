@@ -13,11 +13,14 @@ A phase:
 from __future__ import annotations
 
 import importlib.util
-import json
 import logging
 import os
+import statistics
+import sys
+import threading
 import time
-from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Literal
@@ -28,16 +31,30 @@ from obsidian_utils import FilterLogPayload, ObsidianManager, VaultWriteError
 from config.trading_constants import (
     BANKROLL_USD,
     BELOW_EDGE_KEY,
+    RESEARCH_MAX_Q_GAP,
+    RESEARCH_MAX_QUICK_WIDTH,
+    RESEARCH_MAX_SAMPLE_SPREAD,
+    RESEARCH_MIN_TTL_HOURS,
+    RESEARCH_REFRESH_PRICE_MOVE,
+    RESEARCH_SAMPLES,
 )
 from orchestrator import gate, ledger, scraper, stats
-from orchestrator.config import PAPER_TRADE_MODE, gate_budget, top_qualitative_markets, triage_budget
+from orchestrator.config import (
+    PAPER_TRADE_MODE,
+    full_research_budget,
+    gate_budget,
+    quick_research_budget,
+    research_tick_budget_sec,
+    research_workers,
+    top_qualitative_markets,
+    triage_budget,
+)
 from orchestrator.state import (
+    InfraUnavailable,
     flag_inactive,
     is_error_free_active,
     is_inactive,
     market_quarantine,
-    read_edge_refresh_attempts,
-    read_edge_refresh_count,
     vault_write_or_flag,
 )
 from orchestrator.directives import extract_filter_directives
@@ -53,7 +70,8 @@ from orchestrator.agent_outputs import (
     DeepResearcherNeedsMore,
     parse_deep_researcher_json,
 )
-from orchestrator.aiq_bundle import fetch_research_bundle
+from orchestrator.aiq_bundle import fetch_research_bundle, fetch_research_bundle_cached
+from orchestrator.live_prompt import today_date
 from orchestrator.config import FORCED_SYNTHESIS_OVERRIDE, MAX_RESEARCH_ITERATIONS
 from orchestrator.parse import (
     AgentOutputParseError,
@@ -64,15 +82,14 @@ from orchestrator.parse import (
     preprocess_agent_text,
     run_agent_with_format_retries,
 )
-from orchestrator.research import parse_deep_researcher, split_yaml_frontmatter_markdown
+from orchestrator.research import parse_deep_researcher
 from orchestrator.signal_bundle import fetch_signal_bundle
 from orchestrator.runner import AgentRunner, spawn_agent
 from orchestrator.schema_validation import AgentSchemaError
 
 log = logging.getLogger(__name__)
 
-# TODO(wave3): re-add an "edge_refresh" kind when Phase 3 refresh is redone.
-Phase3Kind = Literal["initial"]
+Phase3Kind = Literal["initial", "refresh"]
 
 
 @dataclass(frozen=True)
@@ -99,6 +116,11 @@ _ALLOCATION_SKILL_PATH = (
     _ROOT / "skills/calculate-trade-allocation/calculate_trade_allocation.py"
 )
 _allocation_fn: Callable[..., Any] | None = None
+_TRADE_SKILL_PATH = (
+    _ROOT / "skills/execute-polymarket-trade/execute_polymarket_trade.py"
+)
+_trade_fn: Callable[..., Any] | None = None
+_ledger_lock = threading.Lock()  # FULL-stage markets append to one ledger file concurrently
 
 
 def _load_calculate_trade_allocation() -> Callable[..., Any]:
@@ -114,6 +136,23 @@ def _load_calculate_trade_allocation() -> Callable[..., Any]:
     spec.loader.exec_module(mod)
     _allocation_fn = mod.calculate_trade_allocation
     return _allocation_fn
+
+
+def _load_execute_polymarket_trade() -> Callable[..., Any]:
+    global _trade_fn
+    if _trade_fn is not None:
+        return _trade_fn
+    spec = importlib.util.spec_from_file_location(
+        "execute_polymarket_trade", _TRADE_SKILL_PATH
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load skill from {_TRADE_SKILL_PATH}")
+    mod = importlib.util.module_from_spec(spec)
+    # pydantic resolves the skill's postponed annotations through sys.modules.
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    _trade_fn = mod.execute_polymarket_trade
+    return _trade_fn
 
 
 def _qualitative_rank_key(candidate: Phase3Candidate) -> tuple[float, str]:
@@ -203,7 +242,8 @@ def _ledger_safe(
 ) -> dict[str, Any] | None:
     """Ledger write that can never break the pipeline."""
     try:
-        return ledger.record(vault, market_id, stage, **fields)
+        with _ledger_lock:
+            return ledger.record(vault, market_id, stage, **fields)
     except Exception:  # noqa: BLE001
         log.exception("ledger write failed for %s (%s)", market_id, stage)
         return None
@@ -341,12 +381,24 @@ def phase2_quantitative_routing(
             if trade is not None and _open_trade_shows_bet_not_edge_dq(trade):
                 log.info("[PHASE 2] skip %s: open trade log shows an active bet", market_id)
                 continue
-            if vault.active_research_path(market_id).exists():
-                # TODO(wave3): re-check researched markets here (edge/price refresh).
-                continue
-
             md = market.market_data
             q = scraper.select_q(md)
+            if vault.active_research_path(market_id).exists():
+                # Researched markets are not re-gated; flag a refresh when the price moved.
+                fm = _error_free_active_fm(vault, market_id)
+                if (
+                    fm is not None
+                    and prior is not None
+                    and prior.get("refresh_reason") != "price_move"
+                    and gate.eligibility(md)[0]
+                    and _refresh_reason(
+                        vault, market_id, fm, prior.get("research_state"), q, now
+                    )
+                    == "price_move"
+                ):
+                    _write_filter_state(vault, market_id, prior, refresh_reason="price_move")
+                continue
+
             fields = _ledger_market_fields(md)
 
             combined = gate.arbitrage_combined(md)
@@ -463,15 +515,122 @@ def phase2_quantitative_routing(
 
 
 # ---------------------------------------------------------------------------
-# Phase 3 — Qualitative pipeline (decoupled vault scan)
+# Phase 3 — Research (decoupled vault scan): QUICK stage, Hub decision, FULL stage
+#
+# The models are price-blind: no payload built here contains q. The Hub compares
+# the model's (p, p_low, p_high) with q and decides skip / escalate / write.
 # ---------------------------------------------------------------------------
 
+_SKIP_OUTCOMES = frozenset({"no_divergence", "sample_disagreement", "probable_misread"})
+_CONFIDENCE_RANK = {"low": 0, "medium": 1, "high": 2}
 
-def build_phase3_queue(vault: ObsidianManager) -> list[Phase3Candidate]:
-    """Scan 01_Filters/ for gate+triage survivors (``passed: true``) without research.
 
-    TODO(wave3): also queue researched markets due for a refresh.
+def research_ttl_hours(days_to_resolution: float | None) -> float:
+    """Refresh TTL: ``max(48h, days_to_resolution * 24h / 10)``."""
+    days = days_to_resolution if days_to_resolution is not None else 0.0
+    return max(RESEARCH_MIN_TTL_HOURS, float(days) * 24.0 / 10.0)
+
+
+def _as_float(value: Any) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if out == out else None
+
+
+def _days_left(fm: dict[str, Any], now: datetime) -> float | None:
+    end = gate._parse_ts(fm.get("end_date"))
+    if end is not None:
+        return max((end - now).total_seconds() / 86400.0, 0.0)
+    return _as_float(fm.get("days_at_research"))
+
+
+def _research_expired(
+    fm: dict[str, Any], now: datetime, fallback_at: datetime | None = None
+) -> bool:
+    at = gate._parse_ts(fm.get("researched_at")) or fallback_at
+    if at is None:
+        return False
+    return now - at >= timedelta(hours=research_ttl_hours(_days_left(fm, now)))
+
+
+def _attempt_cooldown_active(state: Any, q: float | None, now: datetime) -> bool:
+    """A recent research attempt (``research_state``) is still valid: not expired, q unmoved."""
+    if not isinstance(state, dict):
+        return False
+    at = gate._parse_ts(state.get("at"))
+    if at is None:
+        return False
+    ttl = _as_float(state.get("ttl_hours")) or RESEARCH_MIN_TTL_HOURS
+    if now - at >= timedelta(hours=ttl):
+        return False
+    state_q = _as_float(state.get("q"))
+    if q is not None and state_q is not None and abs(q - state_q) > RESEARCH_REFRESH_PRICE_MOVE:
+        return False
+    return True
+
+
+def _refresh_reason(
+    vault: ObsidianManager,
+    market_id: str,
+    fm: dict[str, Any],
+    state: Any,
+    q: float | None,
+    now: datetime,
+) -> str | None:
+    """``"price_move"`` / ``"ttl"`` when error-free research is due for a refresh, else ``None``.
+
+    ``q=None`` checks the TTL only (Phase 3 queue scan); Phase 2 passes the fresh q.
+    A refresh attempt that already ran since the research (and changed nothing
+    material) blocks another one until its own cooldown lapses.
     """
+    q_then = _as_float(fm.get("q_at_research"))
+    moved = (
+        q is not None
+        and q_then is not None
+        and abs(q - q_then) > RESEARCH_REFRESH_PRICE_MOVE
+    )
+    path = vault.active_research_path(market_id)
+    try:
+        fallback = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+    except OSError:
+        fallback = None
+    expired = _research_expired(fm, now, fallback)
+    if not (moved or expired):
+        return None
+    attempt_at = gate._parse_ts((state or {}).get("at")) if isinstance(state, dict) else None
+    researched_at = gate._parse_ts(fm.get("researched_at")) or fallback
+    if (
+        attempt_at is not None
+        and researched_at is not None
+        and attempt_at > researched_at
+        and _attempt_cooldown_active(state, q, now)
+    ):
+        return None
+    return "price_move" if moved else "ttl"
+
+
+def _error_free_active_fm(vault: ObsidianManager, market_id: str) -> dict[str, Any] | None:
+    if not is_error_free_active(vault, market_id):
+        return None
+    return vault.read_market_record(market_id, "active")
+
+
+def build_phase3_queue(
+    vault: ObsidianManager, now: datetime | None = None
+) -> list[Phase3Candidate]:
+    """Scan ``01_Filters/`` for gate+triage survivors (``passed: true``) needing research.
+
+    - ``initial``: no error-free research and no still-valid skip/cooldown from an
+      earlier attempt (``research_state``).
+    - ``refresh``: error-free research older than its TTL, or flagged by Phase 2
+      (``refresh_reason``: price moved > 8 points since ``q_at_research``). Markets
+      holding an open bet are never refreshed.
+    """
+    now = now or datetime.now(timezone.utc)
     candidates: list[Phase3Candidate] = []
 
     for path in vault.iter_dir_files("filters", ".md"):
@@ -481,14 +640,27 @@ def build_phase3_queue(vault: ObsidianManager) -> list[Phase3Candidate]:
             continue
         if not record.get("passed"):
             continue
-        if is_error_free_active(vault, market_id):
-            continue
+        state = record.get("research_state")
+        fm = _error_free_active_fm(vault, market_id)
+        if fm is None:
+            if (
+                isinstance(state, dict)
+                and state.get("outcome") in _SKIP_OUTCOMES
+                and _attempt_cooldown_active(state, _as_float(record.get("last_q")), now)
+            ):
+                continue
+            kind: Phase3Kind = "initial"
+        else:
+            trade = vault.read_trade_log_dict(market_id)
+            if trade is not None and _open_trade_shows_bet_not_edge_dq(trade):
+                continue
+            if record.get("refresh_reason") != "price_move" and not _refresh_reason(
+                vault, market_id, fm, state, None, now
+            ):
+                continue
+            kind = "refresh"
         candidates.append(
-            Phase3Candidate(
-                market_id=market_id,
-                kind="initial",
-                filter_record=record,
-            )
+            Phase3Candidate(market_id=market_id, kind=kind, filter_record=record)
         )
 
     candidates.sort(key=_qualitative_rank_key)
@@ -503,140 +675,141 @@ def build_phase3_queue(vault: ObsidianManager) -> list[Phase3Candidate]:
     return candidates
 
 
-def phase3_qualitative_pipeline(
-    vault: ObsidianManager,
-    runner: AgentRunner = spawn_agent,
-) -> list[dict[str, Any]]:
-    """Briefer → Deep Researcher; persist research to ``02_Active_Research/``."""
-    log.info("[PHASE 3] Qualitative pipeline")
-    directives = vault.read_directives()
-    queue = build_phase3_queue(vault)
-    researched: list[dict[str, Any]] = []
+@dataclass
+class _Job:
+    """One market selected for the FULL stage."""
 
-    for candidate in queue:
-        market_id = candidate.market_id
-        row = scraper.fetch_market_row(market_id)
-        if row is None:
-            log.warning(
-                "[PHASE 3] skip %s: could not hydrate market row from scraper",
-                market_id,
-            )
-            continue
+    candidate: Phase3Candidate
+    row: dict[str, Any]
 
-        pricing_err = market_data_pricing_error(row.market_data)
-        if pricing_err:
-            # Transient data gap: skip this tick, never blacklist.
-            log.warning("[PHASE 3] skip %s this tick: %s", market_id, pricing_err)
-            continue
+    @property
+    def market_id(self) -> str:
+        return self.candidate.market_id
 
-        market_row = row.model_dump()
-        result: dict[str, Any] | None = None
-        with market_quarantine(vault, market_id, "phase3"):
-            if candidate.kind == "edge_refresh":
-                result = _edge_refresh_research(
-                    vault, runner, market_row, directives, candidate
-                )
-            else:
-                result = _research_market(vault, runner, market_row, directives)
-        if result is not None:
-            researched.append(result)
+    @property
+    def refresh(self) -> bool:
+        return self.candidate.kind == "refresh"
 
-    log.info("[PHASE 3] researched count=%d", len(researched))
-    return researched
+    @property
+    def event_id(self) -> str | None:
+        md = self.row.get("market_data") or {}
+        event_id = md.get("event_id") or self.candidate.filter_record.get("event_id")
+        return str(event_id) if event_id else None
 
 
-def phase3_research_market(
-    vault: ObsidianManager,
-    market_id: str,
-    runner: AgentRunner = spawn_agent,
-    *,
-    kind: Phase3Kind = "initial",
-) -> dict[str, Any] | None:
-    """Run Briefer → Deep Researcher for one market without scanning ``01_Filters/``."""
-    log.info("[PHASE 3] research single market market_id=%s kind=%s", market_id, kind)
-    row = scraper.fetch_market_row(market_id)
-    if row is None:
-        log.warning(
-            "[PHASE 3] skip %s: could not hydrate market row from scraper",
-            market_id,
-        )
-        return None
-
-    pricing_err = market_data_pricing_error(row.market_data)
-    if pricing_err:
-        log.warning("[PHASE 3] skip %s this tick: %s", market_id, pricing_err)
-        return None
-
-    directives = vault.read_directives()
-    market_row = row.model_dump()
-    with market_quarantine(vault, market_id, "phase3"):
-        if kind == "edge_refresh":
-            record = vault.read_market_record(market_id, "filters") or {}
-            candidate = Phase3Candidate(
-                market_id=market_id,
-                kind="edge_refresh",
-                filter_record=record,
-            )
-            return _edge_refresh_research(
-                vault, runner, market_row, directives, candidate
-            )
-        return _research_market(vault, runner, market_row, directives)
+def quick_decision(p_low: float, p_high: float, q: float) -> Literal["no_divergence", "escalate"]:
+    """Hub decision after the QUICK stage: skip only when q sits inside a narrow range."""
+    inside = p_low <= q <= p_high
+    if inside and (p_high - p_low) <= RESEARCH_MAX_QUICK_WIDTH:
+        return "no_divergence"
+    return "escalate"
 
 
-def _edge_refresh_research(
-    vault: ObsidianManager,
-    runner: AgentRunner,
-    row: dict[str, Any],
-    directives: str,
-    _candidate: Phase3Candidate,
-) -> dict[str, Any] | None:
-    """Iterative research refresh — overwrite active research.
+def aggregate_samples(
+    samples: list[tuple[DeepResearcherComplete, Any]],
+) -> dict[str, Any]:
+    """Combine independent FULL-stage samples.
 
-    TODO(wave3): the Phase 2 trigger (``pending_edge_refresh``) was removed; Wave 3
-    redoes refresh scheduling and calls this via ``phase3_research_market``.
+    ``p``, ``p_low`` and ``p_high`` are each the **median** across samples (min/max
+    would let one outlier widen the range and are dominated by sample noise; the
+    spread guard already rejects disagreement). Medians of ordered triples keep
+    ``p_low <= p <= p_high``. ``chosen`` is the sample closest to the median ``p``
+    (its markdown body is the one written); ``confidence`` is the most conservative.
     """
+    ps = [c.estimated_p for c, _ in samples]
+    p = statistics.median(ps)
+    chosen = min(range(len(ps)), key=lambda i: (abs(ps[i] - p), i))
+    confidence = min((c.confidence for c, _ in samples), key=lambda c: _CONFIDENCE_RANK[c])
+    return {
+        "p": p,
+        "p_low": statistics.median(c.p_low for c, _ in samples),
+        "p_high": statistics.median(c.p_high for c, _ in samples),
+        "samples": ps,
+        "spread": max(ps) - min(ps),
+        "confidence": confidence,
+        "chosen": chosen,
+    }
+
+
+def _record_attempt(
+    vault: ObsidianManager,
+    row: dict[str, Any],
+    stage: str,
+    outcome: str,
+    **values: Any,
+) -> None:
+    """Persist the latest research attempt on the filter record (cooldown + escalation memory)."""
     market_id = row["market_id"]
-    planning_context = _planning_context_from_active(vault, market_id)
-    return _run_iterative_research(
-        vault,
-        runner,
-        row,
-        directives,
-        from_edge=True,
-        planning_context=planning_context,
+    prior = vault.read_filter_log(market_id)
+    if prior is None:
+        return
+    md = row.get("market_data") or {}
+    state = {
+        "stage": stage,
+        "outcome": outcome,
+        "at": datetime.now(timezone.utc).isoformat(),
+        "ttl_hours": research_ttl_hours(_as_float(md.get("days_to_resolution"))),
+        **values,
+    }
+    _write_filter_state(
+        vault, market_id, prior, research_state=state, refresh_reason=None
     )
 
 
-def _planning_context_from_active(vault: ObsidianManager, market_id: str) -> str | None:
-    """Use Bull thesis excerpt from existing research as Query Planner context."""
-    raw = vault.read_active_research(market_id)
-    if not raw:
-        return None
-    try:
-        _, body = split_yaml_frontmatter_markdown(raw)
-    except ValueError:
-        return None
-    header = "## Bull Thesis"
-    if header not in body:
-        return None
-    start = body.index(header) + len(header)
-    end = body.find("## Bear Thesis", start)
-    excerpt = body[start:end].strip() if end > start else body[start:].strip()
-    if not excerpt:
-        return None
-    return f"Prior research (bull excerpt):\n{excerpt[:2000]}"
-
-
-def _research_market(
+def _skip_research(
     vault: ObsidianManager,
-    runner: AgentRunner,
+    row: dict[str, Any],
+    stage: str,
+    reason: str,
+    **values: Any,
+) -> None:
+    market_id = row["market_id"]
+    _ledger_safe(
+        vault,
+        market_id,
+        "research_skip",
+        reason=reason,
+        research_stage=stage,
+        **values,
+        **_ledger_market_fields(row.get("market_data")),
+    )
+    _record_attempt(vault, row, stage, reason, **values)
+    log.info("[PHASE 3] %s research_skip %s for %s", stage, reason, market_id)
+
+
+def _text_fields(row: dict[str, Any], today: str) -> dict[str, Any]:
+    """Market text shared by every price-blind payload (never any price field)."""
+    md = row.get("market_data") or {}
+    return {
+        "market_id": row["market_id"],
+        "title": row.get("market_title", ""),
+        "description": row.get("market_description", ""),
+        "resolution_source": md.get("resolution_source"),
+        "end_date": md.get("end_date"),
+        "category": md.get("category"),
+        "today": today,
+    }
+
+
+def _dr_payload(
     row: dict[str, Any],
     directives: str,
-) -> dict[str, Any] | None:
-    """Plan, fetch, and research a single market. Returns row for phase 4 or None."""
-    return _run_iterative_research(
-        vault, runner, row, directives, from_edge=False, planning_context=None
-    )
+    bundle: list[dict[str, Any]],
+    *,
+    mode: Literal["quick", "full"],
+    today: str,
+    system_override: str | None = None,
+    session_tag: str | None = None,
+) -> dict[str, Any]:
+    return {
+        **_text_fields(row, today),
+        "mode": mode,
+        "directives": directives,
+        "research_bundle": bundle,
+        "system_override": system_override,
+        "format_validation_error": None,
+        "session_tag": session_tag,
+    }
 
 
 def _bundle_row_usable(entry: dict[str, Any]) -> bool:
@@ -648,19 +821,18 @@ def _bundle_has_entries(bundle: list[dict[str, Any]] | None) -> bool:
     return any(_bundle_row_usable(e) for e in bundle or [])
 
 
+def _ensure_as_of(query: str, today: str) -> str:
+    return query if f"as of {today}" in query.lower() else f"{query.rstrip()} (as of {today})"
+
+
 def _plan_research_queries(
     vault: ObsidianManager,
     runner: AgentRunner,
     row: dict[str, Any],
-    planning_context: str | None,
+    today: str,
 ) -> list[str] | None:
     market_id = row["market_id"]
-    brief_in: dict[str, Any] = {
-        "market_id": market_id,
-        "market_title": row.get("market_title", ""),
-        "market_description": row.get("market_description", ""),
-        "planning_context": planning_context,
-    }
+    brief_in = _text_fields(row, today)
     spec = AGENTS["briefer"]
 
     def _validate_briefer(parsed: dict[str, Any]) -> BrieferOutput:
@@ -691,23 +863,24 @@ def _plan_research_queries(
         flag_inactive(vault, market_id, "phase3", f"briefer error: {err}", brief.model_dump())
         return None
 
-    return list(brief.research_queries)
+    return [_ensure_as_of(q, today) for q in brief.research_queries]
+
+
+def _aiq_cache_path(vault: ObsidianManager) -> Path:
+    return vault._dirs["active"] / "aiq_cache.json"
 
 
 def _fetch_and_persist_bundle(
     vault: ObsidianManager,
     market_id: str,
     queries: list[str],
-    *,
-    fresh: bool = False,
 ) -> None:
     cleaned = [str(q).strip() for q in queries if str(q).strip()]
     if not cleaned:
         return
-    results = fetch_research_bundle(cleaned)
-    if fresh and _bundle_has_entries(results):
-        # Edge refresh: drop stale rows (the merge keeps prior rows for repeated queries).
-        vault.clear_research_bundle(market_id)
+    results = fetch_research_bundle_cached(
+        cleaned, _aiq_cache_path(vault), fetch=fetch_research_bundle
+    )
     vault.write_research_bundle(market_id, results)
 
 
@@ -747,51 +920,49 @@ def _invoke_deep_researcher(
     )
 
 
-def _finalize_research(
+def _check_complete(
     vault: ObsidianManager,
     market_id: str,
     complete: DeepResearcherComplete,
-    row: dict[str, Any],
     *,
-    from_edge: bool,
-) -> dict[str, Any] | None:
+    flag: bool = True,
+) -> Any | None:
+    """Cross-check JSON vs markdown frontmatter. Returns the parsed research or ``None``.
+
+    ``flag=False`` (extra samples) only logs: one bad sample must not blacklist a market.
+    """
+
+    def fail(reason: str, payload: dict[str, Any]) -> None:
+        if flag:
+            flag_inactive(vault, market_id, "phase3", reason, payload)
+        else:
+            log.warning("[PHASE 3] dropping sample for %s: %s", market_id, reason)
+
     try:
         research = parse_deep_researcher(complete.markdown)
     except (ValueError, AgentOutputParseError) as exc:
-        flag_inactive(
-            vault,
-            market_id,
-            "phase3",
+        fail(
             f"deep researcher markdown validation failed: {exc}",
             {"markdown": complete.markdown[:500]},
         )
         return None
 
     if research.error:
-        flag_inactive(
-            vault,
-            market_id,
-            "phase3",
+        fail(
             f"deep researcher error in frontmatter: {research.error}",
             research.frontmatter,
         )
         return None
 
     if complete.market_id != market_id:
-        flag_inactive(
-            vault,
-            market_id,
-            "phase3",
+        fail(
             f"deep researcher returned mismatched market_id: {complete.market_id!r}",
             {"expected": market_id, "got": complete.market_id},
         )
         return None
 
     if abs(complete.estimated_p - research.estimated_p) > 1e-6:
-        flag_inactive(
-            vault,
-            market_id,
-            "phase3",
+        fail(
             "deep researcher estimated_p mismatch between JSON and markdown frontmatter",
             {
                 "json_estimated_p": complete.estimated_p,
@@ -800,167 +971,415 @@ def _finalize_research(
         )
         return None
 
+    for name, json_val, md_val in (
+        ("p_low", complete.p_low, research.p_low),
+        ("p_high", complete.p_high, research.p_high),
+    ):
+        if md_val is not None and abs(json_val - md_val) > 1e-6:
+            fail(
+                f"deep researcher {name} mismatch between JSON and markdown frontmatter",
+                {f"json_{name}": json_val, f"markdown_{name}": md_val},
+            )
+            return None
+
     if research.market_id is not None and research.market_id != market_id:
-        flag_inactive(
-            vault,
-            market_id,
-            "phase3",
+        fail(
             f"deep researcher markdown market_id mismatch: {research.market_id!r}",
             research.frontmatter,
         )
         return None
 
-    prev_edge = read_edge_refresh_count(vault, market_id)
-    edge_count = prev_edge + 1 if from_edge else prev_edge
-
-    payload = {
-        "market_id": market_id,
-        "estimated_p": research.estimated_p,
-        "error": None,
-        "edge_research_refresh_count": edge_count,
-        "edge_research_refresh_attempts": read_edge_refresh_attempts(vault, market_id),
-    }
-    if not vault_write_or_flag(
-        vault=vault,
-        market_id=market_id,
-        write_fn=lambda: vault.write_research_report(market_id, payload, research.body),
-        payload=payload,
-        artifact_label="research report",
-        phase="phase3",
-    ):
-        return None
-
-    return {
-        "market_id": market_id,
-        "p_value": research.estimated_p,
-        "market_data": row.get("market_data") or {},
-    }
+    return research
 
 
-def _forced_synthesis(
+def _quick_stage(
     vault: ObsidianManager,
     runner: AgentRunner,
-    dr_in: dict[str, Any],
     row: dict[str, Any],
-    market_id: str,
-    *,
-    from_edge: bool,
-) -> dict[str, Any] | None:
-    override_in = {**dr_in, "system_override": FORCED_SYNTHESIS_OVERRIDE}
+    directives: str,
+    today: str,
+) -> Literal["escalate", "skip", "failed"]:
+    """One price-blind Deep Researcher call with no A-IQ bundle, then the Hub decision."""
+    market_id = row["market_id"]
+    md = row.get("market_data") or {}
+    q = scraper.select_q(md)
+    dr_in = _dr_payload(
+        row, directives, [], mode="quick", today=today,
+        system_override=FORCED_SYNTHESIS_OVERRIDE, session_tag="quick",
+    )
     try:
-        last_out = _invoke_deep_researcher(runner, override_in)
+        out = _invoke_deep_researcher(runner, dr_in)
     except ValidationError as exc:
         flag_inactive(
-            vault,
-            market_id,
-            "phase3",
-            f"deep researcher forced synthesis validation failed: {exc}",
-            override_in,
+            vault, market_id, "phase3",
+            f"deep researcher quick-stage output validation failed: {exc}", dr_in,
         )
-        return None
-
-    if isinstance(last_out, DeepResearcherNeedsMore):
+        return "failed"
+    if isinstance(out, DeepResearcherNeedsMore):
         flag_inactive(
-            vault,
-            market_id,
-            "phase3",
-            "deep researcher disobeyed forced synthesis override",
-            last_out.model_dump(),
+            vault, market_id, "phase3",
+            "deep researcher disobeyed quick-stage override", out.model_dump(),
+        )
+        return "failed"
+    if _check_complete(vault, market_id, out) is None:
+        return "failed"
+
+    values = {"q": q, "p": out.estimated_p, "p_low": out.p_low, "p_high": out.p_high}
+    if quick_decision(out.p_low, out.p_high, q) == "no_divergence":
+        _skip_research(vault, row, "quick", "no_divergence", **values)
+        return "skip"
+    _record_attempt(vault, row, "quick", "escalate", **values)
+    return "escalate"
+
+
+def _research_loop(
+    vault: ObsidianManager,
+    runner: AgentRunner,
+    row: dict[str, Any],
+    directives: str,
+    today: str,
+    tag: str,
+) -> DeepResearcherComplete | None:
+    """Lead FULL sample: one round, one follow-up round, then forced synthesis."""
+    market_id = row["market_id"]
+    last_out: DeepResearcherComplete | DeepResearcherNeedsMore | None = None
+
+    for _ in range(MAX_RESEARCH_ITERATIONS):
+        dr_in = _dr_payload(
+            row, directives, vault.read_research_bundle(market_id) or [],
+            mode="full", today=today, session_tag=tag,
+        )
+        try:
+            last_out = _invoke_deep_researcher(runner, dr_in)
+        except ValidationError as exc:
+            flag_inactive(
+                vault, market_id, "phase3",
+                f"deep researcher output validation failed: {exc}", dr_in,
+            )
+            return None
+        if isinstance(last_out, DeepResearcherComplete):
+            return last_out
+        _fetch_and_persist_bundle(vault, market_id, list(last_out.new_queries))
+
+    override_in = _dr_payload(
+        row, directives, vault.read_research_bundle(market_id) or [],
+        mode="full", today=today, system_override=FORCED_SYNTHESIS_OVERRIDE,
+        session_tag=tag,
+    )
+    try:
+        forced = _invoke_deep_researcher(runner, override_in)
+    except ValidationError as exc:
+        flag_inactive(
+            vault, market_id, "phase3",
+            f"deep researcher forced synthesis validation failed: {exc}", override_in,
         )
         return None
+    if isinstance(forced, DeepResearcherNeedsMore):
+        flag_inactive(
+            vault, market_id, "phase3",
+            "deep researcher disobeyed forced synthesis override", forced.model_dump(),
+        )
+        return None
+    return forced
 
-    return _finalize_research(vault, market_id, last_out, row, from_edge=from_edge)
+
+def _extra_sample(
+    vault: ObsidianManager,
+    runner: AgentRunner,
+    row: dict[str, Any],
+    directives: str,
+    today: str,
+    bundle: list[dict[str, Any]],
+    tag: str,
+) -> tuple[DeepResearcherComplete, Any] | None:
+    """Independent re-estimate on the lead sample's final bundle (own session, no fetches)."""
+    market_id = row["market_id"]
+    dr_in = _dr_payload(
+        row, directives, bundle, mode="full", today=today,
+        system_override=FORCED_SYNTHESIS_OVERRIDE, session_tag=tag,
+    )
+    try:
+        out = _invoke_deep_researcher(runner, dr_in)
+    except ValidationError as exc:
+        log.warning("[PHASE 3] sample %s for %s failed validation: %s", tag, market_id, exc)
+        return None
+    if isinstance(out, DeepResearcherNeedsMore):
+        log.warning("[PHASE 3] sample %s for %s ignored the override", tag, market_id)
+        return None
+    research = _check_complete(vault, market_id, out, flag=False)
+    return (out, research) if research is not None else None
 
 
-def _run_iterative_research(
+def _research_market(
     vault: ObsidianManager,
     runner: AgentRunner,
     row: dict[str, Any],
     directives: str,
     *,
-    from_edge: bool,
-    planning_context: str | None,
+    refresh: bool = False,
+    shared_bundle: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
+    """FULL stage for one market: Briefer -> A-IQ -> Deep Researcher x3 -> Hub decision.
+
+    Returns the Phase 4 row (``p_value``/``p_low``/``p_high``/``market_data``) when active
+    research was written, ``None`` after a ledgered skip or an inactive flag.
+    """
     market_id = row["market_id"]
-    existing_bundle = vault.read_research_bundle(market_id)
-    q = scraper.select_q(row.get("market_data") or {})
-    fresh_fetch = from_edge
+    md = row.get("market_data") or {}
+    q = scraper.select_q(md)
+    today = today_date()
 
-    # Edge refreshes always re-plan and refetch; otherwise reuse a usable saved bundle.
-    if not from_edge and _bundle_has_entries(existing_bundle):
-        pending_queries: list[str] = []
-    else:
-        planned = _plan_research_queries(vault, runner, row, planning_context)
-        if planned is None:
+    if shared_bundle:  # same-event sibling: reuse the first market's evidence
+        vault.clear_research_bundle(market_id)
+        vault.write_research_bundle(market_id, shared_bundle)
+    elif refresh or not _bundle_has_entries(vault.read_research_bundle(market_id)):
+        if refresh:
+            vault.clear_research_bundle(market_id)
+        queries = _plan_research_queries(vault, runner, row, today)
+        if queries is None:
             return None
-        pending_queries = planned
+        _fetch_and_persist_bundle(vault, market_id, queries)
 
-    iteration = 0
-    last_out: DeepResearcherComplete | DeepResearcherNeedsMore | None = None
+    lead = _research_loop(vault, runner, row, directives, today, "s1")
+    if lead is None:
+        return None
+    lead_research = _check_complete(vault, market_id, lead)
+    if lead_research is None:
+        return None
+    samples: list[tuple[DeepResearcherComplete, Any]] = [(lead, lead_research)]
 
-    while iteration < MAX_RESEARCH_ITERATIONS:
-        if pending_queries:
-            _fetch_and_persist_bundle(
-                vault, market_id, pending_queries, fresh=fresh_fetch
-            )
-            fresh_fetch = False
-
-        bundle = vault.read_research_bundle(market_id) or []
-        dr_in: dict[str, Any] = {
-            "market_id": market_id,
-            "market_data": row.get("market_data") or {},
-            "q": q,
-            "directives": directives,
-            "research_bundle": bundle,
-            "system_override": None,
-            "format_validation_error": None,
-        }
-
-        try:
-            last_out = _invoke_deep_researcher(runner, dr_in)
-        except ValidationError as exc:
-            flag_inactive(
-                vault,
-                market_id,
-                "phase3",
-                f"deep researcher output validation failed: {exc}",
-                dr_in,
-            )
-            return None
-
-        if isinstance(last_out, DeepResearcherComplete):
-            return _finalize_research(
-                vault, market_id, last_out, row, from_edge=from_edge
-            )
-
-        pending_queries = list(last_out.new_queries)
-        iteration += 1
-
-    if isinstance(last_out, DeepResearcherNeedsMore):
-        # Fetch the queries requested by the last needs_more_data before forcing synthesis.
-        if pending_queries:
-            _fetch_and_persist_bundle(vault, market_id, pending_queries)
-        bundle = vault.read_research_bundle(market_id) or []
-        dr_in = {
-            "market_id": market_id,
-            "market_data": row.get("market_data") or {},
-            "q": q,
-            "directives": directives,
-            "research_bundle": bundle,
-            "system_override": None,
-            "format_validation_error": None,
-        }
-        return _forced_synthesis(
-            vault, runner, dr_in, row, market_id, from_edge=from_edge
+    bundle = vault.read_research_bundle(market_id) or []
+    for k in range(2, RESEARCH_SAMPLES + 1):
+        extra = _extra_sample(vault, runner, row, directives, today, bundle, f"s{k}")
+        if extra is not None:
+            samples.append(extra)
+    if len(samples) < 2:
+        flag_inactive(
+            vault, market_id, "phase3",
+            "fewer than 2 valid deep researcher samples", {"valid": len(samples)},
         )
+        return None
 
-    flag_inactive(
-        vault,
-        market_id,
-        "phase3",
-        "deep researcher produced no output",
-        {"iteration": iteration},
-    )
+    agg = aggregate_samples(samples)
+    values = {
+        "q": q, "p": agg["p"], "p_low": agg["p_low"], "p_high": agg["p_high"],
+        "samples": agg["samples"], "spread": agg["spread"], "confidence": agg["confidence"],
+    }
+    if agg["spread"] > RESEARCH_MAX_SAMPLE_SPREAD:
+        _skip_research(vault, row, "full", "sample_disagreement", **values)
+        return None
+    if q is not None and abs(agg["p"] - q) > RESEARCH_MAX_Q_GAP:
+        _skip_research(vault, row, "full", "probable_misread", **values)
+        return None
+
+    chosen, chosen_research = samples[agg["chosen"]]
+    payload = {
+        "market_id": market_id,
+        "estimated_p": agg["p"],
+        "error": None,
+        "p_low": agg["p_low"],
+        "p_high": agg["p_high"],
+        "confidence": agg["confidence"],
+        "as_of": chosen.as_of.isoformat(),
+        "resolution_checklist": chosen.resolution_checklist,
+        "key_assumptions": chosen.key_assumptions,
+        "q_at_research": q,  # Hub-side only (refresh trigger); never sent to a model
+        "researched_at": datetime.now(timezone.utc).isoformat(),
+        "end_date": md.get("end_date"),
+        "days_at_research": _as_float(md.get("days_to_resolution")),
+        "samples": agg["samples"],
+    }
+    if not vault_write_or_flag(
+        vault=vault,
+        market_id=market_id,
+        write_fn=lambda: vault.write_research_report(market_id, payload, chosen_research.body),
+        payload=payload,
+        artifact_label="research report",
+        phase="phase3",
+    ):
+        return None
+    _record_attempt(vault, row, "full", "researched", **values)
+    return {
+        "market_id": market_id,
+        "p_value": agg["p"],
+        "p_low": agg["p_low"],
+        "p_high": agg["p_high"],
+        "market_data": md,
+    }
+
+
+def _run_full_stage(
+    vault: ObsidianManager,
+    runner: AgentRunner,
+    directives: str,
+    jobs: list[_Job],
+    over_budget: Callable[[], bool],
+) -> list[dict[str, Any]]:
+    """Run FULL research for ``jobs``: events in parallel, same-event markets sequentially.
+
+    Markets sharing an ``event_id`` reuse the first market's evidence bundle (the Deep
+    Researcher still runs per market). Vault writes are per-market atomic files.
+    """
+    if not jobs:
+        return []
+    groups: dict[Any, list[_Job]] = {}
+    for job in jobs:
+        groups.setdefault(job.event_id or ("solo", job.market_id), []).append(job)
+
+    abort = threading.Event()
+
+    def run_group(group: list[_Job]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        shared: list[dict[str, Any]] | None = None
+        for job in group:
+            if abort.is_set():
+                break
+            if over_budget():
+                log.info(
+                    "[PHASE 3] tick budget exhausted; not starting %s", job.market_id
+                )
+                continue
+            result = None
+            try:
+                with market_quarantine(vault, job.market_id, "phase3"):
+                    result = _research_market(
+                        vault, runner, job.row, directives,
+                        refresh=job.refresh, shared_bundle=shared,
+                    )
+            except InfraUnavailable:
+                abort.set()
+                raise
+            if shared is None:
+                leader_bundle = vault.read_research_bundle(job.market_id)
+                if _bundle_has_entries(leader_bundle):
+                    shared = leader_bundle
+            if result is not None:
+                out.append(result)
+        return out
+
+    results: list[dict[str, Any]] = []
+    infra: BaseException | None = None
+    with ThreadPoolExecutor(max_workers=research_workers()) as pool:
+        futures = [pool.submit(run_group, g) for g in groups.values()]
+        for fut in futures:
+            try:
+                results.extend(fut.result())
+            except InfraUnavailable as exc:
+                infra = infra or exc
+    if infra is not None:
+        raise infra
+    return results
+
+
+def phase3_qualitative_pipeline(
+    vault: ObsidianManager,
+    runner: AgentRunner = spawn_agent,
+) -> list[dict[str, Any]]:
+    """QUICK stage -> Hub decision -> FULL stage; persist research to ``02_Active_Research/``.
+
+    Candidates are processed in gate-score order. QUICK (<= ``OPENCLAW_QUICK_RESEARCH_BUDGET``
+    markets) is one price-blind Deep Researcher call without A-IQ data; the Hub skips markets
+    where q lies inside a narrow ``[p_low, p_high]`` and escalates the rest. FULL
+    (<= ``OPENCLAW_FULL_RESEARCH_BUDGET``) is Briefer -> A-IQ -> 3 Deep Researcher samples.
+    Refresh candidates go straight to FULL. No new market starts after
+    ``OPENCLAW_RESEARCH_TICK_BUDGET_SEC``.
+    """
+    log.info("[PHASE 3] Research pipeline")
+    directives = vault.read_directives()
+    queue = build_phase3_queue(vault)
+    started = time.monotonic()
+    budget_sec = research_tick_budget_sec()
+
+    def over_budget() -> bool:
+        return time.monotonic() - started >= budget_sec
+
+    now = datetime.now(timezone.utc)
+    today = today_date()
+    quick_left = quick_research_budget()
+    to_full: list[_Job] = []
+
+    for candidate in queue:
+        market_id = candidate.market_id
+        if over_budget():
+            log.info("[PHASE 3] tick budget exhausted; stopping the QUICK scan")
+            break
+        row = scraper.fetch_market_row(market_id)
+        if row is None:
+            log.warning(
+                "[PHASE 3] skip %s: could not hydrate market row from scraper",
+                market_id,
+            )
+            continue
+
+        pricing_err = market_data_pricing_error(row.market_data)
+        if pricing_err:
+            # Transient data gap: skip this tick, never blacklist.
+            log.warning("[PHASE 3] skip %s this tick: %s", market_id, pricing_err)
+            continue
+
+        market_row = row.model_dump()
+        q = scraper.select_q(row.market_data)
+        with market_quarantine(vault, market_id, "phase3"):
+            if candidate.kind == "refresh":
+                ok, why = gate.eligibility(row.market_data)
+                if not ok:
+                    log.info("[PHASE 3] skip refresh of %s: %s", market_id, why)
+                    continue
+                to_full.append(_Job(candidate, market_row))
+                continue
+            state = candidate.filter_record.get("research_state")
+            if (
+                isinstance(state, dict)
+                and state.get("stage") == "quick"
+                and state.get("outcome") == "escalate"
+                and _attempt_cooldown_active(state, q, now)
+            ):
+                to_full.append(_Job(candidate, market_row))  # quick already escalated it
+                continue
+            if quick_left <= 0:
+                continue
+            quick_left -= 1
+            if _quick_stage(vault, runner, market_row, directives, today) == "escalate":
+                to_full.append(_Job(candidate, market_row))
+
+    selected = to_full[: full_research_budget()]
+    if len(to_full) > len(selected):
+        log.info(
+            "[PHASE 3] FULL budget: %d escalated, %d deferred to the next tick",
+            len(to_full), len(to_full) - len(selected),
+        )
+    researched = _run_full_stage(vault, runner, directives, selected, over_budget)
+    log.info("[PHASE 3] researched count=%d", len(researched))
+    return researched
+
+
+def phase3_research_market(
+    vault: ObsidianManager,
+    market_id: str,
+    runner: AgentRunner = spawn_agent,
+    *,
+    kind: Phase3Kind = "initial",
+) -> dict[str, Any] | None:
+    """Run the FULL stage for one market without scanning ``01_Filters/`` (no QUICK stage)."""
+    log.info("[PHASE 3] research single market market_id=%s kind=%s", market_id, kind)
+    row = scraper.fetch_market_row(market_id)
+    if row is None:
+        log.warning(
+            "[PHASE 3] skip %s: could not hydrate market row from scraper",
+            market_id,
+        )
+        return None
+
+    pricing_err = market_data_pricing_error(row.market_data)
+    if pricing_err:
+        log.warning("[PHASE 3] skip %s this tick: %s", market_id, pricing_err)
+        return None
+
+    directives = vault.read_directives()
+    with market_quarantine(vault, market_id, "phase3"):
+        return _research_market(
+            vault, runner, row.model_dump(), directives, refresh=(kind == "refresh")
+        )
     return None
 
 
@@ -1052,6 +1471,8 @@ def _phase4_queue(
                 {
                     "market_id": market_id,
                     "p_value": p_value,
+                    "p_low": _as_float(fm.get("p_low")),
+                    "p_high": _as_float(fm.get("p_high")),
                     "market_data": fresh.market_data,
                 },
                 False,
@@ -1063,18 +1484,15 @@ def _phase4_queue(
 def phase4_execution(
     vault: ObsidianManager,
     researched_markets: list[dict[str, Any]],
-    runner: AgentRunner = spawn_agent,
 ) -> None:
-    """Spawn the Trade Executioner; honor :data:`PAPER_TRADE_MODE`.
+    """Deterministic execution: Hub sizing -> ``execute_polymarket_trade`` -> trade log + ledger.
 
-    The Hub computes the allocation and overrides the agent's allocation fields.
-    An intent record guards against double execution across ticks.
+    No agent is involved. ``compute_allocation`` (shrink toward q, quarter-Kelly, YES/NO
+    side) sizes the trade; a zero allocation is ledgered ``below_edge``. Otherwise the
+    trade skill is called in-process (``paper: true`` means simulated). An intent record
+    guards against double execution across ticks and is left in place on failure.
     """
     log.info("[PHASE 4] Execution")
-    if PAPER_TRADE_MODE:
-        log.info(
-            "[PAPER_TRADE] forcing executed=False and transaction_hash=None on trade logs"
-        )
 
     for row, from_research in _phase4_queue(vault, researched_markets):
         market_id = row["market_id"]
@@ -1108,9 +1526,8 @@ def phase4_execution(
                 log.warning("[PHASE 4] skip %s this tick: %s", market_id, hydration_err)
                 continue
 
-            allocation = compute_allocation(
-                vault, row["p_value"], q, market_data, row.get("p_low"), row.get("p_high")
-            )
+            p_value, p_low, p_high = row["p_value"], row.get("p_low"), row.get("p_high")
+            allocation = compute_allocation(vault, p_value, q, market_data, p_low, p_high)
             if allocation.get("error"):
                 log.warning(
                     "[PHASE 4] skip %s this tick: allocation error: %s",
@@ -1119,76 +1536,77 @@ def phase4_execution(
                 )
                 continue
 
-            payload = {
-                "market_id": market_id,
-                "p_value": row["p_value"],
-                "q": q,
-                "allocation": allocation,
-                "market_data": market_data,
-                "paper_trade_mode": bool(PAPER_TRADE_MODE),
-            }
-            vault.write_execution_intent(
-                market_id,
-                {
-                    "market_id": market_id,
-                    "started_at": time.time(),
-                    "paper_trade_mode": bool(PAPER_TRADE_MODE),
-                    "allocation": allocation,
-                },
-            )
-            parsed, reason = _run_structured_agent(runner, "executioner", payload)
-            if reason:
-                log.error(
-                    "[PHASE 4] executioner failed for %s (%s); intent left in place, "
-                    "market will not be re-executed automatically",
-                    market_id,
-                    reason,
-                )
-                flag_inactive(vault, market_id, "phase4", reason, parsed or payload)
-                continue
-
-            # The Hub's numbers win; the LLM only reports whether it executed.
-            parsed = {
-                **parsed,
-                "allocation_usd": allocation["allocation_usd"],
-                "score": allocation.get("edge"),
-                "below_edge_threshold": allocation["below_edge_threshold"],
-            }
-            if PAPER_TRADE_MODE or not allocation["allocation_usd"] > 0:
-                parsed = {**parsed, "executed": False, "transaction_hash": None}
-
             size_usd = float(allocation["allocation_usd"])
-            parsed = {
-                **parsed,
-                "p": row["p_value"],
+            below = bool(allocation["below_edge_threshold"]) or not size_usd > 0
+            trade: dict[str, Any] = {
+                "market_id": market_id,
+                "allocation_usd": size_usd,
+                "score": allocation.get("edge"),
+                "below_edge_threshold": below,
+                "executed": False,
+                "transaction_hash": None,
+                "error": None,
+                "p": p_value,
+                "p_low": p_low,
+                "p_high": p_high,
                 "q_entry": q,
                 "side": allocation.get("side"),
                 "price": allocation.get("price"),
                 "shares": allocation.get("shares"),
-                "p_low": row.get("p_low"),
-                "p_high": row.get("p_high"),
                 "directive_version": ledger.current_directive_version(vault),
                 "event_id": market_data.get("event_id"),
             }
+
+            if not below:
+                vault.write_execution_intent(
+                    market_id,
+                    {
+                        "market_id": market_id,
+                        "started_at": time.time(),
+                        "paper_trade_mode": bool(PAPER_TRADE_MODE),
+                        "allocation": allocation,
+                    },
+                )
+                result = _load_execute_polymarket_trade()(
+                    market_id=market_id,
+                    outcome=allocation["side"],
+                    amount=size_usd,
+                    price=allocation.get("price"),
+                )
+                res = result.model_dump() if hasattr(result, "model_dump") else dict(result)
+                if not res.get("success"):
+                    reason = f"execute_polymarket_trade failed: {res.get('error')}"
+                    log.error(
+                        "[PHASE 4] trade failed for %s (%s); intent left in place, "
+                        "market will not be re-executed automatically",
+                        market_id,
+                        reason,
+                    )
+                    flag_inactive(vault, market_id, "phase4", reason, {**trade, "result": res})
+                    continue
+                if res.get("paper"):
+                    log.info("[PAPER_TRADE] %s %s $%.2f", market_id, allocation["side"], size_usd)
+                trade["executed"] = bool(res.get("success")) and not res.get("paper")
+                trade["transaction_hash"] = res.get("transaction_hash")
+
             if vault_write_or_flag(
                 vault=vault,
                 market_id=market_id,
-                write_fn=lambda: vault.write_trade_log(market_id, parsed),
-                payload=parsed,
+                write_fn=lambda: vault.write_trade_log(market_id, trade),
+                payload=trade,
                 artifact_label="trade log",
                 phase="phase4",
             ):
                 vault.clear_execution_intent(market_id)
-                below = bool(allocation["below_edge_threshold"]) or not size_usd > 0
                 _ledger_safe(
                     vault,
                     market_id,
                     "below_edge" if below else "traded",
                     reason="below_edge_threshold" if below else None,
                     q=q,
-                    p=row["p_value"],
-                    p_low=row.get("p_low"),
-                    p_high=row.get("p_high"),
+                    p=p_value,
+                    p_low=p_low,
+                    p_high=p_high,
                     side=allocation.get("side"),
                     price=allocation.get("price"),
                     shares=allocation.get("shares"),
@@ -1373,6 +1791,9 @@ __all__ = [
     "phase1_data_ingestion",
     "phase2_quantitative_routing",
     "build_phase3_queue",
+    "research_ttl_hours",
+    "quick_decision",
+    "aggregate_samples",
     "phase3_qualitative_pipeline",
     "phase3_research_market",
     "compute_allocation",

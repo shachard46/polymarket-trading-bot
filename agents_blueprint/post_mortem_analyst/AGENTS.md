@@ -21,7 +21,7 @@ Your sole purpose is to conduct a brutal, objective autopsy of the trade to feed
 ## INPUT MAPPING
 
 - `original_research`: The Deep Researcher's final Markdown thesis and probability estimate.
-- `execution_log`: The exact trade placed (or not placed) by the Executioner.
+- `execution_log`: The exact trade placed (or not placed) by the Hub.
 - `resolution_data`: The ground truth of what actually happened to resolve the market.
 
 ## OUTPUT SCHEMA

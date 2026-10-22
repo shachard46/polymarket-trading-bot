@@ -1,4 +1,4 @@
-"""Shared stubs for Phase 3 iterative pipeline tests."""
+"""Shared stubs for Phase 3 research pipeline tests."""
 
 from __future__ import annotations
 
@@ -13,12 +13,17 @@ STUB_MARKET_DATA: dict[str, float] = {
     "liquidity": 200.0,
 }
 
+TODAY = "2026-10-22"
+
 
 def briefer_ok(payload: dict[str, Any]) -> dict[str, Any]:
-    title = payload.get("market_title", "")
+    title = payload.get("title", "")
+    today = payload.get("today", TODAY)
     return {
         "market_id": payload["market_id"],
-        "research_queries": [f"stub query for {title}".strip()],
+        "research_queries": [
+            f"stub query {slot} for {title} as of {today}".strip() for slot in range(1, 5)
+        ],
         "error": None,
     }
 
@@ -26,14 +31,28 @@ def briefer_ok(payload: dict[str, Any]) -> dict[str, Any]:
 def deep_researcher_complete(
     payload: dict[str, Any],
     *,
-    estimated_p: float = 0.5,
+    estimated_p: float = 0.6,
+    p_low: float | None = None,
+    p_high: float | None = None,
+    confidence: str = "medium",
 ) -> dict[str, Any]:
+    """Price-blind complete payload; the default p=0.6 +/- 0.08 diverges from q=0.42."""
     market_id = payload["market_id"]
+    p_low = max(0.0, estimated_p - 0.08) if p_low is None else p_low
+    p_high = min(1.0, estimated_p + 0.08) if p_high is None else p_high
     return {
         "status": "complete",
         "market_id": market_id,
         "estimated_p": estimated_p,
-        "markdown": _stub_deep_researcher_markdown(market_id, estimated_p=estimated_p),
+        "p_low": p_low,
+        "p_high": p_high,
+        "confidence": confidence,
+        "resolution_checklist": ["YES requires the titled event"],
+        "key_assumptions": ["no surprise ruling"],
+        "as_of": TODAY,
+        "markdown": _stub_deep_researcher_markdown(
+            market_id, estimated_p=estimated_p, p_low=p_low, p_high=p_high
+        ),
     }
 
 

@@ -5,7 +5,8 @@
 - **Framework:** Python backend utilizing the local OpenClaw Gateway via the `openclaw` CLI.
 - **Design Pattern:** Hub-and-Spoke. The central Orchestrator (`main.py`) controls execution flow. Agents are strictly ephemeral functions.
 - **Lifecycle:** Orchestrator creates JSON input -> invokes `openclaw agent --agent <id>` -> Agent executes Tools -> Agent returns JSON or Markdown -> Orchestrator parses output.
-- **Tooling:** Agents do not perform math, execute API calls natively, or manage state. They must use the deterministic Python tools defined in `04_skills_contracts.md`.
+- **Tooling:** Agents do not perform math, execute API calls natively, or manage state. Math and trading are deterministic Hub code over the skills in `04_skills_contracts.md` (Phase 4 has no agent).
+- **Price-blind models:** no agent payload contains the market price `q`. Models estimate from market text and evidence; the Hub compares the estimate to `q` (divergence, misread and sample-spread guards) and applies the lambda-shrink toward `q` when sizing. See `02_orchestrator_pipeline.md` section 3.
 - **Quantitative inputs:** Phase 2 is deterministic Hub code (`orchestrator/gate.py`): eligibility, a ranking score, per-market backoff, and an arbitrage check, followed by the price-blind `triage` agent. The `evaluate_market_metrics` skill is a feature source only: the Hub reads its signal bundle (loaded from the polymarket-scraper SQLite DB via `poly-scan`) for a small ranking bonus. No agent consumes it, and agents never query the scraper directly.
 
 ## 2. File System Memory & The Pydantic Gatekeeper
@@ -19,8 +20,8 @@ All system states, research, and logs are maintained in a local Obsidian Vault.
 
 - **`/Vault/00_System/active_directives.md`**: Overwritten exclusively by the Overseer. Format: YAML frontmatter with strict config thresholds.
 - **`/Vault/01_Filters/`**: Logs detailing passed quantitative evaluations. Format: Pure JSON (or `.md` with only YAML frontmatter).
-- **`/Vault/02_Active_Research/`**: Active workspace. Format: Strict YAML Frontmatter containing `market_id` and `estimated_p`, followed by Markdown headers (`## Bull Thesis`, `## Bear Thesis`, `## Post-Mortem`).
-- **`/Vault/03_Trades/`**: Execution logs and position-sizing calculations. Format: Pure JSON deterministic dump.
+- **`/Vault/02_Active_Research/`**: Active workspace. Format: Strict YAML Frontmatter containing `market_id`, `estimated_p`, `p_low`, `p_high`, `confidence`, `as_of`, and the Hub-side `q_at_research` / `researched_at`, followed by Markdown headers (`## Bull Thesis`, `## Bear Thesis`, `## Post-Mortem`). Also holds `aiq_cache.json` (24h A-IQ query cache) and `research_bundles/`.
+- **`/Vault/03_Trades/`**: Execution logs and position-sizing calculations (`side`, `price`, `shares`, `p`, `p_low`, `p_high`, `q_entry`, `executed`, `transaction_hash`). Format: Pure JSON deterministic dump written by the Hub.
 - **`/Vault/04_Post_Mortems/`**: Resolved markets moved here. The Post-Mortem analyst appends text directly under the existing `## Post-Mortem` header.
 
 ## 4. The Cold Start Protocol

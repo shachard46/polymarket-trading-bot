@@ -12,7 +12,7 @@ import pytest
 from config.trading_constants import BANKROLL_USD
 from obsidian_utils import ObsidianManager
 from orchestrator import config as orch_config
-from orchestrator import loop, phases, scraper
+from orchestrator import ledger, loop, phases, scraper
 from orchestrator.openclaw_cli import OpenClawCLIError
 from orchestrator.parse import run_agent_with_format_retries
 from orchestrator.runner import spawn_agent
@@ -256,9 +256,7 @@ def test_poisoned_bundle_is_replanned_and_refetched(vault, monkeypatch):
         roles.append(role)
         return briefer_ok(payload) if role == "briefer" else deep_researcher_complete(payload)
 
-    out = phases._run_iterative_research(
-        vault, runner, _row("m-p"), "d", from_edge=False, planning_context=None
-    )
+    out = phases._research_market(vault, runner, _row("m-p"), "d")
     assert out is not None and roles[0] == "briefer" and fetched
     assert any(e["research_data"] == "real" for e in vault.read_research_bundle("m-p"))
 
@@ -268,16 +266,14 @@ def test_usable_bundle_is_reused_without_planning(vault, monkeypatch):
 
     def runner(role, payload):
         assert role == "deep_researcher"
-        assert payload["q"] == STUB_MARKET_DATA["yes_price"]
+        assert "q" not in payload and "yes_price" not in payload
         return deep_researcher_complete(payload)
 
-    assert phases._run_iterative_research(
-        vault, runner, _row("m-u"), "d", from_edge=False, planning_context=None
-    )
+    assert phases._research_market(vault, runner, _row("m-u"), "d")
 
 
-def test_edge_refresh_always_plans_and_replaces_stale_rows(vault, monkeypatch):
-    vault.write_research_bundle("m-e", [{"query": "stub query for T", "research_data": "STALE", "error": None}])
+def test_refresh_always_plans_and_replaces_stale_rows(vault, monkeypatch):
+    vault.write_research_bundle("m-e", [{"query": "stale q", "research_data": "STALE", "error": None}])
     monkeypatch.setattr(
         phases,
         "fetch_research_bundle",
@@ -287,16 +283,12 @@ def test_edge_refresh_always_plans_and_replaces_stale_rows(vault, monkeypatch):
 
     def runner(role, payload):
         roles.append(role)
-        if role == "briefer":
-            assert payload["planning_context"] == "ctx"
-            return briefer_ok(payload)
-        return deep_researcher_complete(payload)
+        return briefer_ok(payload) if role == "briefer" else deep_researcher_complete(payload)
 
-    phases._run_iterative_research(
-        vault, runner, _row("m-e"), "d", from_edge=True, planning_context="ctx"
-    )
+    phases._research_market(vault, runner, _row("m-e"), "d", refresh=True)
     assert roles[0] == "briefer"
-    assert [e["research_data"] for e in vault.read_research_bundle("m-e")] == ["FRESH"]
+    data = [e["research_data"] for e in vault.read_research_bundle("m-e")]
+    assert data and set(data) == {"FRESH"}
 
 
 def test_forced_synthesis_fetches_last_pending_queries(vault, monkeypatch):
@@ -319,115 +311,143 @@ def test_forced_synthesis_fetches_last_pending_queries(vault, monkeypatch):
         n["i"] += 1
         return {"status": "needs_more_data", "new_queries": [f"follow-up {n['i']}"]}
 
-    phases._run_iterative_research(
-        vault, runner, _row("m-f"), "d", from_edge=False, planning_context=None
-    )
+    phases._research_market(vault, runner, _row("m-f"), "d")
     last = f"follow-up {n['i']}"
+    assert n["i"] == 2  # one round + one follow-up round, then forced synthesis
     assert last in fetched and last in forced_bundle
 
 
-# --- 10. Phase 4 ------------------------------------------------------------
+# --- 10. Phase 4 (deterministic) -------------------------------------------
 
 
 @pytest.fixture()
-def paper(monkeypatch):
-    monkeypatch.setattr(phases, "PAPER_TRADE_MODE", True)
-
-
-def _lying_executioner(calls: list[dict[str, Any]]):
-    def runner(role, payload):
-        assert role == "executioner"
-        calls.append(payload)
-        return {
-            "market_id": payload["market_id"],
-            "allocation_usd": 999999.0,
-            "score": 42.0,
-            "below_edge_threshold": True,
-            "executed": True,
-            "transaction_hash": "0xdead",
-            "error": None,
-        }
-
-    return runner
-
-
-def test_phase4_overrides_llm_allocation_and_forces_paper(vault, paper):
+def trades(monkeypatch):
+    """Spy around the real (paper) ``execute_polymarket_trade`` skill."""
     calls: list[dict[str, Any]] = []
-    row = {"market_id": "m4", "p_value": 0.8, "market_data": dict(GOOD_DATA)}
-    phases.phase4_execution(vault, [row], runner=_lying_executioner(calls))
-    payload = calls[0]
-    assert payload["q"] == 0.3 and payload["allocation"]["error"] is None
+    real = phases._load_execute_polymarket_trade()
+
+    def spy(**kwargs):
+        calls.append(kwargs)
+        return real(**kwargs)
+
+    monkeypatch.setattr(phases, "_load_execute_polymarket_trade", lambda: spy)
+    return calls
+
+
+def _fake_trade(monkeypatch, calls, **result):
+    out = {"success": True, "transaction_hash": "0xabc", "paper": False, "error": None, **result}
+
+    def fn(**kwargs):
+        calls.append(kwargs)
+        return out
+
+    monkeypatch.setattr(phases, "_load_execute_polymarket_trade", lambda: fn)
+
+
+def _p4row(market_id, p, data=None, **extra):
+    return {"market_id": market_id, "p_value": p, "market_data": dict(data or GOOD_DATA), **extra}
+
+
+def test_phase4_yes_trade_calls_skill_and_logs(vault, trades):
+    row = _p4row("m4", 0.8, p_low=0.7, p_high=0.9)
+    phases.phase4_execution(vault, [row])
+    assert len(trades) == 1
+    call = trades[0]
     trade = vault.read_trade_log_dict("m4")
-    expected = payload["allocation"]
-    assert trade["allocation_usd"] == expected["allocation_usd"] > 0
-    assert trade["allocation_usd"] < 999999
-    assert trade["score"] == expected["edge"]
-    assert (trade["side"], trade["price"], trade["shares"]) == (expected["side"], expected["price"], expected["shares"])
-    assert trade["below_edge_threshold"] is False
-    assert trade["executed"] is False and trade["transaction_hash"] is None
+    assert call["market_id"] == "m4" and call["outcome"] == "YES"
+    assert call["amount"] == trade["allocation_usd"] > 0
+    assert call["price"] == trade["price"]
+    assert (trade["side"], trade["q_entry"], trade["p"]) == ("YES", 0.3, 0.8)
+    assert (trade["p_low"], trade["p_high"]) == (0.7, 0.9)
+    assert trade["shares"] > 0 and trade["below_edge_threshold"] is False
+    assert trade["executed"] is False  # paper
+    assert str(trade["transaction_hash"]).startswith("PAPER-")
     assert not vault.has_execution_intent("m4")
+    rows = [r for r in ledger.iter_rows(vault) if r["market_id"] == "m4"]
+    assert [r["stage"] for r in rows] == ["traded"]
+    assert rows[0]["side"] == "YES" and rows[0]["p_low"] == 0.7
 
 
-def test_phase4_remaining_bankroll_counts_open_trades(vault, paper):
+def test_phase4_no_trade_buys_the_no_side(vault, trades):
+    data = {**GOOD_DATA, "yes_price": 0.7}
+    phases.phase4_execution(vault, [_p4row("m4no", 0.1, data)])
+    assert trades[0]["outcome"] == "NO"
+    trade = vault.read_trade_log_dict("m4no")
+    assert trade["side"] == "NO" and trade["allocation_usd"] > 0
+    assert trade["price"] == pytest.approx(0.3)  # NO ask = 1 - q
+
+
+def test_phase4_live_result_marks_executed(vault, monkeypatch):
+    calls: list[dict[str, Any]] = []
+    _fake_trade(monkeypatch, calls, paper=False)
+    phases.phase4_execution(vault, [_p4row("m4live", 0.8)])
+    trade = vault.read_trade_log_dict("m4live")
+    assert trade["executed"] is True and trade["transaction_hash"] == "0xabc"
+
+
+def test_phase4_below_edge_skips_the_skill_and_ledgers(vault, trades):
+    phases.phase4_execution(vault, [_p4row("m4be", 0.31)])
+    assert trades == []
+    trade = vault.read_trade_log_dict("m4be")
+    assert trade["allocation_usd"] == 0 and trade["below_edge_threshold"] is True
+    assert trade["executed"] is False and trade["transaction_hash"] is None
+    assert not vault.has_execution_intent("m4be")
+    stages = [r["stage"] for r in ledger.iter_rows(vault) if r["market_id"] == "m4be"]
+    assert stages == ["below_edge"]
+
+
+def test_phase4_remaining_bankroll_counts_open_trades(vault, trades):
     vault.write_trade_log(
         "other", {"market_id": "other", "allocation_usd": BANKROLL_USD - 1.0, "executed": False}
     )
-    calls: list[dict[str, Any]] = []
-    row = {"market_id": "m4b", "p_value": 0.8, "market_data": dict(GOOD_DATA)}
-    phases.phase4_execution(vault, [row], runner=_lying_executioner(calls))
+    phases.phase4_execution(vault, [_p4row("m4b", 0.8)])
     assert vault.read_trade_log_dict("m4b")["allocation_usd"] <= 1.0 + 1e-9
 
 
-def test_phase4_intent_and_trade_block_second_execution(vault, paper):
-    calls: list[dict[str, Any]] = []
-    row = {"market_id": "m4c", "p_value": 0.8, "market_data": dict(GOOD_DATA)}
-    phases.phase4_execution(vault, [row], runner=_lying_executioner(calls))
-    phases.phase4_execution(vault, [row], runner=_lying_executioner(calls))
-    assert len(calls) == 1  # trade log blocks
+def test_phase4_intent_and_trade_block_second_execution(vault, trades):
+    row = _p4row("m4c", 0.8)
+    phases.phase4_execution(vault, [row])
+    phases.phase4_execution(vault, [row])
+    assert len(trades) == 1  # trade log blocks
 
     vault.write_execution_intent("m4d", {"market_id": "m4d"})
-    row_d = {"market_id": "m4d", "p_value": 0.8, "market_data": dict(GOOD_DATA)}
-    phases.phase4_execution(vault, [row_d], runner=_lying_executioner(calls))
-    assert len(calls) == 1  # intent blocks
+    phases.phase4_execution(vault, [_p4row("m4d", 0.8)])
+    assert len(trades) == 1  # intent blocks
 
 
-def test_phase4_failure_leaves_intent_and_not_reeligible(vault, paper):
-    row = {"market_id": "m4e", "p_value": 0.8, "market_data": dict(GOOD_DATA)}
+def test_phase4_failure_leaves_intent_and_not_reeligible(vault, monkeypatch):
+    row = _p4row("m4e", 0.8)
     vault.write_research_report("m4e", {"market_id": "m4e", "estimated_p": 0.8}, RESEARCH_MD)
+    calls: list[dict[str, Any]] = []
+    _fake_trade(monkeypatch, calls, success=False, transaction_hash=None, error="venue rejected")
 
-    def failing(role, payload):
-        return {"market_id": payload["market_id"], "allocation_usd": 0.0, "executed": False,
-                "error": "venue rejected"}
-
-    phases.phase4_execution(vault, [row], runner=failing)
+    phases.phase4_execution(vault, [row])
     assert vault.has_execution_intent("m4e")
     assert vault.read_trade_log_dict("m4e") is None
-    calls: list[dict[str, Any]] = []
+    assert vault.is_market_inactive("m4e", dir_key="active")
     assert phases._phase4_queue(vault, []) == []  # vault scan will not re-queue it
-    phases.phase4_execution(vault, [row], runner=_lying_executioner(calls))
-    assert calls == []
+    phases.phase4_execution(vault, [row])
+    assert len(calls) == 1
 
 
-def test_phase4_infra_failure_keeps_intent_and_aborts(vault, paper):
-    row = {"market_id": "m4f", "p_value": 0.8, "market_data": dict(GOOD_DATA)}
-
-    def down(role, payload):
+def test_phase4_infra_failure_keeps_intent_and_aborts(vault, monkeypatch):
+    def down(**_kw):
         raise OpenClawCLIError("gateway down")
 
+    monkeypatch.setattr(phases, "_load_execute_polymarket_trade", lambda: down)
     with pytest.raises(InfraUnavailable):
-        phases.phase4_execution(vault, [row], runner=down)
+        phases.phase4_execution(vault, [_p4row("m4f", 0.8)])
     assert vault.has_execution_intent("m4f")
 
 
-def test_phase4_skips_when_q_unavailable(vault, paper):
-    data = {**GOOD_DATA, "yes_price": None}
+def test_phase4_skips_when_q_unavailable(vault, trades):
+    data = dict(GOOD_DATA)
     data.pop("yes_price")
-    row = {"market_id": "m4g", "p_value": 0.8, "market_data": data}
-    phases.phase4_execution(vault, [row], runner=lambda r, p: pytest.fail("spawned"))
-    assert not vault.has_execution_intent("m4g")
+    phases.phase4_execution(vault, [_p4row("m4g", 0.8, data)])
+    assert trades == [] and not vault.has_execution_intent("m4g")
 
 
-def test_phase4_vault_scan_queue(vault, paper, monkeypatch):
+def test_phase4_vault_scan_queue(vault, trades, monkeypatch):
     for mid in ("scan-ok", "scan-traded", "scan-bad"):
         vault.write_research_report(mid, {"market_id": mid, "estimated_p": 0.8}, RESEARCH_MD)
     vault.write_trade_log("scan-traded", {"market_id": "scan-traded", "allocation_usd": 0.0, "executed": False})
@@ -439,17 +459,28 @@ def test_phase4_vault_scan_queue(vault, paper, monkeypatch):
         "fetch_market_row",
         lambda mid: MarketRow(market_id=mid, market_title="T", market_data=dict(GOOD_DATA)),
     )
-    calls: list[dict[str, Any]] = []
     # one researched this tick + a duplicate of a scanned market
-    researched = [{"market_id": "scan-ok", "p_value": 0.8, "market_data": dict(GOOD_DATA)}]
-    phases.phase4_execution(vault, researched, runner=_lying_executioner(calls))
-    assert [c["market_id"] for c in calls] == ["scan-ok"]  # deduped, others filtered
+    researched = [_p4row("scan-ok", 0.8)]
+    phases.phase4_execution(vault, researched)
+    assert [c["market_id"] for c in trades] == ["scan-ok"]  # deduped, others filtered
     assert vault.read_trade_log_dict("scan-ok") is not None
 
-    vault.write_research_report("scan-new", {"market_id": "scan-new", "estimated_p": 0.8}, RESEARCH_MD)
-    calls.clear()
-    phases.phase4_execution(vault, [], runner=_lying_executioner(calls))
-    assert [c["market_id"] for c in calls] == ["scan-new"]
+    vault.write_research_report(
+        "scan-new",
+        {"market_id": "scan-new", "estimated_p": 0.8, "p_low": 0.7, "p_high": 0.9},
+        RESEARCH_MD,
+    )
+    trades.clear()
+    phases.phase4_execution(vault, [])
+    assert [c["market_id"] for c in trades] == ["scan-new"]
+    assert vault.read_trade_log_dict("scan-new")["p_high"] == 0.9
+
+
+def test_phase4_edge_dq_trade_reexecutes_after_fresh_research(vault, trades):
+    phases.phase4_execution(vault, [_p4row("m4r", 0.31)])  # below edge -> trade log, no skill call
+    assert trades == []
+    phases.phase4_execution(vault, [_p4row("m4r", 0.8)])  # fresh research: re-executes
+    assert len(trades) == 1 and vault.read_trade_log_dict("m4r")["side"] == "YES"
 
 
 # --- 11. Phase 6 caps -------------------------------------------------------
@@ -523,16 +554,12 @@ def test_runner_mode_rejects_unknown(monkeypatch):
 
 def test_stub_responses_satisfy_new_schemas(monkeypatch):
     monkeypatch.setenv(orch_config.RUNNER_MODE_ENV, "stub")
-    alloc = {"allocation_usd": 0.0, "score": 0.0, "below_edge_threshold": True, "error": None}
-    spawn_agent(
-        "executioner",
-        {"market_id": "m", "p_value": 0.5, "q": 0.4, "allocation": alloc,
-         "market_data": {}, "paper_trade_mode": True},
-    )
     spawn_agent(
         "deep_researcher",
-        {"market_id": "m", "market_data": {}, "q": 0.4, "directives": "",
-         "research_bundle": [], "system_override": None, "format_validation_error": None},
+        {"market_id": "m", "title": "T", "description": "", "resolution_source": None,
+         "end_date": None, "category": None, "today": "2026-01-01", "mode": "quick",
+         "directives": "", "research_bundle": [], "system_override": None,
+         "format_validation_error": None, "session_tag": None},
     )
     spawn_agent(
         "triage",

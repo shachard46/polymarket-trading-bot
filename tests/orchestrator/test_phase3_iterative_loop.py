@@ -91,6 +91,8 @@ def test_phase3_needs_more_data_then_complete(monkeypatch, vault):
         if role == "briefer":
             return briefer_ok(payload)
         if role == "deep_researcher":
+            if payload["mode"] == "quick" or payload.get("system_override"):
+                return deep_researcher_complete(payload)
             dr_calls["n"] += 1
             if dr_calls["n"] == 1:
                 return deep_researcher_needs_more(payload)
@@ -120,7 +122,7 @@ def test_phase3_forced_synthesis_on_iteration_cap(monkeypatch, vault):
         if role == "briefer":
             return briefer_ok(payload)
         if role == "deep_researcher":
-            if payload.get("system_override"):
+            if payload.get("system_override") or payload["mode"] == "quick":
                 return deep_researcher_complete(payload)
             return deep_researcher_needs_more(payload)
         raise AssertionError(role)
@@ -145,6 +147,8 @@ def test_phase3_forced_synthesis_disobedience_flags_inactive(monkeypatch, vault)
         if role == "briefer":
             return briefer_ok(payload)
         if role == "deep_researcher":
+            if payload["mode"] == "quick":
+                return deep_researcher_complete(payload)
             return deep_researcher_needs_more(payload)
         raise AssertionError(role)
 
@@ -177,6 +181,7 @@ def test_phase3_briefer_error_with_empty_queries_flags_inactive(monkeypatch, vau
             }
         if role == "deep_researcher":
             calls["dr"] += 1
+            assert payload["mode"] == "quick"  # the full stage never starts
             return deep_researcher_complete(payload)
         raise AssertionError(role)
 
@@ -189,7 +194,7 @@ def test_phase3_briefer_error_with_empty_queries_flags_inactive(monkeypatch, vau
     out = phases.phase3_qualitative_pipeline(vault, runner=runner)
     assert out == []
     assert calls["fetch"] == 0
-    assert calls["dr"] == 0
+    assert calls["dr"] == 1  # quick stage only
     filt = vault.read_filter_log("0xabc")
     assert filt is not None
     assert filt.get(STATUS_KEY) == STATUS_INACTIVE

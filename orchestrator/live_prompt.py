@@ -6,8 +6,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 
+def today_date() -> str:
+    """UTC date as ``YYYY-MM-DD`` (the ``today`` field of price-blind agent payloads)."""
+    return f"{datetime.now(tz=timezone.utc):%Y-%m-%d}"
+
+
 def today_line() -> str:
-    return f"Today's date: {datetime.now(tz=timezone.utc):%Y-%m-%d} (UTC)."
+    return f"Today's date: {today_date()} (UTC)."
 
 
 def build_live_response_hint(output_schema: dict[str, Any]) -> str:
@@ -45,4 +50,4 @@ def build_live_response_hint(output_schema: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-__all__ = ["build_live_response_hint", "today_line"]
+__all__ = ["build_live_response_hint", "today_date", "today_line"]

@@ -160,7 +160,7 @@ def normalize_structured_output(
     """Backfill known output fields from the orchestrator payload when missing."""
     if role == "briefer" and "research_queries" not in parsed and parsed.get("summary"):
         raise ValueError(
-            "legacy field 'summary' removed; emit research_queries (1-3 strings). "
+            "legacy field 'summary' removed; emit research_queries (4 fixed-slot strings). "
             "Hub runs A-IQ from research_queries — you do not call tools."
         )
 
@@ -182,20 +182,22 @@ def _legacy_markdown_to_complete(markdown: str, payload: dict[str, Any]) -> dict
     """Wrap pre–state-machine Deep Researcher markdown as ``status: complete``."""
     log.info("[deep_researcher] coerced legacy markdown to status=complete")
     market_id = str(payload.get("market_id") or "")
-    estimated_p = 0.5
+    out: dict[str, Any] = {"status": "complete", "market_id": market_id, "markdown": markdown}
     try:
         research = parse_deep_researcher(markdown)
-        estimated_p = research.estimated_p
+        out["estimated_p"] = research.estimated_p
         if research.market_id:
-            market_id = research.market_id
+            out["market_id"] = research.market_id
+        # Carry the new contract fields when the frontmatter has them; otherwise the
+        # state-machine validation rejects the response (no silent defaults).
+        for key in (
+            "p_low", "p_high", "confidence", "resolution_checklist", "key_assumptions", "as_of",
+        ):
+            if research.frontmatter.get(key) is not None:
+                out[key] = research.frontmatter[key]
     except ValueError:
-        pass
-    return {
-        "status": "complete",
-        "market_id": market_id,
-        "estimated_p": estimated_p,
-        "markdown": markdown,
-    }
+        out["estimated_p"] = 0.5
+    return out
 
 
 def coerce_deep_researcher_state_machine(

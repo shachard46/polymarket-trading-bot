@@ -145,8 +145,8 @@ class MarketRow(BaseModel):
     """Hub-validated row carrying every field downstream spokes need.
 
     Constructed by the Orchestrator from `poly-scan get_open_markets`. The
-    Briefer reads `market_title` + `market_description`; the Executioner
-    reads `market_data` (q, V, L, ...).
+    Hub reads `market_data` (q, V, L, ...); price-blind agents only
+    receive the text fields and a whitelisted subset of `market_data`.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -157,12 +157,12 @@ class MarketRow(BaseModel):
     market_data: dict[str, Any] = Field(default_factory=dict)
 
 
-# Fields executioner / deep researcher use for implied price (q), in priority order.
+# Fields the Hub uses for implied price (q), in priority order.
 Q_SOURCE_FIELDS: tuple[str, ...] = ("yes_price", "last_trade_price", "midpoint")
 
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
 
-# Minimum snapshot fields required before spawning executioner (phase 4).
+# Minimum snapshot fields required before executing (phase 4).
 _EXECUTION_REQUIRED_FIELDS: tuple[str, ...] = Q_SOURCE_FIELDS + ("volume", "liquidity")
 
 

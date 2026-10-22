@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Literal, Optional
 
 import yaml
-from pydantic import BaseModel, ValidationError, field_validator
+from pydantic import BaseModel, ValidationError, field_validator, model_validator
 
 from config.trading_constants import (
     F_MAX,
@@ -112,36 +112,54 @@ class FilterLogPayload(BaseModel):
     next_check_at: Optional[str] = None
     last_q: Optional[float] = None
     triage: Optional[dict[str, Any]] = None
+    # Phase 3 bookkeeping (Hub-side): last research attempt (stage/outcome/p/range/q/at)
+    # and a pending refresh trigger set by Phase 2 ("price_move").
+    research_state: Optional[dict[str, Any]] = None
+    refresh_reason: Optional[str] = None
 
 
 class ResearchFrontmatter(BaseModel):
-    """YAML frontmatter block from the Deep Researcher — written to 02_Active_Research/."""
+    """YAML frontmatter of an active research report — written to 02_Active_Research/.
+
+    ``estimated_p`` / ``p_low`` / ``p_high`` are the aggregated FULL-stage values.
+    ``q_at_research`` is the market price when the research ran; it is Hub-side
+    bookkeeping (refresh trigger) and is never sent to a model.
+    """
 
     market_id: str
     estimated_p: float
     error: Optional[str] = None
-    edge_research_refresh_count: int = 0
-    edge_research_refresh_attempts: int = 0
+    p_low: Optional[float] = None
+    p_high: Optional[float] = None
+    confidence: Optional[str] = None
+    as_of: Optional[str] = None
+    resolution_checklist: list[str] = []
+    key_assumptions: list[str] = []
+    q_at_research: Optional[float] = None
+    researched_at: Optional[str] = None
+    end_date: Optional[str] = None
+    days_at_research: Optional[float] = None
+    samples: list[float] = []
     status: Optional[str] = None
     error_log: Optional[dict[str, Any]] = None
 
-    @field_validator("estimated_p")
+    @field_validator("estimated_p", "p_low", "p_high")
     @classmethod
-    def _p_in_unit_interval(cls, v: float) -> float:
-        if not (0.0 <= v <= 1.0):
-            raise ValueError(f"estimated_p must be in [0, 1], got {v}")
+    def _p_in_unit_interval(cls, v: Optional[float]) -> Optional[float]:
+        if v is not None and not (0.0 <= v <= 1.0):
+            raise ValueError(f"probability must be in [0, 1], got {v}")
         return v
 
-    @field_validator("edge_research_refresh_count", "edge_research_refresh_attempts")
-    @classmethod
-    def _edge_refresh_non_negative(cls, v: int) -> int:
-        if v < 0:
-            raise ValueError("edge_research_refresh_count/attempts must be >= 0")
-        return v
+    @model_validator(mode="after")
+    def _range_brackets_estimate(self) -> "ResearchFrontmatter":
+        if self.p_low is not None and self.p_high is not None:
+            if not (self.p_low - 1e-9 <= self.estimated_p <= self.p_high + 1e-9):
+                raise ValueError("expected p_low <= estimated_p <= p_high")
+        return self
 
 
 class TradeLogPayload(BaseModel):
-    """Trade Executioner output — written to 03_Trades/."""
+    """Hub-built trade record (allocation + execute_polymarket_trade result) — written to 03_Trades/."""
 
     market_id: str
     allocation_usd: float
@@ -498,7 +516,7 @@ class ObsidianManager:
         return dest
 
     def write_trade_log(self, market_id: str, payload: dict) -> Path:
-        """Validate a Trade Executioner payload and write to ``03_Trades/``.
+        """Validate a trade payload and write to ``03_Trades/``.
 
         The file is written as a pretty-printed JSON document.
 
@@ -507,7 +525,7 @@ class ObsidianManager:
         market_id:
             Polymarket condition_id; used as the filename stem.
         payload:
-            Raw dict returned by the Trade Executioner agent.
+            Trade dict built by the Hub (allocation + trade skill result).
 
         Returns
         -------
@@ -877,7 +895,7 @@ class ObsidianManager:
         return self._intent_path(market_id).exists()
 
     def write_execution_intent(self, market_id: str, record: dict[str, Any]) -> Path:
-        """Persist an intent record before the Executioner is spawned (kept out of ``iter_open_trades``)."""
+        """Persist an intent record before the trade skill is called (kept out of ``iter_open_trades``)."""
         path = self._intent_path(market_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         _atomic_write_text(path, json.dumps(record, indent=2, default=str))

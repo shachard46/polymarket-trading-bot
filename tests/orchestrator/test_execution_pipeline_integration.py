@@ -1,9 +1,7 @@
-"""Live Phase 4 smoke: pre-researched market → Executioner → trade log JSON.
+"""Live Phase 4 smoke: pre-researched market → deterministic sizing + trade skill → trade log JSON.
 
 Opt-in only (skipped in normal ``pytest`` runs). Use on a host with:
 
-- OpenClaw Gateway
-- live ``polymarket-executioner`` agent with ``calculate_trade_allocation``
 - ``PAPER_TRADE_MODE=True`` in ``config/trading_constants.py`` (default)
 - a vault that already has Phase 3 research for your market
   (``02_Active_Research/{market_id}.md``)
@@ -19,7 +17,6 @@ Trade output is JSON at ``Vault/03_Trades/{market_id}.json`` (not markdown).
 
 ```bash
 export OPENCLAW_PHASE4_LIVE=1
-export OPENCLAW_ORCHESTRATOR_MODE=live
 export OPENCLAW_PHASE4_MARKET_ID=0x...          # required: pre-researched market
 export OPENCLAW_VAULT_PATH=/path/to/vault       # required: must contain active research
 export POLYMARKET_DB_PATH=/path/to/polymarket.db
@@ -37,12 +34,10 @@ from __future__ import annotations
 import logging
 import os
 import sys
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
 
 # Allow ``python tests/orchestrator/test_execution_pipeline_integration.py`` from repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -53,11 +48,8 @@ from config.vault import VAULT_PATH_ENV
 from obsidian_utils import ObsidianManager, TradeLogPayload
 from orchestrator import phases, scraper
 from orchestrator.scraper import market_data_hydration_error
-from orchestrator.config import PAPER_TRADE_MODE, RUNNER_MODE_ENV, RUNNER_MODE_LIVE
-from orchestrator.openclaw_cli import require_gateway
+from orchestrator.config import PAPER_TRADE_MODE
 from orchestrator.research import parse_deep_researcher
-from orchestrator.runner import spawn_agent
-from orchestrator.schema_validation import build_model, validate_payload
 from orchestrator.state import is_inactive
 
 _PHASE4_LIVE_ENV = "OPENCLAW_PHASE4_LIVE"
@@ -65,22 +57,6 @@ _PHASE4_MARKET_ENV = "OPENCLAW_PHASE4_MARKET_ID"
 _LOG_LEVEL_ENV = "OPENCLAW_PHASE4_LOG_LEVEL"
 
 log = logging.getLogger(__name__)
-
-_EXECUTIONER_AGENT_YAML = (
-    _REPO_ROOT / "agents_blueprint" / "executioner" / "agent.yaml"
-)
-
-
-@lru_cache(maxsize=1)
-def _executioner_output_schema() -> dict[str, Any]:
-    """Load executioner output_schema without importing ``agents_blueprint`` (avoids circular import)."""
-    with _EXECUTIONER_AGENT_YAML.open(encoding="utf-8") as fh:
-        spec = yaml.safe_load(fh)
-    schema = spec.get("output_schema")
-    if not isinstance(schema, dict):
-        raise RuntimeError(f"invalid output_schema in {_EXECUTIONER_AGENT_YAML}")
-    return schema
-
 
 def _configure_logging() -> None:
     level_name = os.environ.get(_LOG_LEVEL_ENV, "INFO").upper()
@@ -185,15 +161,14 @@ def _run_live_execution(vault: ObsidianManager, row: dict[str, Any]) -> None:
         "starting phase4_execution",
         market_id=market_id,
         p_value=row["p_value"],
-        runner_mode=os.environ.get(RUNNER_MODE_ENV, RUNNER_MODE_LIVE),
         paper_trade_mode=PAPER_TRADE_MODE,
     )
-    phases.phase4_execution(vault, [row], runner=spawn_agent)
+    phases.phase4_execution(vault, [row])
     _log_status("phase4_execution complete", market_id=market_id)
 
 
 def _assert_trade_log_ok(vault: ObsidianManager, market_id: str) -> dict[str, Any]:
-    """Validate trade JSON, executioner contract, and paper-trade invariants."""
+    """Validate trade JSON and paper-trade invariants."""
     trade = vault.read_trade_log_dict(market_id)
     assert trade is not None, (
         f"03_Trades/{market_id}.json missing after phase4_execution; "
@@ -206,17 +181,10 @@ def _assert_trade_log_ok(vault: ObsidianManager, market_id: str) -> dict[str, An
     validated = TradeLogPayload.model_validate(trade)
     assert validated.market_id == market_id
 
-    output_model = build_model(
-        "executioner_output",
-        _executioner_output_schema(),
-    )
-    assert output_model is not None
-    validate_payload("executioner", "output", output_model, trade)
-
     assert trade["executed"] is False, "paper trade must not set executed=True"
-    assert trade["transaction_hash"] is None, (
-        "paper trade must not persist a transaction_hash"
-    )
+    assert trade["transaction_hash"] is None or str(trade["transaction_hash"]).startswith(
+        "PAPER-"
+    ), "paper trade hash must be a PAPER- placeholder"
 
     allocation = trade["allocation_usd"]
     assert isinstance(allocation, (int, float))
@@ -226,15 +194,13 @@ def _assert_trade_log_ok(vault: ObsidianManager, market_id: str) -> dict[str, An
 
 
 def run_phase4_isolated() -> int:
-    """Run Phase 4 once with live executioner; return process exit code."""
+    """Run Phase 4 once (deterministic, paper); return process exit code."""
     _configure_logging()
     os.environ.setdefault(_PHASE4_LIVE_ENV, "1")
-    os.environ.setdefault(RUNNER_MODE_ENV, RUNNER_MODE_LIVE)
 
     _log_status(
         "run started",
         live_env=_PHASE4_LIVE_ENV,
-        runner_mode=os.environ.get(RUNNER_MODE_ENV),
         paper_trade_mode=PAPER_TRADE_MODE,
     )
 
@@ -244,14 +210,6 @@ def run_phase4_isolated() -> int:
 
     if not _phase4_live_requested():
         log.error("Set %s=1 to run.", _PHASE4_LIVE_ENV)
-        return 2
-
-    try:
-        _log_status("checking OpenClaw gateway")
-        require_gateway()
-        _log_status("gateway ok")
-    except Exception as exc:
-        log.error("OpenClaw gateway not ready: %s", exc)
         return 2
 
     try:
@@ -315,14 +273,6 @@ def phase4_live_env(monkeypatch):
         pytest.skip("PAPER_TRADE_MODE must be True for this live smoke test.")
 
     _log_status("pytest live env: checking prerequisites")
-    monkeypatch.setenv(RUNNER_MODE_ENV, RUNNER_MODE_LIVE)
-    try:
-        require_gateway()
-        _log_status("pytest live env: gateway ok")
-    except Exception as exc:
-        _log_status("pytest live env: skipped", reason=f"gateway: {exc}")
-        pytest.skip(f"OpenClaw gateway not ready: {exc}")
-
     try:
         _require_market_id()
         _require_vault_path()

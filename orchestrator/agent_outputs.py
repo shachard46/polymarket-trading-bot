@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
 DeepResearcherOutput = Union["DeepResearcherNeedsMore", "DeepResearcherComplete"]
+
+
+BRIEFER_QUERY_SLOTS = 4  # resolution/polarity, base rate, current state, disconfirming evidence
 
 
 class BrieferOutput(BaseModel):
@@ -18,19 +22,17 @@ class BrieferOutput(BaseModel):
 
     @field_validator("research_queries")
     @classmethod
-    def _one_to_three_queries(cls, value: list[str]) -> list[str]:
-        cleaned = [str(q).strip() for q in value if str(q).strip()]
-        if len(cleaned) > 3:
-            raise ValueError("research_queries must contain at most 3 non-empty strings")
-        return cleaned
+    def _clean_queries(cls, value: list[str]) -> list[str]:
+        return [str(q).strip() for q in value if str(q).strip()]
 
     @model_validator(mode="after")
-    def _error_or_nonempty_queries(self) -> "BrieferOutput":
+    def _error_or_four_queries(self) -> "BrieferOutput":
         if self.error:
             return self
-        if not self.research_queries:
+        if len(self.research_queries) != BRIEFER_QUERY_SLOTS:
             raise ValueError(
-                "research_queries must contain 1 to 3 non-empty strings when error is null"
+                f"research_queries must contain exactly {BRIEFER_QUERY_SLOTS} non-empty "
+                "strings (fixed slots) when error is null"
             )
         return self
 
@@ -51,10 +53,11 @@ class DeepResearcherNeedsMore(BaseModel):
 
 
 class DeepResearcherComplete(BaseModel):
-    """Complete Forensic Fact Verifier payload.
+    """Complete Forensic Fact Verifier payload (price-blind: the model never sees q).
 
     ``markdown`` is the full active-research wire document: YAML frontmatter plus
     Bull/Bear thesis sections (2-3 max-density bullets each) and empty Post-Mortem.
+    ``p_low <= estimated_p <= p_high``; an inconclusive study reports a wide range.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -62,15 +65,30 @@ class DeepResearcherComplete(BaseModel):
     status: Literal["complete"]
     market_id: str
     estimated_p: float
+    p_low: float
+    p_high: float
+    confidence: Literal["low", "medium", "high"]
+    resolution_checklist: list[str]
+    key_assumptions: list[str]
+    as_of: date
     markdown: str
     error: str | None = None
 
-    @field_validator("estimated_p")
+    @field_validator("estimated_p", "p_low", "p_high")
     @classmethod
     def _p_in_unit_interval(cls, value: float) -> float:
         if not (0.0 <= value <= 1.0):
-            raise ValueError(f"estimated_p must be in [0, 1], got {value}")
+            raise ValueError(f"probability must be in [0, 1], got {value}")
         return value
+
+    @model_validator(mode="after")
+    def _range_brackets_estimate(self) -> "DeepResearcherComplete":
+        if not (self.p_low - 1e-9 <= self.estimated_p <= self.p_high + 1e-9):
+            raise ValueError(
+                f"expected p_low <= estimated_p <= p_high, got "
+                f"{self.p_low} / {self.estimated_p} / {self.p_high}"
+            )
+        return self
 
 
 def _validation_error(message: str, loc: tuple[str, ...], value: Any) -> ValidationError:
@@ -110,6 +128,7 @@ def parse_deep_researcher_json(parsed: dict[str, Any]) -> DeepResearcherOutput:
 
 
 __all__ = [
+    "BRIEFER_QUERY_SLOTS",
     "BrieferOutput",
     "DeepResearcherComplete",
     "DeepResearcherNeedsMore",

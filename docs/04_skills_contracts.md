@@ -111,10 +111,12 @@ description: Polymarket API wrapper. Use this to officially place a trade on the
 ---
 ```
 
-* **Input Schema:** `{"market_id": str (non-empty), "outcome": "YES" | "NO", "amount": float}` — `0 < amount <= MAX_ORDER_USD` (`F_MAX * BANKROLL_USD`), finite.
+* **Input Schema:** `{"market_id": str (non-empty), "outcome": "YES" | "NO", "amount": float, "price": float | null}` — `0 < amount <= MAX_ORDER_USD` (`F_MAX * BANKROLL_USD`), finite; `price` (optional, `0 < price < 1`) is the chosen side's ask, informational for paper trades.
 * **Output Schema:** `{"success": bool, "transaction_hash": str | null, "paper": bool, "error": str | null}` — `paper` is `true` when simulated.
 
-**Invocation:** `python3 {baseDir}/run.py '<json>'` (JSON also accepted on stdin); `calculate_trade_allocation` has an equivalent `run.py`.
+**Callers:** the Hub only. Phase 4 loads the module in-process (like `calculate_trade_allocation`) and calls it with the `compute_allocation` result (`outcome` = side, `amount` = `allocation_usd`, `price`); the trade log records `executed = success and not paper`. No agent has this tool any more.
+
+**Invocation (manual):** `python3 {baseDir}/run.py '<json>'` (JSON also accepted on stdin); `calculate_trade_allocation` has an equivalent `run.py`.
 
 ## 4. Skill: execute_aiq_query
 

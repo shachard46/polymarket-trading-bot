@@ -107,27 +107,6 @@ def is_error_free_active(vault: ObsidianManager, market_id: str) -> bool:
     return True
 
 
-def read_edge_refresh_count(vault: ObsidianManager, market_id: str) -> int:
-    fm = _active_frontmatter(vault, market_id)
-    if fm is None:
-        return 0
-    try:
-        return int(fm.get("edge_research_refresh_count") or 0)
-    except (TypeError, ValueError):
-        return 0
-
-
-def read_edge_refresh_attempts(vault: ObsidianManager, market_id: str) -> int:
-    """Edge refresh cycles *triggered* (edge refresh runs; Wave 3 will redo the trigger), whether or not research re-ran."""
-    fm = _active_frontmatter(vault, market_id)
-    if fm is None:
-        return 0
-    try:
-        return int(fm.get("edge_research_refresh_attempts") or 0)
-    except (TypeError, ValueError):
-        return 0
-
-
 def _build_error_log(phase: str, reason: str, payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "reason": reason,
@@ -444,8 +423,6 @@ __all__ = [
     "build_inactive_filter_payload",
     "is_inactive",
     "is_error_free_active",
-    "read_edge_refresh_count",
-    "read_edge_refresh_attempts",
     "flag_inactive",
     "clear_inactive",
     "market_quarantine",

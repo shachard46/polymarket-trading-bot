@@ -26,8 +26,8 @@ Phase 2's gate is deterministic code (`orchestrator/gate.py`, see `02_orchestrat
 
 ## 2. The Surgical Query Planner (briefer)
 
-- **System Prompt:** "**Surgical Query Planner** in the Phase 3 **Forensic Pipeline** (high velocity + high rigor). Engineer 1–3 unevadable verification questions per turn targeting vulnerabilities, legal conditions, and structural anomalies in the market copy. Forbidden: open-ended thematic queries. The Hub runs `execute_aiq_query` in parallel (`AIQ_TIMEOUT_SEC` poll timeout, 4k chars per result) — you do not call tools."
-- **Input Schema:** `{"market_id": "string", "market_title": "string", "market_description": "string", "planning_context": "string | null"}`
+- **System Prompt:** "**Surgical Query Planner** in the Phase 3 **Forensic Pipeline**. Price-blind: you only see the market text and today's date. Emit exactly 4 fixed-slot verification queries, each containing `as of {today}`. The Hub runs `execute_aiq_query` in parallel (`AIQ_TIMEOUT_SEC` poll timeout, 4k chars per result) - you do not call tools."
+- **Input Schema:** `{"market_id": "string", "title": "string", "description": "string", "resolution_source": "string | null", "end_date": "string | null", "category": "string | null", "today": "string"}` (no price).
 - **Output Schema:**
 
 ```json
@@ -38,56 +38,46 @@ Phase 2's gate is deterministic code (`orchestrator/gate.py`, see `02_orchestrat
 }
 ```
 
-On success: `research_queries` must contain **1–3** non-empty strings and `error` is `null`. On failure: `research_queries` may be `[]` with a non-null `error`.
+On success `research_queries` is a list of **exactly 4** non-empty strings, in slot order: (1) resolution criteria and polarity (what resolves YES; does YES equal the title event?), (2) reference class / base rate, (3) current state as of today, (4) strongest disconfirming evidence. Each must contain `as of {today}` (the Hub appends it if missing). On failure: `research_queries` may be `[]` with a non-null `error`.
 
 ## 3. The Forensic Fact Verifier (deep_researcher)
 
-`q` is the Hub-computed market-implied YES price (`yes_price`, then `last_trade_price`, then midpoint); the agent uses it as its anchor and as the zero-edge `estimated_p`.
+The Deep Researcher is **price-blind**: its payload contains no `q`, `yes_price` or any other market price, and it must not be asked to anchor on or default to one. The Hub compares its output to `q` (see `02_orchestrator_pipeline.md` section 3).
 
-- **System Prompt:** "**Forensic Fact Verifier** in the Phase 3 **Forensic Pipeline**. Verify `research_bundle` with prosecutorial rigor; use `needs_more_data` as exhaustive interrogation when any pricing-critical fact is not 100% verified (1–3 surgical follow-up queries). Output `status: complete` only with ironclad conviction in `estimated_p`. Bull/Bear sections: exactly 2–3 maximum-density, fact-backed asymmetric bullets each (not narrative summaries)."
-- **Input Schema:** `{"market_id": "string", "market_data": "dict", "q": float, "directives": "string", "research_bundle": "list[dict]", "system_override": "string | null", "format_validation_error": "string | null"}`
+- **System Prompt:** "**Forensic Fact Verifier**. Work resolution rules first (polarity!), then reference class, then verified current state as of `today`, then the strongest disconfirming evidence. Output a probability with an honest range. Inconclusive evidence means a wide range and low confidence - never a neutral default. In `mode: quick` you have no bundle and must answer from the market text and your knowledge; in `mode: full` you may use `needs_more_data` once (1-3 follow-up queries)."
+- **Input Schema:** `{"market_id": "string", "title": "string", "description": "string", "resolution_source": "string | null", "end_date": "string | null", "category": "string | null", "today": "string", "mode": "string (quick|full)", "directives": "string", "research_bundle": "list[dict]", "system_override": "string | null", "format_validation_error": "string | null", "session_tag": "string | null"}`. `session_tag` (`quick`, `s1`..`s3`) gives each independent sample its own agent session.
 - **Output Schema (state machine):**
 
 ```json
 {"status": "needs_more_data", "new_queries": ["string"]}
 ```
 
-`new_queries`: **1–3** non-empty strings (Hub fetches in parallel).
-```
+`new_queries`: **1-3** non-empty strings (Hub fetches in parallel). Never allowed in `quick` mode or with `system_override`.
 
 ```json
 {
   "status": "complete",
   "market_id": "string",
   "estimated_p": float,
+  "p_low": float,
+  "p_high": float,
+  "confidence": "low" | "medium" | "high",
+  "resolution_checklist": ["string"],
+  "key_assumptions": ["string"],
+  "as_of": "YYYY-MM-DD",
   "markdown": "string"
 }
 ```
 
-`markdown` is the full `02_Active_Research/{market_id}.md` wire format (YAML frontmatter + `## Bull Thesis`, `## Bear Thesis`, empty `## Post-Mortem`).
+Validated by the Hub: all probabilities in `[0, 1]` and `p_low <= estimated_p <= p_high`. `markdown` is the full wire format (YAML frontmatter with `market_id`, `estimated_p`, optional `p_low`/`p_high`, `error`, then `## Bull Thesis`, `## Bear Thesis`, empty `## Post-Mortem`); the Hub cross-checks `estimated_p` (and `p_low`/`p_high` when present) between the JSON and the frontmatter. The file the Hub writes carries the **aggregated** values of the 3 FULL samples (medians) plus Hub-side `q_at_research`, `researched_at`, `end_date`, `samples`.
 
-**Hub caps (Forensic Pipeline):** Up to **4** Deep Researcher iterations (`MAX_RESEARCH_ITERATIONS`); per-query `research_data` capped at **4000** characters; Phase 3 A-IQ poll timeout **`AIQ_TIMEOUT_SEC`** (`config/trading_constants`, overridable via env). After the iteration cap, forced synthesis requires `status: complete`.
+**Hub caps (Forensic Pipeline):** FULL stage: **1 round + 1 follow-up round** (`MAX_RESEARCH_ITERATIONS = 2`), then forced synthesis requiring `status: complete`; 3 samples per market; per-query `research_data` capped at **4000** characters; A-IQ poll timeout **`AIQ_TIMEOUT_SEC`**; A-IQ results cached 24h.
 
-Hub persistence: cumulative A-IQ results live in `02_Active_Research/research_bundles/{market_id}.json`.
+Hub persistence: cumulative A-IQ results live in `02_Active_Research/research_bundles/{market_id}.json`; the query cache in `02_Active_Research/aiq_cache.json`.
 
-## 4. The Trade Executioner
+## 4. Trade execution (no agent)
 
-- **System Prompt:** "You are a deterministic executor. Use the Hub-computed `allocation` (the Hub runs `calculate_trade_allocation` with `q`, `D`, `L`, `V`), then call `execute_polymarket_trade` (outcome `YES` only) when `paper_trade_mode` is false and `allocation.allocation_usd` > 0."
-- **Input Schema:** `{"market_id": "string", "p_value": float, "q": float, "allocation": "dict", "market_data": "dict", "paper_trade_mode": boolean}` (`paper_trade_mode` mirrors `PAPER_TRADE_MODE` from the Hub).
-- **Output Schema:**
-
-```json
-{
-  "market_id": "string",
-  "allocation_usd": float,
-  "score": "float | null",
-  "below_edge_threshold": "boolean | null",
-  "executed": boolean,
-  "transaction_hash": "string | null",
-  "error": "string | null"
-}
-
-```
+The former Trade Executioner agent is removed. Phase 4 is deterministic Hub code: `compute_allocation` -> in-process `execute_polymarket_trade` (`docs/04_skills_contracts.md` section 3) -> trade log + ledger. See `02_orchestrator_pipeline.md` section 4.
 
 ## 5. The Post-Mortem Analyst
 
@@ -117,15 +107,16 @@ Hub persistence: cumulative A-IQ results live in `02_Active_Research/research_bu
 }
 ```
 
-## Phase 3 rollout checklist (breaking changes)
+## Rollout checklist (breaking changes)
 
-After the Hub-managed qualitative pipeline lands, sync each OpenClaw workspace from [`agents_blueprint/<role>/`](../agents_blueprint/) before running live orchestrator ticks:
+After the Wave 3 research redesign lands, sync each OpenClaw workspace from [`agents_blueprint/<role>/`](../agents_blueprint/) before running live orchestrator ticks:
 
 | Role | OpenClaw agent id | Critical contract changes |
 |------|-------------------|---------------------------|
-| **briefer** | `polymarket-briefer` | Output `research_queries` (1–3 strings), not `summary`. `tools.allow` is empty — Hub runs `execute_aiq_query`. |
-| **deep_researcher** | `polymarket-deep-researcher` | Input `research_bundle` (list), not `context_summary`. Output JSON state machine (`status: needs_more_data` \| `complete`), not raw markdown. No agent tools. |
+| **briefer** | `polymarket-briefer` | Input is price-blind text (`title`, `description`, `resolution_source`, `end_date`, `category`, `today`). Output `research_queries`: exactly 4 fixed-slot strings with `as of {today}`. `tools.allow` is empty — Hub runs `execute_aiq_query`. |
+| **deep_researcher** | `polymarket-deep-researcher` | Price-blind input (no `q`), `mode`, `session_tag`. Complete output adds `p_low`, `p_high`, `confidence`, `resolution_checklist`, `key_assumptions`, `as_of`. JSON state machine, no agent tools. |
+| **executioner** | `polymarket-executioner` | **Removed.** Phase 4 is deterministic Hub code; delete this OpenClaw agent workspace. |
 
-**Hub behavior:** The orchestrator always populates `research_bundle` before spawning Deep Researcher. A-IQ fetches are never invoked from agent workspaces.
+**Hub behavior:** The orchestrator always populates `research_bundle` before spawning Deep Researcher. A-IQ fetches are never invoked from agent workspaces. No agent payload contains the market price.
 
-**Temporary compatibility:** Legacy Deep Researcher raw-markdown responses are coerced to `status: complete` in [`orchestrator/parse.py`](../orchestrator/parse.py) (`coerce_deep_researcher_state_machine`) so rollout does not immediately flag markets inactive. Legacy briefer `summary`-only JSON receives a retryable `format_validation_error` directing the model to emit `research_queries`. Remove reliance on these adapters once live workspaces are validated.
+**Temporary compatibility:** Legacy Deep Researcher raw-markdown responses are coerced to `status: complete` in [`orchestrator/parse.py`](../orchestrator/parse.py) (`coerce_deep_researcher_state_machine`) so rollout does not immediately flag markets inactive. Legacy markdown is accepted only if its frontmatter carries the full new contract (`p_low`, `p_high`, `confidence`, ...). Legacy briefer `summary`-only JSON receives a retryable `format_validation_error` directing the model to emit `research_queries`. Remove reliance on these adapters once live workspaces are validated.

@@ -40,12 +40,17 @@ def test_stub_briefer_includes_market_title():
         "briefer",
         {
             "market_id": "0xabc",
-            "market_title": "Will X?",
-            "market_description": "",
-            "planning_context": None,
+            "title": "Will X?",
+            "description": "",
+            "resolution_source": None,
+            "end_date": None,
+            "category": None,
+            "today": "2026-10-22",
         },
     )
     parsed = out if isinstance(out, dict) else parse_agent_json_or_yaml(out)
+    assert len(parsed["research_queries"]) == 4
+    assert all("as of 2026-10-22" in q for q in parsed["research_queries"])
     assert any("Will X?" in q for q in parsed["research_queries"])
     assert parsed["error"] is None
 
@@ -53,14 +58,20 @@ def test_stub_briefer_includes_market_title():
 def test_stub_deep_researcher_returns_parseable_complete_payload():
     out = runner.spawn_agent(
         "deep_researcher",
-        {
+{
             "market_id": "0xabc",
-            "market_data": {},
+            "title": "Will X?",
+            "description": "",
+            "resolution_source": None,
+            "end_date": None,
+            "category": None,
+            "today": "2026-10-22",
+            "mode": "full",
             "directives": "y",
             "research_bundle": [],
-            "q": 0.5,
             "system_override": None,
             "format_validation_error": None,
+            "session_tag": None,
         },
     )
     parsed = parse_deep_researcher_json(out)
@@ -68,6 +79,8 @@ def test_stub_deep_researcher_returns_parseable_complete_payload():
     research = parse_deep_researcher(parsed.markdown)
     assert research.market_id == "0xabc"
     assert 0.0 <= research.estimated_p <= 1.0
+    assert parsed.p_low <= parsed.estimated_p <= parsed.p_high
+    assert parsed.confidence in ("low", "medium", "high")
     assert "## Bull Thesis" in research.body
 
 
@@ -82,14 +95,20 @@ def test_stub_error_deep_researcher_carries_error_in_frontmatter(monkeypatch):
     monkeypatch.setenv(RUNNER_MODE_ENV, "stub_error")
     out = runner.spawn_agent(
         "deep_researcher",
-        {
+{
             "market_id": "0xabc",
-            "market_data": {},
+            "title": "Will X?",
+            "description": "",
+            "resolution_source": None,
+            "end_date": None,
+            "category": None,
+            "today": "2026-10-22",
+            "mode": "full",
             "directives": "y",
             "research_bundle": [],
-            "q": 0.5,
             "system_override": None,
             "format_validation_error": None,
+            "session_tag": None,
         },
     )
     parsed = parse_deep_researcher_json(out)
@@ -97,22 +116,20 @@ def test_stub_error_deep_researcher_carries_error_in_frontmatter(monkeypatch):
     assert research.error == "stub_error mode"
 
 
-def test_stub_executioner_includes_allocation_tool_fields():
-    out = runner.spawn_agent(
-        "executioner",
-        {
-            "market_id": "0xabc",
-            "p_value": 0.5,
-            "q": 0.5,
-            "allocation": {"allocation_usd": 0.0, "score": 0.0, "below_edge_threshold": True, "error": None},
-            "market_data": {},
-            "paper_trade_mode": True,
-        },
+def test_executioner_agent_removed():
+    from agents_blueprint import AGENTS
+
+    assert "executioner" not in AGENTS
+    assert "executioner" not in runner.STUB_RESPONSES
+
+
+def test_live_session_key_scopes_samples():
+    base = runner._live_session_key("agent-x", "deep_researcher", {"market_id": "0xabc"})
+    s2 = runner._live_session_key(
+        "agent-x", "deep_researcher", {"market_id": "0xabc", "session_tag": "s2"}
     )
-    parsed = out if isinstance(out, dict) else parse_agent_json_or_yaml(out)
-    assert parsed["score"] == 0.0
-    assert parsed["below_edge_threshold"] is True
-    assert parsed["allocation_usd"] == 0.0
+    assert base == "agent:agent-x:orch-0xabc"
+    assert s2 == "agent:agent-x:orch-0xabc-s2"
 
 
 def test_live_runner_invokes_openclaw_cli(monkeypatch):

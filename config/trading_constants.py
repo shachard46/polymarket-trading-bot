@@ -22,6 +22,16 @@ AIQ_BASE_URL = "http://localhost:8000"
 AIQ_POLL_INTERVAL_SEC = 2.0
 AIQ_TIMEOUT_SEC = 300.0
 
+# Research redesign (Phase 3). The model never sees the market price q; the Hub decides
+# whether research diverges from q and whether a result looks like a misread.
+RESEARCH_MAX_QUICK_WIDTH = 0.30     # quick range wider than this is "uninformative" -> escalate
+RESEARCH_SAMPLES = 3                # independent Deep Researcher samples in the FULL stage
+RESEARCH_MAX_SAMPLE_SPREAD = 0.15   # max(p) - min(p) across samples above this -> sample_disagreement
+RESEARCH_MAX_Q_GAP = 0.30           # |p_median - q| above this -> probable_misread
+RESEARCH_REFRESH_PRICE_MOVE = 0.08  # q moved this much since research -> re-research
+RESEARCH_MIN_TTL_HOURS = 48.0       # refresh TTL = max(48h, days_to_resolution * 24h / 10)
+AIQ_CACHE_TTL_SEC = 24 * 3600       # A-IQ query cache lifetime
+
 # Filter Thresholds
 FILTERS = {
     "volume_shock_ma_multiplier": 2.5,   # was 2.0 — require a stronger volume spike
@@ -36,7 +46,7 @@ FILTERS = {
 }
 
 # Execution Safety
-PAPER_TRADE_MODE = True  # If True, executioner logs trade but does NOT hit live API
+PAPER_TRADE_MODE = True  # If True, execute_polymarket_trade logs the trade but does NOT hit the live API
 
 # Orchestrator Scheduling (in seconds)
 PIPELINE_INTERVAL_SEC = 5 * 3600       # 5 hours
