@@ -24,6 +24,7 @@ from pydantic import BaseModel, ValidationError, field_validator, model_validato
 
 from config.trading_constants import (
     F_MAX,
+    BOUNDS,
     FILTERS,
     PAPER_TRADE_MODE,
     STATUS_INACTIVE,
@@ -181,14 +182,30 @@ class TradeLogPayload(BaseModel):
     event_id: Optional[str] = None
 
 
+FAILURE_CLASSES = frozenset(
+    {"bad_info", "bad_reasoning", "resolution_misread", "variance", "correct"}
+)
+
+
 class PostMortemPayload(BaseModel):
     """Post-Mortem Analyst output — appended under ## Post-Mortem in 04_Post_Mortems/."""
 
     market_id: str
     post_mortem_analysis: str
+    failure_class: Optional[str] = None
     error: Optional[str] = None
     status: Optional[str] = None
     error_log: Optional[dict[str, Any]] = None
+
+    @field_validator("failure_class")
+    @classmethod
+    def _validate_failure_class(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        cleaned = value.strip().lower()
+        if cleaned not in FAILURE_CLASSES:
+            raise ValueError(f"failure_class must be one of {sorted(FAILURE_CLASSES)}, got {value!r}")
+        return cleaned
 
 
 # Headers the seed directives ship with and the Overseer must keep
@@ -600,41 +617,141 @@ class ObsidianManager:
         else:
             content = content.rstrip("\n") + f"\n\n## Post-Mortem\n\n{analysis}\n"
 
+        if validated.failure_class:
+            from orchestrator.research import split_yaml_frontmatter_markdown
+
+            try:
+                fm, body = split_yaml_frontmatter_markdown(content)
+            except ValueError:
+                pass  # no frontmatter to patch; the ledger row still carries failure_class
+            else:
+                fm["failure_class"] = validated.failure_class
+                content = _dump_frontmatter(fm, body)
         _atomic_write_text(dest, content)
         return dest
 
-    def write_directives(self, payload: dict) -> Path:
-        """Validate an Overseer payload and overwrite ``active_directives.md``.
+    # -- directives versioning ----------------------------------------------
 
-        The entire file is replaced with ``new_directives_markdown`` from the
-        validated payload.  The Orchestrator calls this at the end of each
-        macro-learning loop.
+    def directives_history_dir(self) -> Path:
+        return self._dirs["system"] / "directives_history"
 
-        Parameters
-        ----------
-        payload:
-            Raw dict returned by the Overseer agent.
+    def latest_directives_version(self) -> int:
+        """Highest version number seen in the live file or the history archive."""
+        from orchestrator.directives import directive_version
 
-        Returns
-        -------
-        Path
-            Absolute path of the overwritten file.
+        best = directive_version(self.read_directives())
+        hist = self.directives_history_dir()
+        if hist.is_dir():
+            for path in hist.glob("v*.md"):
+                m = re.fullmatch(r"v(\d+)\.md", path.name)
+                if m:
+                    best = max(best, int(m.group(1)))
+        return best
+
+    def read_directives_version(self, version: int) -> str | None:
+        path = self.directives_history_dir() / f"v{int(version)}.md"
+        return path.read_text(encoding="utf-8") if path.exists() else None
+
+    def _install_directives(self, text: str, version: int) -> Path:
+        """Atomically replace the live file (``.bak`` of the old one) and archive ``v{version}.md``."""
+        dest = self._dirs["system"] / _DIRECTIVES_FILENAME
+        if dest.exists():
+            shutil.copy2(dest, dest.with_name(dest.name + ".bak"))
+        hist = self.directives_history_dir()
+        hist.mkdir(parents=True, exist_ok=True)
+        _atomic_write_text(hist / f"v{version}.md", text)
+        _atomic_write_text(dest, text)
+        return dest
+
+    def write_directives(
+        self,
+        payload: dict,
+        *,
+        enforce_bounds: bool = True,
+        meta: dict[str, Any] | None = None,
+    ) -> Path:
+        """Validate an Overseer payload and install it as the next directives version.
+
+        The Hub owns the bookkeeping frontmatter: ``version`` (monotonic int, previous + 1),
+        ``knob_last_changed`` (knob -> version), ``last_overseer_*`` (carried over) and any
+        ``meta`` fields; whatever the Overseer put in those keys is discarded. The previous file is
+        copied to ``.bak`` and the new one archived to ``directives_history/v{N}.md``.
 
         Raises
         ------
         VaultWriteError
-            If ``payload`` fails ``DirectivesPayload`` validation.
+            If the payload fails ``DirectivesPayload`` validation, or (``enforce_bounds``) the
+            ``filters:`` change violates the guard-rails in ``config.trading_constants.BOUNDS``.
+            In both cases nothing is written.
         """
+        from orchestrator.directives import (
+            DirectiveBoundsError,
+            changed_knobs,
+            validate_directive_change,
+        )
+        from orchestrator.research import split_yaml_frontmatter_markdown
+
         try:
             validated = DirectivesPayload.model_validate(payload)
         except ValidationError as exc:
             raise VaultWriteError("__system__", exc) from exc
 
+        old = self.read_directives()
+        new_version = self.latest_directives_version() + 1
+        new_md = validated.new_directives_markdown
+        try:
+            if enforce_bounds:
+                changed = validate_directive_change(old, new_md, new_version)
+            else:
+                changed = changed_knobs(old, new_md)
+        except DirectiveBoundsError as exc:
+            raise VaultWriteError("__system__", exc) from exc  # type: ignore[arg-type]
+
+        fm, body = split_yaml_frontmatter_markdown(new_md)
+        try:
+            old_fm = split_yaml_frontmatter_markdown(old)[0] if old.strip() else {}
+        except ValueError:
+            old_fm = {}
+        for key in ("restored_from", "restore_note", "migrated_from",
+                    "last_overseer_ledger_count", "last_overseer_at"):
+            fm.pop(key, None)
+        for key in ("last_overseer_ledger_count", "last_overseer_at"):
+            if key in old_fm:
+                fm[key] = old_fm[key]
+        klc = old_fm.get("knob_last_changed")
+        klc = dict(klc) if isinstance(klc, dict) else {}
+        for key in changed:
+            klc[key] = new_version
+        fm["version"] = new_version
+        fm["knob_last_changed"] = klc
+        fm.update(meta or {})
+        return self._install_directives(_dump_frontmatter(fm, body) + "\n", new_version)
+
+    def patch_directives_frontmatter(self, updates: dict[str, Any]) -> None:
+        """Merge ``updates`` into the live directives frontmatter (no version bump)."""
+        from orchestrator.research import split_yaml_frontmatter_markdown
+
         dest = self._dirs["system"] / _DIRECTIVES_FILENAME
-        if dest.exists():
-            shutil.copy2(dest, dest.with_name(dest.name + ".bak"))
-        _atomic_write_text(dest, validated.new_directives_markdown)
-        return dest
+        fm, body = split_yaml_frontmatter_markdown(dest.read_text(encoding="utf-8"))
+        fm.update(updates)
+        _atomic_write_text(dest, _dump_frontmatter(fm, body) + "\n")
+
+    def restore_directives(self, version: int, reason: str) -> int:
+        """Reinstall archived ``v{version}`` as a NEW version; return the new version number.
+
+        Bounds are not enforced (it is a known-good earlier document). The new frontmatter
+        records ``restored_from`` and ``restore_note``; knobs that differ from the replaced
+        document restart their cooldown.
+        """
+        text = self.read_directives_version(version)
+        if text is None:
+            raise FileNotFoundError(f"no archived directives v{version}")
+        self.write_directives(
+            {"new_directives_markdown": text, "rationale": reason},
+            enforce_bounds=False,
+            meta={"restored_from": int(version), "restore_note": reason},
+        )
+        return self.latest_directives_version()
 
     # ------------------------------------------------------------------
     # In-place state patching (frontmatter / JSON)
@@ -1028,11 +1145,30 @@ class ObsidianManager:
         """
         directives_path = self._dirs["system"] / _DIRECTIVES_FILENAME
         if directives_path.exists() and directives_path.stat().st_size > 0:
+            self._migrate_directives_version()
             return False
 
         seed_content = _build_seed_directives()
-        _atomic_write_text(directives_path, seed_content)
+        directives_path.parent.mkdir(parents=True, exist_ok=True)
+        self._install_directives(seed_content, 1)
         return True
+
+    def _migrate_directives_version(self) -> None:
+        """Rewrite a legacy non-integer ``version`` (e.g. ``"0.1-seed"``) as integer 1."""
+        from orchestrator.research import split_yaml_frontmatter_markdown
+
+        text = self.read_directives()
+        try:
+            fm, body = split_yaml_frontmatter_markdown(text)
+        except ValueError:
+            return
+        raw = fm.get("version")
+        if isinstance(raw, int) and not isinstance(raw, bool):
+            return
+        fm["migrated_from"] = str(raw)
+        fm["version"] = 1
+        fm.setdefault("knob_last_changed", {})
+        self._install_directives(_dump_frontmatter(fm, body) + "\n", 1)
 
 
 # ---------------------------------------------------------------------------
@@ -1049,12 +1185,13 @@ def _build_seed_directives() -> str:
 
     # Build a YAML-safe representation of the FILTERS dict
     filters_yaml_lines = "\n".join(
-        f"    {key}: {value}" for key, value in FILTERS.items()
+        f"  {key}: {FILTERS[key]}" for key in BOUNDS
     )
 
     frontmatter_block = f"""\
 ---
-version: "0.1-seed"
+version: 1
+knob_last_changed: {{}}
 seeded_at: "{now_iso}"
 overseer_updated: false
 ---"""
@@ -1100,9 +1237,10 @@ standard methodology before forming your probability estimate (`estimated_p`):
 
 ## Filter Weightings (Neutral Defaults)
 
-The Quantitative Filter uses the thresholds below.  Do NOT override these
-in your analysis — they are deterministic guard-rails applied before you
-are invoked.
+The Hub's deterministic gate and research checks use the thresholds below
+(gate price band, days-to-resolution window, no-divergence width, sample
+disagreement, misread gap).  Do NOT override these in your analysis — they
+are applied by code, and only the Overseer may tune them (within bounds).
 
 ```yaml
 filters:

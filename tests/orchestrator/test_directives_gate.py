@@ -16,8 +16,7 @@ from orchestrator import phases
 
 _VALID_DIRECTIVES = """\
 ---
-version: "1.0"
-overseer_updated: true
+title: Active Directives
 ---
 
 # Active Directives
@@ -30,7 +29,7 @@ Body.
 
 ```yaml
 filters:
-  min_liquidity: 1000
+  gate_min_q: 0.05
 ```
 
 ## Risk Constraints
@@ -68,7 +67,8 @@ def test_directives_payload_accepts_valid_doc():
     DirectivesPayload(new_directives_markdown=_VALID_DIRECTIVES, rationale="ok")
 
 
-def test_phase6_quarantines_malformed_overseer_output(tmp_path):
+def test_phase6_quarantines_malformed_overseer_output(tmp_path, monkeypatch):
+    monkeypatch.setenv("OVERSEER_MIN_NEW_RESOLVED", "0")
     vault = ObsidianManager(vault_base=tmp_path)
     vault.cold_start_protocol()
     seed_before = vault.read_directives()
@@ -89,7 +89,8 @@ def test_phase6_quarantines_malformed_overseer_output(tmp_path):
     assert (tmp_path / "Vault" / "05_Errors").exists() is False
 
 
-def test_phase6_writes_directives_when_valid(tmp_path):
+def test_phase6_writes_directives_when_valid(tmp_path, monkeypatch):
+    monkeypatch.setenv("OVERSEER_MIN_NEW_RESOLVED", "0")
     vault = ObsidianManager(vault_base=tmp_path)
     vault.cold_start_protocol()
 
@@ -102,4 +103,6 @@ def test_phase6_writes_directives_when_valid(tmp_path):
 
     phases.phase6_macro_learning_loop(vault, runner=good_overseer)
     assert "## Research Protocol" in vault.read_directives()
-    assert vault.read_directives() == _VALID_DIRECTIVES
+    # the Hub stamps the next version; the Overseer's body is kept verbatim
+    assert "version: 2" in vault.read_directives()
+    assert "# Active Directives\n\n## Research Protocol\n\nBody." in vault.read_directives()

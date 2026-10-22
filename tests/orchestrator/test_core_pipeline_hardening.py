@@ -486,8 +486,10 @@ def test_phase4_edge_dq_trade_reexecutes_after_fresh_research(vault, trades):
 # --- 11. Phase 6 caps -------------------------------------------------------
 
 
-def test_phase6_sends_bounded_recent_post_mortems(vault, caplog):
+def test_phase6_sends_bounded_recent_post_mortems(vault, caplog, monkeypatch):
     import os
+
+    monkeypatch.setenv("OVERSEER_MIN_NEW_RESOLVED", "0")
 
     for i in range(40):
         p = vault.post_mortem_path(f"pm{i:02d}")
@@ -502,7 +504,7 @@ def test_phase6_sends_bounded_recent_post_mortems(vault, caplog):
     with caplog.at_level("INFO"):
         phases.phase6_macro_learning_loop(vault, runner=runner)
     batch = captured["post_mortems"]
-    assert len(batch) <= 30
+    assert len(batch) <= 15
     assert batch[0]["market_id"] == "pm39"  # most recent first
     assert all(len(b["content"]) <= 5 * 1024 for b in batch)
     assert sum(len(b["content"]) for b in batch) <= 90 * 1024
@@ -568,5 +570,8 @@ def test_stub_responses_satisfy_new_schemas(monkeypatch):
     )
     from obsidian_utils import DirectivesPayload
 
-    out = spawn_agent("overseer", {"post_mortems": [], "current_directives": ""})
+    out = spawn_agent(
+        "overseer",
+        {"post_mortems": [], "current_directives": "", "stats_md": "", "failure_class_counts": {}, "bounds": []},
+    )
     DirectivesPayload.model_validate(out)

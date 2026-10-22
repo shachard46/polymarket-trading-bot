@@ -29,18 +29,23 @@ from pydantic import ValidationError
 
 from obsidian_utils import FilterLogPayload, ObsidianManager, VaultWriteError
 from config.trading_constants import (
+    AUTO_REVERT_BRIER_WORSE_BY,
+    AUTO_REVERT_MIN_SCORED,
     BANKROLL_USD,
     BELOW_EDGE_KEY,
-    RESEARCH_MAX_Q_GAP,
+    BOUNDS,
+    FILTERS,
+    KNOB_COOLDOWN_VERSIONS,
     RESEARCH_MAX_QUICK_WIDTH,
-    RESEARCH_MAX_SAMPLE_SPREAD,
     RESEARCH_MIN_TTL_HOURS,
     RESEARCH_REFRESH_PRICE_MOVE,
     RESEARCH_SAMPLES,
 )
 from orchestrator import gate, ledger, scraper, stats
 from orchestrator.config import (
+    OVERSEER_INTERVAL_SEC,
     PAPER_TRADE_MODE,
+    overseer_min_new_resolved,
     full_research_budget,
     gate_budget,
     quick_research_budget,
@@ -57,7 +62,7 @@ from orchestrator.state import (
     market_quarantine,
     vault_write_or_flag,
 )
-from orchestrator.directives import extract_filter_directives
+from orchestrator.directives import changed_knobs, effective_knobs, extract_filter_directives
 from orchestrator.scraper import (
     MarketRow,
     market_data_hydration_error,
@@ -107,7 +112,8 @@ class Phase3Candidate:
 
 
 MAX_POST_MORTEM_ATTEMPTS = 3
-PHASE6_MAX_POST_MORTEMS = 30
+PHASE6_MAX_POST_MORTEMS = 15
+PHASE6_MAX_STATS_CHARS = 12 * 1024
 PHASE6_MAX_POST_MORTEM_CHARS = 5 * 1024
 PHASE6_MAX_TOTAL_CHARS = 90 * 1024
 
@@ -353,6 +359,7 @@ def phase2_quantitative_routing(
        (``confidence_multiplier`` = score), which is all Phase 3 reads.
     """
     log.info("[PHASE 2] Gate + triage")
+    knobs = extract_filter_directives(vault.read_directives())
     now = datetime.now(timezone.utc)
     today = f"{now:%Y-%m-%d}"
     last_decision = ledger.latest_decision_by_market(vault)
@@ -390,7 +397,7 @@ def phase2_quantitative_routing(
                     fm is not None
                     and prior is not None
                     and prior.get("refresh_reason") != "price_move"
-                    and gate.eligibility(md)[0]
+                    and gate.eligibility(md, knobs)[0]
                     and _refresh_reason(
                         vault, market_id, fm, prior.get("research_state"), q, now
                     )
@@ -414,7 +421,7 @@ def phase2_quantitative_routing(
                 )
                 continue
 
-            ok, reason = gate.eligibility(md)
+            ok, reason = gate.eligibility(md, knobs)
             if not ok:
                 fail = gate.register_failure(prior, q, now)
                 _write_filter_state(
@@ -433,7 +440,7 @@ def phase2_quantitative_routing(
                 continue
 
             bundle = _signal_bundle_or_none(market_id)
-            eligible.append((gate.score(md, bundle), market, prior, bundle))
+            eligible.append((gate.score(md, bundle, knobs), market, prior, bundle))
 
     # -- Stage 2: rank, budget, triage ---------------------------------------
     eligible.sort(key=lambda item: (-item[0], item[1].market_id))
@@ -697,10 +704,16 @@ class _Job:
         return str(event_id) if event_id else None
 
 
-def quick_decision(p_low: float, p_high: float, q: float) -> Literal["no_divergence", "escalate"]:
-    """Hub decision after the QUICK stage: skip only when q sits inside a narrow range."""
+def quick_decision(
+    p_low: float, p_high: float, q: float, max_width: float | None = None
+) -> Literal["no_divergence", "escalate"]:
+    """Hub decision after the QUICK stage: skip only when q sits inside a narrow range.
+
+    ``max_width`` is the directives knob ``research_max_quick_width`` (default constant).
+    """
     inside = p_low <= q <= p_high
-    if inside and (p_high - p_low) <= RESEARCH_MAX_QUICK_WIDTH:
+    width = RESEARCH_MAX_QUICK_WIDTH if max_width is None else max_width
+    if inside and (p_high - p_low) <= width:
         return "no_divergence"
     return "escalate"
 
@@ -1025,7 +1038,8 @@ def _quick_stage(
         return "failed"
 
     values = {"q": q, "p": out.estimated_p, "p_low": out.p_low, "p_high": out.p_high}
-    if quick_decision(out.p_low, out.p_high, q) == "no_divergence":
+    knobs = extract_filter_directives(directives)
+    if quick_decision(out.p_low, out.p_high, q, knobs["research_max_quick_width"]) == "no_divergence":
         _skip_research(vault, row, "quick", "no_divergence", **values)
         return "skip"
     _record_attempt(vault, row, "quick", "escalate", **values)
@@ -1165,10 +1179,11 @@ def _research_market(
         "q": q, "p": agg["p"], "p_low": agg["p_low"], "p_high": agg["p_high"],
         "samples": agg["samples"], "spread": agg["spread"], "confidence": agg["confidence"],
     }
-    if agg["spread"] > RESEARCH_MAX_SAMPLE_SPREAD:
+    knobs = extract_filter_directives(directives)
+    if agg["spread"] > knobs["research_max_sample_spread"]:
         _skip_research(vault, row, "full", "sample_disagreement", **values)
         return None
-    if q is not None and abs(agg["p"] - q) > RESEARCH_MAX_Q_GAP:
+    if q is not None and abs(agg["p"] - q) > knobs["research_max_q_gap"]:
         _skip_research(vault, row, "full", "probable_misread", **values)
         return None
 
@@ -1286,6 +1301,7 @@ def phase3_qualitative_pipeline(
     """
     log.info("[PHASE 3] Research pipeline")
     directives = vault.read_directives()
+    knobs = extract_filter_directives(directives)
     queue = build_phase3_queue(vault)
     started = time.monotonic()
     budget_sec = research_tick_budget_sec()
@@ -1321,7 +1337,7 @@ def phase3_qualitative_pipeline(
         q = scraper.select_q(row.market_data)
         with market_quarantine(vault, market_id, "phase3"):
             if candidate.kind == "refresh":
-                ok, why = gate.eligibility(row.market_data)
+                ok, why = gate.eligibility(row.market_data, knobs)
                 if not ok:
                     log.info("[PHASE 3] skip refresh of %s: %s", market_id, why)
                     continue
@@ -1681,6 +1697,55 @@ def _post_mortem_failed(
         )
 
 
+def _post_mortem_payload(
+    vault: ObsidianManager, market_id: str, resolution: dict[str, Any]
+) -> dict[str, Any]:
+    """Structured Post-Mortem Analyst input: the decision, the outcome and the realised P&L.
+
+    P&L reuses ``stats.bet_pnl`` (after-tax, wins only taxed) so the analyst, the ledger and
+    ``stats.md`` agree. ``None`` fields mean "not available" (e.g. a below-edge market has no bet).
+    """
+    trade = vault.read_trade_log_dict(market_id) or {}
+    research = vault.read_market_record(market_id, "post_mortem") or {}
+    filt = vault.read_filter_log(market_id) or {}
+    triage = filt.get("triage") if isinstance(filt.get("triage"), dict) else {}
+    outcome_yes = ledger.outcome_yes_from_resolution(resolution)
+
+    def first(*vals: Any) -> Any:
+        return next((v for v in vals if v is not None), None)
+
+    size = _as_float(trade.get("allocation_usd"))
+    size = size if size and size > 0 else None
+    price = _as_float(trade.get("price"))
+    side = trade.get("side") if size else None
+    pnl = None
+    if outcome_yes is not None and size is not None and price is not None:
+        pnl = stats.bet_pnl(
+            {"price": price, "size_usd": size, "shares": trade.get("shares"), "side": side},
+            outcome_yes,
+        )
+    checklist = research.get("resolution_checklist")
+    return {
+        "market_id": market_id,
+        "original_research": vault.read_post_mortem(market_id),
+        "execution_log": vault.read_trade_log(market_id),
+        "resolution_data": resolution,
+        "p": _as_float(first(trade.get("p"), research.get("estimated_p"))),
+        "p_low": _as_float(first(trade.get("p_low"), research.get("p_low"))),
+        "p_high": _as_float(first(trade.get("p_high"), research.get("p_high"))),
+        "q_entry": _as_float(first(trade.get("q_entry"), research.get("q_at_research"))),
+        "side": side,
+        "price": price if size else None,
+        "size_usd": size,
+        "outcome_yes": outcome_yes,
+        "realised_pnl_usd": pnl,
+        "category": first(triage.get("category"), filt.get("category")),
+        "gate_score": _as_float(first(filt.get("score"), filt.get("confidence_multiplier"))),
+        "research_confidence": research.get("confidence"),
+        "resolution_checklist": checklist if isinstance(checklist, list) else None,
+    }
+
+
 def _resolve_market(
     vault: ObsidianManager,
     runner: AgentRunner,
@@ -1705,12 +1770,7 @@ def _resolve_market(
         except FileExistsError:
             log.warning("Post-mortem file already exists for %s; re-running analyst", market_id)
 
-    payload = {
-        "market_id": market_id,
-        "original_research": vault.read_post_mortem(market_id),
-        "execution_log": vault.read_trade_log(market_id),
-        "resolution_data": resolution,
-    }
+    payload = _post_mortem_payload(vault, market_id, resolution)
     parsed, reason = _run_structured_agent(runner, "post_mortem_analyst", payload)
     if reason:
         _post_mortem_failed(vault, market_id, reason, parsed or payload)
@@ -1727,6 +1787,14 @@ def _resolve_market(
         )
         return
 
+    _ledger_safe(
+        vault, market_id, ledger.POST_MORTEM_STAGE,
+        failure_class=(parsed.get("failure_class") or "unclassified"),
+        outcome_yes=payload["outcome_yes"],
+        pnl_usd=payload["realised_pnl_usd"],
+        p=payload["p"], side=payload["side"], price=payload["price"],
+        size_usd=payload["size_usd"], category=payload["category"],
+    )
     try:
         vault.archive_trade(market_id)
     except FileNotFoundError:
@@ -1760,29 +1828,153 @@ def _bounded_post_mortems(vault: ObsidianManager) -> list[dict[str, Any]]:
     return batch
 
 
+def _directives_frontmatter(vault: ObsidianManager) -> dict[str, Any]:
+    from orchestrator.research import split_yaml_frontmatter_markdown
+
+    text = vault.read_directives()
+    try:
+        return split_yaml_frontmatter_markdown(text)[0] if text.strip() else {}
+    except ValueError:
+        return {}
+
+
+def _bounds_payload(vault: ObsidianManager, current_md: str) -> list[dict[str, Any]]:
+    """The Overseer-facing bounds table: per knob current/default/min/max/step/cooldown."""
+    knobs = effective_knobs(current_md)
+    fm = _directives_frontmatter(vault)
+    klc = fm.get("knob_last_changed") if isinstance(fm.get("knob_last_changed"), dict) else {}
+    next_version = vault.latest_directives_version() + 1
+    rows = []
+    for key, b in BOUNDS.items():
+        try:
+            at = int(klc.get(key))
+        except (TypeError, ValueError):
+            at = None
+        rows.append({
+            "knob": key,
+            "current": knobs[key],
+            "default": FILTERS[key],
+            "min": b["min"],
+            "max": b["max"],
+            "max_step_frac": b["max_step_frac"],
+            "last_changed_version": at,
+            "locked": at is not None and next_version - at < KNOB_COOLDOWN_VERSIONS,
+        })
+    return rows
+
+
+def _auto_revert_if_worse(vault: ObsidianManager, rows: list[dict[str, Any]]) -> bool:
+    """Restore the previous directives version when the current one scores clearly worse.
+
+    Compares model Brier (stats helpers grouped by ledger ``directive_version``) once the current
+    version has ``AUTO_REVERT_MIN_SCORED`` resolved scored markets (and so does the previous one).
+    A version that is itself a restore is never reverted (no flip-flopping).
+    """
+    current = ledger.current_directive_version(vault)
+    previous = current - 1
+    fm = _directives_frontmatter(vault)
+    if previous < 1 or fm.get("restored_from") is not None:
+        return False
+    if vault.read_directives_version(previous) is None:
+        return False
+    by_version = stats.brier_by_directive_version(rows)
+    n_cur, b_cur = by_version.get(current, (0, 0.0))
+    n_prev, b_prev = by_version.get(previous, (0, 0.0))
+    if n_cur < AUTO_REVERT_MIN_SCORED or n_prev < AUTO_REVERT_MIN_SCORED:
+        return False
+    if b_cur - b_prev <= AUTO_REVERT_BRIER_WORSE_BY:
+        return False
+    reason = (
+        f"auto-revert: v{current} Brier {b_cur:.4f} (n={n_cur}) is worse than "
+        f"v{previous} {b_prev:.4f} (n={n_prev}) by more than {AUTO_REVERT_BRIER_WORSE_BY}"
+    )
+    new_version = vault.restore_directives(previous, reason)
+    vault.patch_directives_frontmatter({"last_overseer_at": datetime.now(timezone.utc).isoformat()})
+    log.error("[PHASE 6] !!! DIRECTIVES AUTO-REVERTED: %s -> restored as v%d; Overseer skipped",
+              reason, new_version)
+    return True
+
+
 def phase6_macro_learning_loop(
     vault: ObsidianManager,
     runner: AgentRunner = spawn_agent,
 ) -> None:
-    """Aggregate post-mortems → Overseer → overwrite ``active_directives.md``."""
+    """Stats + failure classes + post-mortems -> Overseer -> bounded, versioned directives.
+
+    Order: (1) auto-revert a version that scores clearly worse than its predecessor (and skip the
+    Overseer); (2) run only if >= ``OVERSEER_MIN_NEW_RESOLVED`` new resolution rows exist since the
+    last run and ``OVERSEER_INTERVAL_SEC`` has passed; (3) a proposal that violates the bounds is
+    rejected whole and the old directives stay.
+    """
     log.info("[PHASE 6] Macro-learning loop (Overseer)")
-    batch = _bounded_post_mortems(vault)
+    rows = list(ledger.iter_rows(vault))
+    if _auto_revert_if_worse(vault, rows):
+        return
+
+    fm = _directives_frontmatter(vault)
+    now = datetime.now(timezone.utc)
+    last_at = gate._parse_ts(fm.get("last_overseer_at"))
+    if last_at is not None and (now - last_at).total_seconds() < OVERSEER_INTERVAL_SEC:
+        log.info("[PHASE 6] skipped: last Overseer run %s is under the minimum interval", last_at)
+        return
+    n_resolved = sum(1 for r in rows if r.get("stage") == ledger.RESOLUTION_STAGE)
+    try:
+        last_count = int(fm.get("last_overseer_ledger_count") or 0)
+    except (TypeError, ValueError):
+        last_count = 0
+    need = overseer_min_new_resolved()
+    if n_resolved - last_count < need:
+        log.info(
+            "[PHASE 6] skipped: %d new resolutions since the last Overseer run (need %d)",
+            n_resolved - last_count, need,
+        )
+        return
+
+    try:
+        stats.write_stats(vault)
+    except Exception:  # noqa: BLE001 - fall back to computing in memory
+        log.exception("[PHASE 6] write_stats failed")
+    stats_path = vault._dirs["system"] / "stats.md"
+    stats_md = stats_path.read_text(encoding="utf-8") if stats_path.exists() else ""
+    current = vault.read_directives()
     payload = {
-        "post_mortems": batch,
-        "current_directives": vault.read_directives(),
+        "post_mortems": _bounded_post_mortems(vault),
+        "current_directives": current,
+        "stats_md": stats_md[:PHASE6_MAX_STATS_CHARS],
+        "failure_class_counts": stats.failure_class_counts(rows),
+        "bounds": _bounds_payload(vault, current),
     }
     parsed, reason = _run_structured_agent(runner, "overseer", payload)
     if reason:
         log.error("Overseer failed: %s — keeping prior directives", reason)
         return
 
+    from orchestrator.research import split_yaml_frontmatter_markdown
+
+    proposal = parsed.get("new_directives_markdown")
+    unchanged = False
     try:
-        vault.write_directives(parsed)
-    except VaultWriteError as exc:
-        log.error(
-            "Directives validation failed: %s — keeping prior directives",
-            exc.cause,
+        unchanged = (
+            not changed_knobs(current, proposal)
+            and split_yaml_frontmatter_markdown(current)[1]
+            == split_yaml_frontmatter_markdown(proposal)[1]
         )
+    except (ValueError, TypeError, AttributeError):
+        pass  # malformed: let write_directives reject it
+    if not unchanged:
+        try:
+            vault.write_directives(parsed)
+        except VaultWriteError as exc:
+            log.error(
+                "Directives rejected: %s — keeping prior directives (v%d)",
+                exc.cause, ledger.current_directive_version(vault),
+            )
+            return
+    else:
+        log.info("[PHASE 6] Overseer proposed no change; keeping v%d", ledger.current_directive_version(vault))
+    vault.patch_directives_frontmatter(
+        {"last_overseer_ledger_count": n_resolved, "last_overseer_at": now.isoformat()}
+    )
 
 
 __all__ = [

@@ -113,6 +113,15 @@ def research_tick_budget_sec() -> int:
     return _int_env(RESEARCH_TICK_BUDGET_ENV, DEFAULT_RESEARCH_TICK_BUDGET_SEC)
 
 
+OVERSEER_MIN_NEW_RESOLVED_ENV = "OVERSEER_MIN_NEW_RESOLVED"
+DEFAULT_OVERSEER_MIN_NEW_RESOLVED = 30
+
+
+def overseer_min_new_resolved() -> int:
+    """New ledger resolution rows required since the last Overseer run (default 30)."""
+    return max(0, _int_env(OVERSEER_MIN_NEW_RESOLVED_ENV, DEFAULT_OVERSEER_MIN_NEW_RESOLVED))
+
+
 def runner_mode() -> str:
     """Return the active runner mode, defaulting to ``stub``.
 
@@ -203,6 +212,8 @@ __all__ = [
     "triage_budget",
     "quick_research_budget",
     "full_research_budget",
+    "OVERSEER_MIN_NEW_RESOLVED_ENV",
+    "overseer_min_new_resolved",
     "RESEARCH_WORKERS_ENV",
     "RESEARCH_TICK_BUDGET_ENV",
     "research_workers",

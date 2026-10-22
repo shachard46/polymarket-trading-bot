@@ -112,6 +112,9 @@ def test_spawn_agent_overseer_accepts_valid_payload():
         {
             "post_mortems": [{"market_id": "m1", "content": "post-mortem body"}],
             "current_directives": _OVERSEER_DIRECTIVES,
+            "stats_md": "",
+            "failure_class_counts": {},
+            "bounds": [],
         },
     )
     assert isinstance(out, dict)
@@ -139,6 +142,12 @@ def test_spawn_agent_overseer_rejects_evaluator_shape(monkeypatch):
             {
                 "post_mortems": [],
                 "current_directives": _OVERSEER_DIRECTIVES,
+                "stats_md": "",
+                "failure_class_counts": {},
+                "bounds": [],
+            "stats_md": "",
+            "failure_class_counts": {},
+            "bounds": [],
             },
         )
     msg = str(exc_info.value)

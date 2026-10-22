@@ -25,7 +25,7 @@ def test_ledger_round_trip_and_unresolved(vault):
     ledger.record(vault, "a", "below_edge", q=0.4)
     rows = list(ledger.iter_rows(vault))
     assert [r["stage"] for r in rows] == ["gate_reject", "traded", "below_edge"]
-    assert rows[0]["ts"].endswith("+00:00") and rows[0]["directive_version"] == 0
+    assert rows[0]["ts"].endswith("+00:00") and rows[0]["directive_version"] == 1  # seed = v1
     assert ledger.latest_decision_by_market(vault)["a"]["stage"] == "below_edge"
     assert ledger.unresolved_market_ids(vault) == ["a", "b"]
     ledger.record_resolution(vault, "a", 1, "Yes", 0.99)
@@ -63,7 +63,7 @@ def test_phase5_resolves_ledger_with_cap(vault, monkeypatch):
 
 
 def test_directive_version(vault):
-    assert ledger.current_directive_version(vault) == 0
+    assert ledger.current_directive_version(vault) == 1  # seed
     vault.write_file("Vault/00_System/active_directives.md", "---\nversion: 7\n---\n\nx")
     assert ledger.current_directive_version(vault) == 7
 

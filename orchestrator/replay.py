@@ -30,6 +30,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "  %(prog)s --all\n"
             "  %(prog)s --market-id 0xabc --dir filters\n"
             "  %(prog)s --all --dry-run\n"
+            "  %(prog)s --directives 3   # restore directives v3 as a new version"
         ),
     )
     parser.add_argument(
@@ -74,6 +75,16 @@ def _build_parser() -> argparse.ArgumentParser:
             "THRESHOLD (filters dir only). Use 1.0 to skip truly-failed phase-2 markets."
         ),
     )
+    parser.add_argument(
+        "--directives",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Restore archived directives version N (00_System/directives_history/vN.md) as a NEW "
+            "version, with a note in the frontmatter. Does not touch inactive flags."
+        ),
+    )
     return parser
 
 
@@ -84,6 +95,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser = _build_parser()
     args = parser.parse_args(argv)
+
+    if args.directives is not None:
+        vault = ObsidianManager(args.vault_path)
+        try:
+            new_version = vault.restore_directives(
+                args.directives, f"manual rollback to v{args.directives} via replay --directives"
+            )
+        except FileNotFoundError as exc:
+            parser.error(str(exc))
+        print(json.dumps({"restored_from": args.directives, "new_version": new_version}, indent=2))
+        return 0
 
     if not args.all and not args.market_ids:
         parser.error("Specify --all or at least one --market-id")

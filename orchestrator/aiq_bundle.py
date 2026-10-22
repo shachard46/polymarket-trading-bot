@@ -131,6 +131,17 @@ def fetch_research_bundle(queries: list[str]) -> list[dict[str, Any]]:
 _cache_lock = threading.Lock()
 
 
+class _Flight:
+    """An in-flight fetch of one query; waiters block on ``event`` and read ``row``."""
+
+    def __init__(self) -> None:
+        self.event = threading.Event()
+        self.row: dict[str, Any] | None = None
+
+
+_inflight: dict[tuple[str, str], _Flight] = {}
+
+
 def normalize_query(query: str) -> str:
     """Cache key: lowercase with collapsed whitespace."""
     return " ".join(str(query).lower().split())
@@ -177,34 +188,60 @@ def fetch_research_bundle_cached(
     if not queries:
         return []
     clock = time.time() if now is None else now
-    with _cache_lock:
-        cache = _read_cache(cache_path)
     out: list[dict[str, Any] | None] = [None] * len(queries)
     misses: dict[str, list[int]] = {}
-    for i, query in enumerate(queries):
-        key = normalize_query(query)
-        entry = cache.get(key)
-        if _fresh(entry, clock, ttl_sec):
-            out[i] = {"query": query, "research_data": entry["research_data"], "error": None}
-        else:
+    owned: dict[str, _Flight] = {}  # keys this call fetches itself
+    waiting: dict[str, _Flight] = {}  # keys another thread is already fetching
+    with _cache_lock:
+        cache = _read_cache(cache_path)
+        for i, query in enumerate(queries):
+            key = normalize_query(query)
+            entry = cache.get(key)
+            if _fresh(entry, clock, ttl_sec):
+                out[i] = {"query": query, "research_data": entry["research_data"], "error": None}
+                continue
             misses.setdefault(key, []).append(i)
+            if key in owned or key in waiting:
+                continue
+            flight = _inflight.get((str(cache_path), key))
+            if flight is None:
+                flight = _inflight[(str(cache_path), key)] = _Flight()
+                owned[key] = flight
+            else:
+                waiting[key] = flight
 
-    if misses:
-        first_text = [queries[idxs[0]] for idxs in misses.values()]
-        fetched = fetch(first_text)
-        for (key, idxs), row in zip(misses.items(), fetched):
-            for i in idxs:
-                out[i] = {**row, "query": queries[i]}
-        with _cache_lock:
-            cache = _read_cache(cache_path)
-            cache = {k: v for k, v in cache.items() if _fresh(v, clock, ttl_sec)}
-            for (key, idxs), row in zip(misses.items(), fetched):
-                if not row.get("error") and str(row.get("research_data") or "").strip():
-                    cache[key] = {"fetched_at": clock, "research_data": row["research_data"]}
-            try:
-                _write_cache(cache_path, cache)
-            except OSError:
-                pass  # the cache is an optimisation only
+    if owned:
+        keys = list(owned)
+        rows: dict[str, dict[str, Any]] = {}
+        try:
+            fetched = fetch([queries[misses[k][0]] for k in keys])
+            rows = dict(zip(keys, fetched))
+        finally:
+            with _cache_lock:
+                try:
+                    cache = _read_cache(cache_path)
+                    cache = {k: v for k, v in cache.items() if _fresh(v, clock, ttl_sec)}
+                    for key, row in rows.items():
+                        if not row.get("error") and str(row.get("research_data") or "").strip():
+                            cache[key] = {"fetched_at": clock, "research_data": row["research_data"]}
+                    try:
+                        _write_cache(cache_path, cache)
+                    except OSError:
+                        pass  # the cache is an optimisation only
+                finally:
+                    for key, flight in owned.items():
+                        flight.row = rows.get(key)
+                        flight.event.set()
+                        _inflight.pop((str(cache_path), key), None)
+        for key in keys:
+            for i in misses[key]:
+                out[i] = {**rows[key], "query": queries[i]}
+
+    for key, flight in waiting.items():
+        flight.event.wait()
+        row = flight.row or {"research_data": "", "error": "in-flight fetch failed"}
+        for i in misses[key]:
+            out[i] = {**row, "query": queries[i]}
     return [row for row in out if row is not None]
 
 

@@ -81,22 +81,25 @@ The former Trade Executioner agent is removed. Phase 4 is deterministic Hub code
 
 ## 5. The Post-Mortem Analyst
 
-- **System Prompt:** "You are a retrospective analyst. You will be given a resolved market's original research report, the trade execution logs, and the final market resolution data. Explain what data points led the Deep Researcher to the correct or incorrect conclusion. Output exactly one paragraph."
-- **Input Schema:** `{"market_id": "string", "original_research": "string", "execution_log": "string", "resolution_data": "dict"}`
+- **System Prompt:** Audit the decision, not just the outcome: "a 70% call that loses can be *correct*". Classify the cause as one `failure_class` and write exactly one diagnostic paragraph.
+- **Input Schema:** `{"market_id", "original_research": "string", "execution_log": "string", "resolution_data": "dict", "p", "p_low", "p_high", "q_entry", "side", "price", "size_usd", "outcome_yes", "realised_pnl_usd", "category", "gate_score", "research_confidence", "resolution_checklist"}`. The structured fields are `null` when unavailable (for example no bet was placed); `outcome_yes` is YES=1/NO=0; `realised_pnl_usd` is after tax (same math as `stats.md`).
 - **Output Schema:**
 
 ```json
 {
   "market_id": "string",
   "post_mortem_analysis": "string",
+  "failure_class": "bad_info | bad_reasoning | resolution_misread | variance | correct",
   "error": "string | null"
 }
 ```
 
+`failure_class` is validated by the Hub (`PostMortemPayload`), written to the post-mortem frontmatter, and ledgered on a `post_mortem` stage row.
+
 ## 6. The Overseer (Strategy Optimizer)
 
-- **System Prompt:** "You are the macro-learner. Analyze the provided batch of Post-Mortem reports and Trade Logs. Identify which quantitative filters are producing false-positive alpha. Output a completely rewritten Markdown string for `active_directives.md` adjusting the rules, risk tolerances, and focus areas for the Deep Researcher."
-- **Input Schema:** `{"post_mortems": "list[dict]", "current_directives": "string"}`
+- **System Prompt:** Interpret the stats, change at most 2 knobs, in steps of at most 15%, cite the stat that justifies each change; may edit the Research Protocol text; may not touch sizing. Doing nothing is valid.
+- **Input Schema:** `{"post_mortems": "list[dict]" (<= 15), "current_directives": "string", "stats_md": "string", "failure_class_counts": "dict", "bounds": "list[dict]"}` (`bounds` rows: `knob, current, default, min, max, max_step_frac, last_changed_version, locked`).
 - **Output Schema:**
 
 ```json
@@ -106,6 +109,8 @@ The former Trade Executioner agent is removed. Phase 4 is deterministic Hub code
   "error": "string | null"
 }
 ```
+
+The `filters:` yaml block may contain only the knobs in `config.trading_constants.BOUNDS` (see `02_orchestrator_pipeline.md` section 6); the Hub rejects the whole document on any bounds, step, count, cooldown or unknown-key violation, and owns `version` / `knob_last_changed` / `last_overseer_*` in the frontmatter.
 
 ## Rollout checklist (breaking changes)
 

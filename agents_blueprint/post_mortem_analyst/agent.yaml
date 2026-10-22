@@ -9,7 +9,21 @@ input_schema:
   original_research: string
   execution_log: string
   resolution_data: dict
+  p: "float | null"
+  p_low: "float | null"
+  p_high: "float | null"
+  q_entry: "float | null"
+  side: "string | null"
+  price: "float | null"
+  size_usd: "float | null"
+  outcome_yes: "int | null"
+  realised_pnl_usd: "float | null"
+  category: "string | null"
+  gate_score: "float | null"
+  research_confidence: "string | null"
+  resolution_checklist: "list | null"
 output_schema:
   market_id: string
   post_mortem_analysis: string
+  failure_class: string
   error: "string | null"

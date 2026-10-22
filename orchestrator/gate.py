@@ -18,14 +18,12 @@ from typing import Any, Mapping
 from config.trading_constants import (
     FILTERS,
     LIQ_FRAC,
-    MAX_DAYS_TO_RESOLUTION,
-    MIN_DAYS_TO_RESOLUTION,
     MIN_ORDER_USD,
 )
 from orchestrator.scraper import select_q
 
-Q_MIN = 0.05
-Q_MAX = 0.95
+Q_MIN = FILTERS["gate_min_q"]  # defaults; the live values come from the directives `filters:` block
+Q_MAX = FILTERS["gate_max_q"]
 MIN_LIQUIDITY_USD = MIN_ORDER_USD / LIQ_FRAC
 
 # Backoff schedule (docs/02): 5h * 2^(fail_count-1), capped at 7d; retire after 6 fails.
@@ -56,13 +54,25 @@ def _num(value: Any) -> float | None:
     return f if math.isfinite(f) else None
 
 
-def eligibility(market_row: Mapping[str, Any] | None) -> tuple[bool, str]:
+def _knob(knobs: Mapping[str, Any] | None, name: str) -> float:
+    """Directive override (``extract_filter_directives`` output) else the constant default."""
+    value = (knobs or {}).get(name)
+    return FILTERS[name] if value is None else value
+
+
+def eligibility(
+    market_row: Mapping[str, Any] | None,
+    knobs: Mapping[str, Any] | None = None,
+) -> tuple[bool, str]:
     """Return ``(ok, reason)``; ``reason`` is ``"ok"`` or a short rejection code.
 
-    Codes: ``closed``, ``no_price``, ``price_extreme`` (q outside [0.05, 0.95]),
-    ``no_end_date``, ``too_soon`` (< MIN_DAYS_TO_RESOLUTION), ``too_far``
-    (> MAX_DAYS_TO_RESOLUTION), ``illiquid`` (liquidity < MIN_ORDER_USD / LIQ_FRAC
-    or missing).
+    Codes: ``closed``, ``no_price``, ``price_extreme`` (q outside
+    [``gate_min_q``, ``gate_max_q``], default [0.05, 0.95]), ``no_end_date``, ``too_soon``
+    (< ``min_days_to_resolution``), ``too_far`` (> ``max_days_to_resolution``), ``illiquid``
+    (liquidity < MIN_ORDER_USD / LIQ_FRAC or missing).
+
+    ``knobs`` is the directives-derived threshold mapping (see
+    ``orchestrator.directives.extract_filter_directives``); missing keys fall back to the constants.
     """
     md = _data(market_row)
     row = market_row or {}
@@ -72,14 +82,14 @@ def eligibility(market_row: Mapping[str, Any] | None) -> tuple[bool, str]:
     q = select_q(dict(md))
     if q is None:
         return False, "no_price"
-    if not (Q_MIN <= q <= Q_MAX):
+    if not (_knob(knobs, "gate_min_q") <= q <= _knob(knobs, "gate_max_q")):
         return False, "price_extreme"
     days = _num(md.get("days_to_resolution"))
     if days is None:
         return False, "no_end_date"
-    if days < MIN_DAYS_TO_RESOLUTION:
+    if days < _knob(knobs, "min_days_to_resolution"):
         return False, "too_soon"
-    if days > MAX_DAYS_TO_RESOLUTION:
+    if days > _knob(knobs, "max_days_to_resolution"):
         return False, "too_far"
     liq = _num(md.get("liquidity"))
     if liq is None or liq < MIN_LIQUIDITY_USD:
@@ -114,6 +124,7 @@ def _momentum_fired(signal_bundle: Mapping[str, Any] | None) -> int:
 def score(
     market_row: Mapping[str, Any] | None,
     signal_bundle: Mapping[str, Any] | None = None,
+    knobs: Mapping[str, Any] | None = None,
 ) -> float:
     """Ranking score for an *eligible* market (higher = look at it first).
 
@@ -138,15 +149,18 @@ def score(
     attention = 1.0 / (1.0 + max(turnover, 0.0) / _TURNOVER_HALF)
 
     days = _num(md.get("days_to_resolution"))
-    lo, hi = SWEET_SPOT_DAYS
+    min_days = _knob(knobs, "min_days_to_resolution")
+    max_days = _knob(knobs, "max_days_to_resolution")
+    lo = max(SWEET_SPOT_DAYS[0], min_days + 1.0)  # keep the ramps non-degenerate if the window moves
+    hi = min(SWEET_SPOT_DAYS[1], max_days - 1.0)
     if days is None:
         time_term = 0.4
     elif lo <= days <= hi:
         time_term = 1.0
     elif days < lo:
-        time_term = 0.4 + 0.6 * max(days - MIN_DAYS_TO_RESOLUTION, 0.0) / (lo - MIN_DAYS_TO_RESOLUTION)
+        time_term = 0.4 + 0.6 * max(days - min_days, 0.0) / (lo - min_days)
     else:
-        time_term = 1.0 - 0.6 * min(days - hi, MAX_DAYS_TO_RESOLUTION - hi) / (MAX_DAYS_TO_RESOLUTION - hi)
+        time_term = 1.0 - 0.6 * min(days - hi, max_days - hi) / (max_days - hi)
 
     price_term = 1.0 - 2.0 * abs(q - 0.5)
     bonus = min(_momentum_fired(signal_bundle) * _MOMENTUM_BONUS_EACH, _MOMENTUM_BONUS_CAP)

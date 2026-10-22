@@ -14,12 +14,12 @@ from datetime import datetime, timezone
 from typing import Any, Iterator
 
 from obsidian_utils import ObsidianManager
-from orchestrator.research import split_yaml_frontmatter_markdown
 
 log = logging.getLogger(__name__)
 
 LEDGER_FILENAME = "decisions.jsonl"
 RESOLUTION_STAGE = "resolution"
+POST_MORTEM_STAGE = "post_mortem"
 STAGES = frozenset(
     {
         "gate_reject",
@@ -28,6 +28,7 @@ STAGES = frozenset(
         "below_edge",
         "traded",
         "arb_opportunity",
+        POST_MORTEM_STAGE,
         RESOLUTION_STAGE,
     }
 )
@@ -54,10 +55,11 @@ def _append(vault: ObsidianManager, row: dict[str, Any]) -> dict[str, Any]:
 
 def current_directive_version(vault: ObsidianManager) -> int:
     """``version`` from active_directives.md frontmatter as an int (default 0)."""
+    from orchestrator.directives import directive_version
+
     try:
-        fm, _ = split_yaml_frontmatter_markdown(vault.read_directives())
-        return int(fm.get("version") or 0)
-    except Exception:  # noqa: BLE001 - seed uses a non-integer version string
+        return directive_version(vault.read_directives())
+    except Exception:  # noqa: BLE001
         return 0
 
 
@@ -116,7 +118,7 @@ def latest_decision_by_market(vault: ObsidianManager) -> dict[str, dict[str, Any
     """Most recent non-resolution row per market."""
     out: dict[str, dict[str, Any]] = {}
     for row in iter_rows(vault):
-        if row.get("stage") != RESOLUTION_STAGE and row.get("market_id"):
+        if row.get("stage") not in (RESOLUTION_STAGE, POST_MORTEM_STAGE) and row.get("market_id"):
             out[row["market_id"]] = row
     return out
 
@@ -131,7 +133,7 @@ def unresolved_market_ids(vault: ObsidianManager) -> list[str]:
             continue
         if row.get("stage") == RESOLUTION_STAGE:
             resolved.add(mid)
-        else:
+        elif row.get("stage") != POST_MORTEM_STAGE:
             decided.setdefault(mid)
     return [m for m in decided if m not in resolved]
 

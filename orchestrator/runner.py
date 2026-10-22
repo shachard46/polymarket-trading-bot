@@ -281,6 +281,7 @@ def _post_mortem_stub(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "market_id": payload.get("market_id", "stub"),
         "post_mortem_analysis": "stub post-mortem analysis paragraph.",
+        "failure_class": "variance",
         "error": None,
     }
 
@@ -292,11 +293,11 @@ def _overseer_stub(payload: dict[str, Any]) -> dict[str, Any]:
         "new_directives_markdown": current
         or (
             "---\n"
-            'version: "stub"\n'
+            "title: stub\n"
             "---\n\n"
             "## Research Protocol\n\nstub.\n\n"
             "## Filter Weightings\n\nstub.\n\n"
-            "```yaml\nfilters:\n  stub: 1\n```\n\n"
+            "```yaml\nfilters:\n  gate_min_q: 0.05\n```\n\n"
             "## Risk Constraints\n\nstub.\n\n"
             "## Output Requirements\n\nstub.\n"
         ),

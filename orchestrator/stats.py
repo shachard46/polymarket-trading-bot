@@ -46,7 +46,7 @@ def _latest_by_market(rows: Iterable[dict[str, Any]], stages: Iterable[str] | No
     out: dict[str, dict[str, Any]] = {}
     for r in rows:
         st = r.get("stage")
-        if st == ledger.RESOLUTION_STAGE or not r.get("market_id"):
+        if st in (ledger.RESOLUTION_STAGE, ledger.POST_MORTEM_STAGE) or not r.get("market_id"):
             continue
         if wanted is None or st in wanted:
             out[r["market_id"]] = r
@@ -58,11 +58,56 @@ def scored_triples(rows: list[dict[str, Any]]) -> list[tuple[float, float, int]]
     res = resolutions(rows)
     latest: dict[str, dict[str, Any]] = {}
     for r in rows:
-        if r.get("stage") == ledger.RESOLUTION_STAGE or r.get("market_id") not in res:
+        if r.get("stage") in (ledger.RESOLUTION_STAGE, ledger.POST_MORTEM_STAGE):
+            continue
+        if r.get("market_id") not in res:
             continue
         if _num(r.get("p")) is not None and _num(r.get("q")) is not None:
             latest[r["market_id"]] = r
     return [(_num(r["p"]), _num(r["q"]), res[m]) for m, r in latest.items()]
+
+
+def _latest_scored(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    res = resolutions(rows)
+    out: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        if r.get("stage") in (ledger.RESOLUTION_STAGE, ledger.POST_MORTEM_STAGE):
+            continue
+        if r.get("market_id") in res and _num(r.get("p")) is not None and _num(r.get("q")) is not None:
+            out[r["market_id"]] = r
+    return out
+
+
+def brier_by_directive_version(rows: list[dict[str, Any]]) -> dict[int, tuple[int, float]]:
+    """``{directive_version: (n_scored, model Brier)}`` over resolved markets.
+
+    A market is attributed to the ``directive_version`` stamped on its latest decision row that
+    carries both ``p`` and ``q`` (the version that produced the estimate).
+    """
+    res = resolutions(rows)
+    groups: dict[int, list[tuple[float, int]]] = defaultdict(list)
+    for m, r in _latest_scored(rows).items():
+        try:
+            version = int(r.get("directive_version") or 0)
+        except (TypeError, ValueError):
+            continue
+        groups[version].append((_num(r["p"]), res[m]))
+    return {
+        v: (len(pairs), brier([p for p, _ in pairs], [y for _, y in pairs]))
+        for v, pairs in groups.items()
+    }
+
+
+def failure_class_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
+    """Count of the latest ``post_mortem`` row's ``failure_class`` per market."""
+    latest: dict[str, str] = {}
+    for r in rows:
+        if r.get("stage") == ledger.POST_MORTEM_STAGE and r.get("market_id"):
+            latest[r["market_id"]] = str(r.get("failure_class") or "unclassified")
+    counts: dict[str, int] = defaultdict(int)
+    for fc in latest.values():
+        counts[fc] += 1
+    return dict(sorted(counts.items()))
 
 
 def brier(preds: list[float], outcomes: list[int]) -> float:
@@ -130,6 +175,11 @@ def _pnl(row: dict[str, Any], outcome_yes: int, default_size: float | None = Non
     won = outcome_yes == (1 if side == "YES" else 0)
     profit = shares * (1 if won else 0) - size
     return profit * (1 - TAX) if profit > 0 else profit
+
+
+def bet_pnl(row: dict[str, Any], outcome_yes: int) -> float | None:
+    """After-tax realised P&L of a bet row (``price``, ``size_usd``/``shares``, ``side``)."""
+    return _pnl(row, outcome_yes)
 
 
 def _pnl_groups(rows, res, stages, default_size=None) -> list[tuple[dict[str, Any], float]]:
@@ -265,4 +315,4 @@ def write_stats(vault: ObsidianManager) -> None:
     path.write_text(render_stats(compute_stats(rows)), encoding="utf-8")
 
 
-__all__ = ["compute_stats", "fit_lambda", "realised_pnl", "render_stats", "write_stats"]
+__all__ = ["bet_pnl", "brier_by_directive_version", "failure_class_counts", "compute_stats", "fit_lambda", "realised_pnl", "render_stats", "write_stats"]

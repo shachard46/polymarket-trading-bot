@@ -52,13 +52,30 @@ No agent is involved. For each market in this tick's researched list plus a vaul
 
 - **Action:** Orchestrator queries `polymarket-scraper` for recently closed markets that exist in `/03_Trades/`.
 - **State Management:** Orchestrator moves the market's file from `/02_Active_Research/` to `/04_Post_Mortems/`.
-- **Action:** Spawn **Post-Mortem Analyst** (inject original report, trade log, and resolution data) $\rightarrow$ Orchestrator appends the output to the `## Post-Mortem` section of the Markdown file.
+- **Action:** Spawn **Post-Mortem Analyst** with structured inputs (`p`, `p_low`, `p_high`, `q_entry`, `side`, `price`, `size_usd`, `outcome_yes`, after-tax `realised_pnl_usd` via `stats.bet_pnl`, triage `category`, `gate_score`, `research_confidence`, `resolution_checklist`) plus the research markdown, trade log and resolution data. The analyst separates decision quality from outcome and returns a `failure_class` in `{bad_info, bad_reasoning, resolution_misread, variance, correct}`. The Orchestrator appends the paragraph under `## Post-Mortem`, stores `failure_class` in the post-mortem frontmatter, and ledgers a `post_mortem` row (`failure_class`, `outcome_yes`, `pnl_usd`, ...). An invalid class is a failed attempt (retried, capped like any post-mortem failure).
 
-## 6. Macro-Learning Loop (Every 24-48 Hours)
+## 6. Macro-Learning Loop (Every 24h, evidence-gated)
 
-- **Action:** Orchestrator aggregates all updated files in `/04_Post_Mortems/`.
-- **Action:** Spawn **Overseer** (inject aggregated post-mortems and current `/00_System/active_directives.md`).
-- **State Management:** Orchestrator completely overwrites `/00_System/active_directives.md` with the Overseer's `new_directives_markdown` output. Overseer failures are logged; prior directives are retained.
+Phase 6 is a bounded, versioned, reversible tuner. The Overseer may edit the Research Protocol text and at most 2 gate/research knobs per run; it can never touch sizing (lambda, Kelly fraction, caps).
+
+1. **Auto-revert first.** Group ledger decisions by `directive_version` (`stats.brier_by_directive_version`). If the current version has >= 30 resolved scored markets, so does the previous one, and the current model Brier is worse by more than 0.02, restore the previous version as a NEW version (`restored_from`, `restore_note` in the frontmatter), log loudly at ERROR, set `last_overseer_at`, and skip the Overseer. A version that is itself a restore is never auto-reverted.
+2. **Gate.** Run only if >= `OVERSEER_MIN_NEW_RESOLVED` (default 30) ledger `resolution` rows exist beyond `last_overseer_ledger_count`, and `last_overseer_at` is older than `OVERSEER_INTERVAL_SEC` (24h). Both live in the directives frontmatter; `loop.run_forever` also keeps the 24h cadence.
+3. **Input.** `stats.md` (rewritten just before), `failure_class_counts` (latest `post_mortem` row per market), up to 15 recent post-mortems (5 KB each), the current directives and the `bounds` table (`knob, current, default, min, max, max_step_frac, last_changed_version, locked`).
+4. **Validation (`ObsidianManager.write_directives`).** The WHOLE proposal is rejected (prior directives kept, error logged, nothing ledgered, no version) if: the structure is invalid; the `filters:` block has an unknown key or a non-numeric value; a knob is outside `BOUNDS`; a knob moves more than 15% of its current value (integer knobs may move by 1); more than 2 knobs change; or a knob changed fewer than 3 versions ago (`knob_last_changed` in the frontmatter). An omitted knob counts as its default.
+5. **Versioning.** The Hub owns the frontmatter: `version` is a monotonic integer (seed = 1; legacy `"0.1-seed"` migrates to 1), incremented by every successful write; each version is archived to `00_System/directives_history/v{N}.md` (plus the `.bak` of the previous file). A proposal that changes neither a knob nor the body is a no-op: no new version, only `last_overseer_*` is updated. Ledger rows stamp the integer version.
+6. **Rollback.** `python -m orchestrator.replay --directives N` restores archived version N as version `latest + 1` (bounds are not enforced; knobs that differ restart their cooldown).
+
+### Tunable knobs (`config.trading_constants.BOUNDS`, `filters:` block in `active_directives.md`)
+
+| knob | default | min | max | read by |
+|---|---|---|---|---|
+| `gate_min_q` / `gate_max_q` | 0.05 / 0.95 | 0.03-0.15 / 0.85-0.97 | | `gate.eligibility` (`price_extreme`) |
+| `min_days_to_resolution` / `max_days_to_resolution` | 7 / 60 | 3-21 / 30-120 | | `gate.eligibility` (`too_soon`/`too_far`), `gate.score` time ramp |
+| `research_max_quick_width` | 0.30 | 0.15-0.45 | | `quick_decision` (`no_divergence`) |
+| `research_max_sample_spread` | 0.15 | 0.08-0.25 | | FULL stage `sample_disagreement` |
+| `research_max_q_gap` | 0.30 | 0.20-0.45 | | FULL stage `probable_misread` |
+
+Each knob falls back to the constant of the same meaning when the directives are missing or unparsable (`extract_filter_directives`). The legacy signal-bundle thresholds (`volume_shock_ma_multiplier`, ...) stay in `FILTERS` but are not Overseer-tunable.
 
 ## 7. Error Handling (In-Place State Machine)
 
@@ -74,6 +91,7 @@ python -m orchestrator.replay --market-id 0xabc
 python -m orchestrator.replay --all
 python -m orchestrator.replay --all --dir filters
 python -m orchestrator.replay --market-id 0xabc --dry-run
+python -m orchestrator.replay --directives 3   # restore directives v3 as a new version
 ```
 
 Or enable automatic replay at orchestrator startup:

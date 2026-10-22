@@ -42,8 +42,33 @@ FILTERS = {
     "low_liquidity_breakout_max_liq": 2000,
     "low_liquidity_breakout_pct": 0.05,  # was 0.03 — raise thin-market bar
     "low_liquidity_dead_window_hrs": 48,
-    "arbitrage_max_combined_ask": 0.98
+    "arbitrage_max_combined_ask": 0.98,
+    # Overseer-tunable gate / research knobs (see BOUNDS). Defaults mirror the constants above.
+    "gate_min_q": 0.05,                   # gate: q below this is "price_extreme"
+    "gate_max_q": 0.95,                   # gate: q above this is "price_extreme"
+    "min_days_to_resolution": MIN_DAYS_TO_RESOLUTION,
+    "max_days_to_resolution": MAX_DAYS_TO_RESOLUTION,
+    "research_max_quick_width": RESEARCH_MAX_QUICK_WIDTH,
+    "research_max_sample_spread": RESEARCH_MAX_SAMPLE_SPREAD,
+    "research_max_q_gap": RESEARCH_MAX_Q_GAP,
 }
+
+# Overseer guard-rails. ONLY these knobs may appear in the directives `filters:` block; sizing
+# (LAMBDA, KELLY_FRAC, F_MAX, caps) is deliberately absent and off-limits to the Overseer.
+BOUND_MAX_STEP_FRAC = 0.15          # a knob may move at most 15% of its current value per version
+BOUNDS = {
+    "gate_min_q":                 {"min": 0.03, "max": 0.15, "max_step_frac": BOUND_MAX_STEP_FRAC},
+    "gate_max_q":                 {"min": 0.85, "max": 0.97, "max_step_frac": BOUND_MAX_STEP_FRAC},
+    "min_days_to_resolution":     {"min": 3,    "max": 21,   "max_step_frac": BOUND_MAX_STEP_FRAC},
+    "max_days_to_resolution":     {"min": 30,   "max": 120,  "max_step_frac": BOUND_MAX_STEP_FRAC},
+    "research_max_quick_width":   {"min": 0.15, "max": 0.45, "max_step_frac": BOUND_MAX_STEP_FRAC},
+    "research_max_sample_spread": {"min": 0.08, "max": 0.25, "max_step_frac": BOUND_MAX_STEP_FRAC},
+    "research_max_q_gap":         {"min": 0.20, "max": 0.45, "max_step_frac": BOUND_MAX_STEP_FRAC},
+}
+MAX_KNOBS_CHANGED_PER_RUN = 2       # more than this in one directives doc -> reject the whole doc
+KNOB_COOLDOWN_VERSIONS = 3          # a knob changed at version V may change again at V + 3
+AUTO_REVERT_MIN_SCORED = 30         # resolved scored markets a version needs before it is judged
+AUTO_REVERT_BRIER_WORSE_BY = 0.02   # current Brier worse than previous by more than this -> revert
 
 # Execution Safety
 PAPER_TRADE_MODE = True  # If True, execute_polymarket_trade logs the trade but does NOT hit the live API
