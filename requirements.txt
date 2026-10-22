@@ -1,4 +1,5 @@
 # Orchestrator runtime dependencies (root-level).
-# Skill-specific dependencies live alongside each skill (e.g. skills/market-scraper/requirements.txt).
+# Skill-specific dependencies live alongside each skill.
 pydantic>=2.6
 PyYAML>=6.0
+requests>=2.31

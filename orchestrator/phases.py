@@ -36,12 +36,13 @@ from config.trading_constants import (
     BOUNDS,
     FILTERS,
     KNOB_COOLDOWN_VERSIONS,
+    LIQ_FRAC,
     RESEARCH_MAX_QUICK_WIDTH,
     RESEARCH_MIN_TTL_HOURS,
     RESEARCH_REFRESH_PRICE_MOVE,
     RESEARCH_SAMPLES,
 )
-from orchestrator import gate, ledger, scraper, stats
+from orchestrator import gate, ledger, polymarket_api, scraper, stats
 from orchestrator.config import (
     OVERSEER_INTERVAL_SEC,
     PAPER_TRADE_MODE,
@@ -88,7 +89,6 @@ from orchestrator.parse import (
     run_agent_with_format_retries,
 )
 from orchestrator.research import parse_deep_researcher
-from orchestrator.signal_bundle import fetch_signal_bundle
 from orchestrator.runner import AgentRunner, spawn_agent
 from orchestrator.schema_validation import AgentSchemaError
 
@@ -261,9 +261,11 @@ def _ledger_safe(
 
 
 def phase1_data_ingestion(vault: ObsidianManager) -> list[MarketRow]:
-    """Query polymarket-scraper for high-delta / new markets."""
+    """Query Polymarket (Gamma) for open binary candidates inside the days window."""
     log.info("[PHASE 1] Data ingestion")
-    target_markets = scraper.fetch_target_markets()
+    target_markets = scraper.fetch_target_markets(
+        knobs=extract_filter_directives(vault.read_directives())
+    )
     log.info(
         "[PHASE 1] target_markets count=%d ids=%r",
         len(target_markets),
@@ -332,15 +334,6 @@ def _triage_payload(market: MarketRow, today: str) -> dict[str, Any]:
     }
 
 
-def _signal_bundle_or_none(market_id: str) -> dict[str, Any] | None:
-    try:
-        bundle = fetch_signal_bundle(market_id)
-    except Exception as exc:  # noqa: BLE001 - signals are a ranking bonus only
-        log.warning("[PHASE 2] signal bundle unavailable for %s: %s", market_id, exc)
-        return None
-    return bundle if isinstance(bundle, dict) and not bundle.get("error") else None
-
-
 def phase2_quantitative_routing(
     vault: ObsidianManager,
     target_markets: list[MarketRow],
@@ -373,7 +366,7 @@ def phase2_quantitative_routing(
         }
 
     # -- Stage 1: eligibility ------------------------------------------------
-    eligible: list[tuple[float, MarketRow, dict[str, Any] | None, dict[str, Any] | None]] = []
+    eligible: list[tuple[float, MarketRow, dict[str, Any] | None]] = []
     for market in target_markets:
         market_id = market.market_id
         if vault.is_market_inactive(market_id, dir_key="filters"):
@@ -439,15 +432,14 @@ def phase2_quantitative_routing(
                 ledger_once(market_id, "gate_reject", reason=reason, q=q, **fields)
                 continue
 
-            bundle = _signal_bundle_or_none(market_id)
-            eligible.append((gate.score(md, bundle, knobs), market, prior, bundle))
+            eligible.append((gate.score(md, knobs), market, prior))
 
     # -- Stage 2: rank, budget, triage ---------------------------------------
     eligible.sort(key=lambda item: (-item[0], item[1].market_id))
     budget = gate_budget()
     researchable: list[tuple[float, MarketRow, dict[str, Any] | None, dict[str, Any]]] = []
 
-    for rank, (sc, market, prior, bundle) in enumerate(eligible):
+    for rank, (sc, market, prior) in enumerate(eligible):
         market_id = market.market_id
         md = market.market_data
         q = scraper.select_q(md)
@@ -456,7 +448,6 @@ def phase2_quantitative_routing(
             "confidence_multiplier": sc,
             "score": sc,
             "event_id": fields["event_id"],
-            "signal_bundle": bundle,
             **gate.register_pass(q),
         }
         if rank >= budget:
@@ -1427,26 +1418,57 @@ def compute_allocation(
     market_data: dict[str, Any],
     p_low: float | None = None,
     p_high: float | None = None,
+    quotes: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Run ``calculate_trade_allocation`` in-process against bankroll + realised P&L."""
+    """Run ``calculate_trade_allocation`` in-process against bankroll + realised P&L.
+
+    ``quotes`` (``{"YES": quote, "NO": quote}`` from ``polymarket_api.executable_quote``) supplies
+    the real asks (``q_yes_ask`` / ``q_no_ask``) and caps the order at the chosen side's
+    ``depth_usd_within_2c``; without it the mid ``q`` is the YES ask and NO is ``1 - q``.
+    """
     try:
         days = int(float(market_data.get("days_to_resolution")))
     except (TypeError, ValueError):
         days = None  # the skill reports an input error
     event_id = market_data.get("event_id")
     bankroll = BANKROLL_USD + stats.realised_pnl(list(ledger.iter_rows(vault)))
-    result = _load_calculate_trade_allocation()(
-        p=p,
-        q_yes_ask=q,
-        D=days,
-        L=market_data.get("liquidity"),
-        bankroll=bankroll,
-        open_exposure_total=_open_allocated_usd(vault),
-        open_exposure_event=_open_allocated_usd(vault, event_id) if event_id else 0.0,
-        p_low=p_low,
-        p_high=p_high,
-    )
-    return result.model_dump() if hasattr(result, "model_dump") else dict(result)
+    liquidity = market_data.get("liquidity")
+
+    def run(L: Any) -> dict[str, Any]:
+        result = _load_calculate_trade_allocation()(
+            p=p,
+            q_yes_ask=quotes["YES"]["ask"] if quotes else q,
+            q_no_ask=quotes["NO"]["ask"] if quotes else None,
+            D=days,
+            L=L,
+            bankroll=bankroll,
+            open_exposure_total=_open_allocated_usd(vault),
+            open_exposure_event=_open_allocated_usd(vault, event_id) if event_id else 0.0,
+            p_low=p_low,
+            p_high=p_high,
+        )
+        return result.model_dump() if hasattr(result, "model_dump") else dict(result)
+
+    out = run(liquidity)
+    side = out.get("side")
+    if quotes and side in quotes and not out.get("error"):
+        depth = _as_float(quotes[side].get("depth_usd_within_2c"))
+        # The skill caps an order at LIQ_FRAC * L; shrinking L to depth / LIQ_FRAC turns that
+        # cap into "no more than the ask depth within 2c" without touching the skill.
+        if depth is not None and out["allocation_usd"] > depth and isinstance(liquidity, (int, float)):
+            out = run(min(float(liquidity), depth / LIQ_FRAC))
+    return out
+
+
+def _phase4_quotes(market_id: str) -> dict[str, dict[str, Any]] | None:
+    """Real YES and NO asks + depth from the CLOB, or ``None`` (infra error: skip this tick, no flag)."""
+    try:
+        yes = polymarket_api.executable_quote(market_id, "YES")
+        no = polymarket_api.executable_quote(market_id, "NO")
+    except polymarket_api.PolymarketAPIError as exc:
+        log.warning("[PHASE 4] quote fetch failed for %s: %s", market_id, exc)
+        return None
+    return {"YES": yes, "NO": no} if yes and no else None
 
 
 def _phase4_queue(
@@ -1542,8 +1564,15 @@ def phase4_execution(
                 log.warning("[PHASE 4] skip %s this tick: %s", market_id, hydration_err)
                 continue
 
+            quotes = _phase4_quotes(market_id)
+            if quotes is None:
+                log.warning("[PHASE 4] skip %s this tick: executable quote unavailable", market_id)
+                continue
+
             p_value, p_low, p_high = row["p_value"], row.get("p_low"), row.get("p_high")
-            allocation = compute_allocation(vault, p_value, q, market_data, p_low, p_high)
+            allocation = compute_allocation(
+                vault, p_value, q, market_data, p_low, p_high, quotes=quotes
+            )
             if allocation.get("error"):
                 log.warning(
                     "[PHASE 4] skip %s this tick: allocation error: %s",
@@ -1554,6 +1583,7 @@ def phase4_execution(
 
             size_usd = float(allocation["allocation_usd"])
             below = bool(allocation["below_edge_threshold"]) or not size_usd > 0
+            bought = quotes.get(allocation.get("side") or "") or {}
             trade: dict[str, Any] = {
                 "market_id": market_id,
                 "allocation_usd": size_usd,
@@ -1568,6 +1598,8 @@ def phase4_execution(
                 "q_entry": q,
                 "side": allocation.get("side"),
                 "price": allocation.get("price"),
+                "ask": bought.get("ask"),
+                "depth_usd": bought.get("depth_usd_within_2c"),
                 "shares": allocation.get("shares"),
                 "directive_version": ledger.current_directive_version(vault),
                 "event_id": market_data.get("event_id"),
@@ -1625,6 +1657,8 @@ def phase4_execution(
                     p_high=p_high,
                     side=allocation.get("side"),
                     price=allocation.get("price"),
+                    ask=bought.get("ask"),
+                    depth_usd=bought.get("depth_usd_within_2c"),
                     shares=allocation.get("shares"),
                     size_usd=size_usd,
                     **_ledger_market_fields(market_data),
@@ -1666,7 +1700,7 @@ def _resolve_ledger_markets(vault: ObsidianManager) -> None:
             if outcome_yes is None:
                 continue
             ledger.record_resolution(
-                vault, market_id, outcome_yes, (resolution or {}).get("outcome"), None
+                vault, market_id, outcome_yes, (resolution or {}).get("raw_outcome"), None
             )
         except Exception:  # noqa: BLE001 - one bad market must not stop the sweep
             log.exception("[PHASE 5] ledger resolution failed for %s", market_id)

@@ -65,21 +65,12 @@ def test_score_prefers_low_attention_sweet_spot_and_mid_price():
     assert gate.score(row(yes_price=0.5)) > gate.score(row(yes_price=0.3))
 
 
-def test_momentum_is_only_a_small_bonus():
-    bundle = {
-        "signals": {
-            "volume_shock": {"fired": True},
-            "breakout": {"pct_move": 0.2, "threshold": 0.08},
-            "info_drift": {"max_run": 12, "threshold": 9},
-        }
-    }
-    plain = gate.score(row())
-    boosted = gate.score(row(), bundle)
-    assert 0 < boosted - plain <= 0.10 + 1e-9
-    # A hot but crowded market still ranks below a quiet one.
-    assert gate.score(row(volume=500_000.0), bundle) < plain
-    assert gate.score(row(), {"signals": {}}) == plain
-    assert gate.score(row(), None) == plain
+def test_arbitrage_uses_real_asks_when_present():
+    assert gate.arbitrage_combined(row(yes_ask=0.4, no_ask=0.5)) == pytest.approx(0.9)
+    assert gate.arbitrage_combined(row(yes_ask=0.5, no_ask=0.5)) is None
+    # Asks win over the mid-based prices; prices are the fallback.
+    assert gate.arbitrage_combined(row(yes_price=0.4, no_price=0.5, yes_ask=0.5, no_ask=0.55)) is None
+    assert gate.arbitrage_combined(row(yes_price=0.4, no_price=0.5)) == pytest.approx(0.9)
 
 
 def test_backoff_schedule_and_cap():

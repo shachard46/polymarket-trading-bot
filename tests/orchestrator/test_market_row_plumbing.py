@@ -12,6 +12,7 @@ from orchestrator.scraper import (
     market_data_hydration_error,
     _market_row_from_scraper,
     _market_snapshot_from_scraper_row,
+    select_q,
 )
 from tests.orchestrator.test_phase3_helpers import briefer_ok, deep_researcher_complete
 
@@ -46,61 +47,39 @@ def test_market_row_from_scraper_preserves_title_description_and_snapshot():
     assert row.market_data["liquidity"] == 5678.0
 
 
-def test_market_row_from_scraper_reads_nested_latest_change():
+def test_market_row_from_api_row_carries_quote_and_token_fields():
     raw = {
         "market_id": "0xabc",
         "question": "Will X happen by 2027?",
-        "description": "Long form description.",
-        "latest_change": {
-            "datetime": "2026-06-01T12:00:00Z",
-            "yes_price": 0.42,
-            "no_price": 0.58,
-            "volume": 1234.0,
-            "liquidity": 5678.0,
-            "last_trade_price": 0.43,
-            "midpoint": 0.50,
-            "spread": 0.02,
-        },
+        "yes_price": 0.42,
+        "yes_bid": 0.41,
+        "yes_ask": 0.43,
+        "no_bid": 0.57,
+        "no_ask": 0.59,
+        "yes_token_id": "111",
+        "no_token_id": "222",
+        "volume": 1234.0,
+        "liquidity": 5678.0,
+        "gamma_id": "999",  # not part of the agent-facing snapshot
     }
     row = _market_row_from_scraper(raw)
     assert row is not None
-    assert row.market_data["yes_price"] == 0.42
-    assert row.market_data["midpoint"] == 0.50
-    assert row.market_data["volume"] == 1234.0
+    md = row.market_data
+    assert (md["yes_bid"], md["yes_ask"], md["no_ask"]) == (0.41, 0.43, 0.59)
+    assert (md["yes_token_id"], md["no_token_id"]) == ("111", "222")
+    assert "gamma_id" not in md
 
 
-def test_market_snapshot_prefers_top_level_over_latest_change():
-    raw = {
-        "yes_price": 0.10,
-        "latest_change": {"yes_price": 0.99},
-    }
-    snapshot = _market_snapshot_from_scraper_row(raw)
-    assert snapshot["yes_price"] == 0.10
-
-
-def test_market_snapshot_derives_days_to_resolution_from_extra_info_end_date():
-    raw = {
-        "extra_info": '{"endDateIso": "2026-12-31T00:00:00Z"}',
-        "latest_change": {
-            "yes_price": 0.42,
-            "volume": 100.0,
-            "liquidity": 200.0,
-        },
-    }
-    snapshot = _market_snapshot_from_scraper_row(raw)
-    assert snapshot["end_date"] == "2026-12-31T00:00:00Z"
+def test_market_snapshot_derives_days_to_resolution_from_end_date():
+    snapshot = _market_snapshot_from_scraper_row({"endDateIso": "2099-12-31", "yes_price": 0.42})
+    assert snapshot["end_date"] == "2099-12-31"
     assert isinstance(snapshot["days_to_resolution"], int)
     assert snapshot["days_to_resolution"] >= 1
 
 
-def test_market_snapshot_derives_end_date_from_parsed_extra_info_dict():
-    raw = {
-        "extra_info": {"endDateIso": "2026-08-18"},
-        "latest_change": {"yes_price": 0.42, "volume": 100.0, "liquidity": 200.0},
-    }
-    snapshot = _market_snapshot_from_scraper_row(raw)
-    assert snapshot["end_date"] == "2026-08-18"
-    assert snapshot["days_to_resolution"] >= 1
+def test_select_q_prefers_the_yes_bid_ask_mid():
+    assert select_q({"yes_bid": 0.40, "yes_ask": 0.44, "yes_price": 0.9}) == pytest.approx(0.42)
+    assert select_q({"yes_bid": 0.5, "yes_ask": 0.4, "yes_price": 0.3}) == 0.3  # crossed -> ignore
 
 
 def test_market_data_hydration_error_when_pricing_missing():
@@ -118,7 +97,6 @@ def test_market_data_hydration_error_when_volume_nonpositive():
     )
     assert err is not None
     assert "volume" in err
-    assert "poly-scan scan --market" in err
 
 
 def test_market_data_hydration_error_when_liquidity_nonpositive():

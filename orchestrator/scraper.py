@@ -1,62 +1,33 @@
-"""polymarket-scraper integration.
+"""Market ingestion adapter over :mod:`orchestrator.polymarket_api` (Gamma + CLOB, no scraper DB).
 
-These functions encapsulate ``poly-scan`` CLI calls so phase code stays
-free of subprocess details. Failures (binary missing, non-zero exit, bad
-JSON) are logged and converted to empty results — the pipeline must keep
-running even when the scraper is unavailable.
+Keeps the function signatures the phase code was written against (``fetch_target_markets``,
+``fetch_market_row``, ``fetch_resolution``, ``select_q``, ``market_data_hydration_error``) while the
+data now comes straight from Polymarket's public APIs. Transport failures are logged and converted
+to empty results, so a Polymarket outage degrades to "nothing to do this tick" rather than a crash.
 
 Environment variables:
 
-- ``POLY_SCAN_BIN``         — path to the ``poly-scan`` executable (default ``poly-scan``).
-- ``OPENCLAW_INGEST_LIMIT`` — max markets pulled per ingestion cycle (default ``100``).
-- ``POLY_SCAN_TIMEOUT_SEC`` — per-command timeout in seconds (default ``60``).
+- ``OPENCLAW_INGEST_LIMIT`` — max candidate markets pulled per ingestion cycle (default ``100``).
+- ``GAMMA_BASE_URL`` / ``CLOB_BASE_URL`` / ``POLYMARKET_API_TIMEOUT_SEC`` — see ``polymarket_api``.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import math
 import os
 import re
-import shutil
-import subprocess
 from datetime import datetime, timezone
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from orchestrator.config import FILTERS
+from orchestrator import polymarket_api
+from orchestrator.polymarket_api import PolymarketAPIError
 
 log = logging.getLogger(__name__)
 
-_DEFAULT_BIN = "poly-scan"
-_DEFAULT_TIMEOUT_SEC = 60.0
 _DEFAULT_INGEST_LIMIT = 100
-
-# Status strings emitted by the scraper that indicate the market has resolved.
-_CLOSED_STATUSES = frozenset({"closed", "resolved", "archived"})
-
-# Cache the "binary missing" warning so we don't spam the log each tick.
-_warned_missing_binary = False
-
-
-def _poly_scan_bin() -> str:
-    return os.environ.get("POLY_SCAN_BIN", _DEFAULT_BIN)
-
-
-def _timeout_sec() -> float:
-    raw = os.environ.get("POLY_SCAN_TIMEOUT_SEC")
-    if not raw:
-        return _DEFAULT_TIMEOUT_SEC
-    try:
-        value = float(raw)
-    except ValueError:
-        value = float("nan")
-    if not (math.isfinite(value) and value > 0.0):
-        log.warning("Invalid POLY_SCAN_TIMEOUT_SEC=%r; using default", raw)
-        return _DEFAULT_TIMEOUT_SEC
-    return value
 
 
 def _ingest_limit() -> int:
@@ -70,64 +41,20 @@ def _ingest_limit() -> int:
         return _DEFAULT_INGEST_LIMIT
 
 
-def _run_poly_scan(*args: str) -> Any | None:
-    """Run ``poly-scan <args>``, return parsed JSON, or ``None`` on any failure."""
-    global _warned_missing_binary
-
-    binary = _poly_scan_bin()
-    if shutil.which(binary) is None:
-        if not _warned_missing_binary:
-            log.warning(
-                "poly-scan binary %r not found on PATH; scraper calls will return empty",
-                binary,
-            )
-            _warned_missing_binary = True
-        return None
-
-    cmd = [binary, *args]
-    try:
-        completed = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=_timeout_sec(),
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        log.warning("poly-scan timed out: %s", " ".join(cmd))
-        return None
-    except (OSError, UnicodeDecodeError) as exc:
-        log.warning("poly-scan failed to launch/decode (%s): %s", exc, " ".join(cmd))
-        return None
-
-    if completed.returncode != 0:
-        log.warning(
-            "poly-scan exit %d for %s: %s",
-            completed.returncode,
-            " ".join(cmd),
-            completed.stderr.strip(),
-        )
-        return None
-
-    try:
-        return json.loads(completed.stdout)
-    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        log.warning("poly-scan returned non-JSON for %s: %s", " ".join(cmd), exc)
-        return None
-
-
 # ---------------------------------------------------------------------------
 # Hub-side payload models
 # ---------------------------------------------------------------------------
 
 
-# Snapshot fields the Orchestrator promises to forward to downstream agents.
-# Sourced from polymarket-scraper's `get_open_markets` (joined with the latest
-# market_change row). Anything missing here is the scraper's fault, not the
-# spoke's — agents must never re-fetch.
+# Snapshot fields the Orchestrator promises to forward to downstream agents/phases, sourced from
+# ``polymarket_api.market_row_from_gamma`` (Gamma ``bestBid``/``bestAsk``/``outcomePrices``/...).
 _MARKET_DATA_FIELDS: tuple[str, ...] = (
     "yes_price",
     "no_price",
+    "yes_bid",
+    "yes_ask",
+    "no_bid",
+    "no_ask",
     "volume",
     "liquidity",
     "last_trade_price",
@@ -138,15 +65,16 @@ _MARKET_DATA_FIELDS: tuple[str, ...] = (
     "category",
     "event_id",
     "resolution_source",
+    "yes_token_id",
+    "no_token_id",
 )
 
 
 class MarketRow(BaseModel):
     """Hub-validated row carrying every field downstream spokes need.
 
-    Constructed by the Orchestrator from `poly-scan get_open_markets`. The
-    Hub reads `market_data` (q, V, L, ...); price-blind agents only
-    receive the text fields and a whitelisted subset of `market_data`.
+    Built from a ``polymarket_api`` row. The Hub reads ``market_data`` (q, V, L, ...); price-blind
+    agents only receive the text fields and a whitelisted subset of ``market_data``.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -157,13 +85,10 @@ class MarketRow(BaseModel):
     market_data: dict[str, Any] = Field(default_factory=dict)
 
 
-# Fields the Hub uses for implied price (q), in priority order.
+# Fields the Hub uses for implied price (q), after the yes_bid/yes_ask mid, in priority order.
 Q_SOURCE_FIELDS: tuple[str, ...] = ("yes_price", "last_trade_price", "midpoint")
 
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
-
-# Minimum snapshot fields required before executing (phase 4).
-_EXECUTION_REQUIRED_FIELDS: tuple[str, ...] = Q_SOURCE_FIELDS + ("volume", "liquidity")
 
 
 def _parse_iso_datetime(value: Any) -> datetime | None:
@@ -184,63 +109,21 @@ def _days_to_resolution(end_date: datetime) -> int:
     return max(1, int(math.ceil(delta_days)))
 
 
-def _extra_info_dict(row: dict[str, Any]) -> dict[str, Any] | None:
-    extra_info = row.get("extra_info")
-    if isinstance(extra_info, dict):
-        return extra_info
-    if not isinstance(extra_info, str) or not extra_info.strip():
-        return None
-    try:
-        parsed = json.loads(extra_info)
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
-
-
-def _end_date_from_scraper_row(row: dict[str, Any]) -> str | None:
-    for key in ("end_date", "endDateIso", "endDate"):
-        value = row.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-
-    parsed = _extra_info_dict(row)
-    if parsed is None:
-        return None
-    for key in ("endDateIso", "endDate", "end_date"):
-        value = parsed.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
-
-
 def _market_snapshot_from_scraper_row(row: dict[str, Any]) -> dict[str, Any]:
-    """Project poly-scan row into agent-facing ``market_data``.
-
-    poly-scan nests pricing under ``latest_change``; top-level keys win when both exist.
-    """
+    """Project a ``polymarket_api`` row into agent-facing ``market_data``."""
     market_data: dict[str, Any] = {
         key: row[key] for key in _MARKET_DATA_FIELDS if key in row and row[key] is not None
     }
-
-    latest_change = row.get("latest_change")
-    if isinstance(latest_change, dict):
-        for key in _MARKET_DATA_FIELDS:
-            if key in market_data:
-                continue
-            value = latest_change.get(key)
-            if value is not None:
-                market_data[key] = value
-
     if "end_date" not in market_data:
-        end_date = _end_date_from_scraper_row(row)
-        if end_date is not None:
-            market_data["end_date"] = end_date
-
+        for key in ("endDateIso", "endDate"):
+            value = row.get(key)
+            if isinstance(value, str) and value.strip():
+                market_data["end_date"] = value.strip()
+                break
     if "days_to_resolution" not in market_data and "end_date" in market_data:
         parsed_end = _parse_iso_datetime(market_data["end_date"])
         if parsed_end is not None:
             market_data["days_to_resolution"] = _days_to_resolution(parsed_end)
-
     return market_data
 
 
@@ -254,8 +137,12 @@ def _is_unit_price(value: Any) -> bool:
 
 
 def select_q(row: dict[str, Any] | None) -> float | None:
-    """Implied price q: first of yes_price, last_trade_price, midpoint strictly in (0, 1)."""
+    """Implied price q (YES-first): mid of ``yes_bid``/``yes_ask``, else the first of
+    ``yes_price``, ``last_trade_price``, ``midpoint`` strictly in (0, 1)."""
     data = row or {}
+    bid, ask = data.get("yes_bid"), data.get("yes_ask")
+    if _is_unit_price(bid) and _is_unit_price(ask) and float(bid) <= float(ask):
+        return (float(bid) + float(ask)) / 2.0
     for key in Q_SOURCE_FIELDS:
         value = data.get(key)
         if _is_unit_price(value):
@@ -267,8 +154,8 @@ def _missing_pricing_error(data: dict[str, Any]) -> str | None:
     if select_q(data) is not None:
         return None
     return (
-        "missing market pricing data: no yes_price, last_trade_price, or midpoint in (0, 1) "
-        "(run poly-scan scan --market <id> so latest_change is populated)"
+        "missing market pricing data: no yes_bid/yes_ask, yes_price, last_trade_price, or "
+        "midpoint in (0, 1) (the market may be closed or have an empty book)"
     )
 
 
@@ -289,10 +176,8 @@ def _is_positive_number(value: Any) -> bool:
 def market_data_hydration_error(market_data: dict[str, Any] | None) -> str | None:
     """Return a reason when snapshot is unusable for execution (phase 4), else ``None``.
 
-    ``volume`` and ``liquidity`` must be present and strictly positive: the
-    allocation skill divides by ``log1p(V)`` / ``log1p(L)``, so a zero value
-    (typically stale data scanned without enriched fields) would crash. Treat
-    it as unusable and direct the operator to refresh via ``poly-scan``.
+    ``volume`` and ``liquidity`` must be present and strictly positive: the allocation skill divides
+    by ``log1p(V)`` / ``log1p(L)``, so a zero value would crash. Treat it as unusable for this tick.
     """
     data = market_data or {}
     pricing_err = _missing_pricing_error(data)
@@ -303,15 +188,15 @@ def market_data_hydration_error(market_data: dict[str, Any] | None) -> str | Non
         details = ", ".join(f"{key}={data.get(key)!r}" for key in unusable)
         return (
             f"market snapshot has missing or non-positive {', '.join(unusable)} ({details}); "
-            "run poly-scan scan --market <id> to refresh the snapshot"
+            "will retry when Polymarket reports them"
         )
     return None
 
 
 def _market_row_from_scraper(row: dict[str, Any]) -> MarketRow | None:
-    """Project a raw scraper market dict into a validated :class:`MarketRow`.
+    """Project a ``polymarket_api`` row dict into a validated :class:`MarketRow`.
 
-    Returns ``None`` if the row lacks a usable ``market_id`` or ``question``.
+    Returns ``None`` if the row lacks a usable ``market_id`` (condition id) or ``question``.
     """
     market_id = row.get("market_id")
     if isinstance(market_id, int) and not isinstance(market_id, bool):
@@ -324,22 +209,18 @@ def _market_row_from_scraper(row: dict[str, Any]) -> MarketRow | None:
 
     title = row.get("question") or row.get("market_title") or ""
     if not isinstance(title, str) or not title.strip():
-        # No human-readable title means the Briefer would hallucinate against
-        # an empty string — drop the market upstream rather than poisoning
-        # the qualitative pipeline.
+        # No human-readable title means the Briefer would hallucinate against an empty string.
         return None
 
     description = row.get("description") or row.get("market_description") or ""
     if not isinstance(description, str):
         description = str(description)
 
-    market_data = _market_snapshot_from_scraper_row(row)
-
     return MarketRow(
         market_id=market_id,
         market_title=title,
         market_description=description,
-        market_data=market_data,
+        market_data=_market_snapshot_from_scraper_row(row),
     )
 
 
@@ -348,89 +229,60 @@ def _market_row_from_scraper(row: dict[str, Any]) -> MarketRow | None:
 # ---------------------------------------------------------------------------
 
 
-def trends_limit_for_filters() -> int:
-    """Choose ``N`` so ``poly-scan`` covers breakout + low-liquidity windows."""
-    hrs = max(
-        int(FILTERS["breakout_time_window_hrs"]),
-        int(FILTERS["low_liquidity_dead_window_hrs"]),
-    )
-    # Lower bound so we always request a non-trivial series.
-    return max(hrs * 4, 200)
+def fetch_target_markets(knobs: dict[str, Any] | None = None) -> list[MarketRow]:
+    """Return validated candidate rows (open binary markets inside the days window, liquid enough).
 
-
-def get_market_trends(market_id: str, limit: int) -> list[dict[str, Any]]:
-    """Return oldest-first trend rows from polymarket-scraper for ``market_id``.
-
-    The CLI returns newest-first; this function reverses to oldest-first to
-    match the contract expected by ``evaluate_market_metrics``.
+    ``knobs`` is the directives-derived mapping (``extract_filter_directives``) so the server-side
+    window follows the Overseer-tunable ``min/max_days_to_resolution``. Limit is
+    ``OPENCLAW_INGEST_LIMIT``. Phase 2 still applies the full deterministic gate.
     """
-    data = _run_poly_scan("get_market_trends", market_id, "--limit", str(limit))
-    if not isinstance(data, list):
-        return []
-    return list(reversed(data))
-
-
-def fetch_target_markets() -> list[MarketRow]:
-    """Return validated open-market rows to feed the quantitative pipeline.
-
-    The orchestrator pulls the freshest open markets (the CLI orders by
-    most-recently-changed first) and lets phase 2 apply the deterministic
-    quant filters. Limit is configurable via ``OPENCLAW_INGEST_LIMIT``.
-
-    Each row carries the title, description, and latest market snapshot —
-    everything downstream agents need. Rows missing identity or title are
-    dropped so the Briefer never receives a placeholder string.
-    """
-    limit = _ingest_limit()
-    data = _run_poly_scan("get_open_markets", "--limit", str(limit))
-    if not isinstance(data, list):
+    try:
+        data = polymarket_api.list_candidates(_ingest_limit(), knobs)
+    except PolymarketAPIError as exc:
+        log.warning("Polymarket candidate listing failed: %s", exc)
         return []
 
     rows: list[MarketRow] = []
     for raw in data:
-        if not isinstance(raw, dict):
-            continue
         row = _market_row_from_scraper(raw)
         if row is not None:
             rows.append(row)
         else:
             log.warning(
-                "Dropped scraper row (market_id=%r): missing/unsafe id or title",
-                raw.get("market_id"),
+                "Dropped candidate (market_id=%r): missing/unsafe id or title", raw.get("market_id")
             )
     log.info("Ingested %d candidate markets", len(rows))
     return rows
 
 
 def fetch_market_row(market_id: str) -> MarketRow | None:
-    """Return a validated :class:`MarketRow` for one market (open or closed)."""
-    market = _run_poly_scan("get_market", market_id)
-    if not isinstance(market, dict):
+    """Return a :class:`MarketRow` with fresh prices for one market (open or closed)."""
+    if not isinstance(market_id, str) or not _SAFE_ID_RE.match(market_id) or ".." in market_id:
         return None
-    return _market_row_from_scraper(market)
+    try:
+        market = polymarket_api.fetch_market(market_id)
+    except PolymarketAPIError as exc:
+        log.warning("Polymarket market fetch failed for %s: %s", market_id, exc)
+        return None
+    return _market_row_from_scraper(market) if market else None
 
 
 def fetch_resolution(market_id: str) -> dict[str, Any] | None:
-    """Return resolution metadata for ``market_id`` if the market has closed.
+    """Return resolution metadata for ``market_id`` once it has resolved, else ``None``.
 
-    Returns ``None`` for markets still trading (so the caller skips post-mortem).
+    ``outcome`` is 1 (YES won) / 0 (NO won) / ``None`` (void); disputed markets return ``None`` so the
+    caller waits. Works for any market id, including ones that were only ever gate-rejected.
     """
-    market = _run_poly_scan("get_market", market_id)
-    if not isinstance(market, dict):
+    if not isinstance(market_id, str) or not _SAFE_ID_RE.match(market_id) or ".." in market_id:
         return None
-
-    status = str(market.get("status") or "").strip().lower()
-    if status not in _CLOSED_STATUSES:
+    try:
+        res = polymarket_api.resolution(market_id)
+    except PolymarketAPIError as exc:
+        log.warning("Polymarket resolution fetch failed for %s: %s", market_id, exc)
         return None
-
-    return {
-        "market_id": market_id,
-        "status": status,
-        "outcome": market.get("outcome"),
-        "resolution_source": market.get("resolution_source"),
-        "latest_change": market.get("latest_change"),
-        "raw": market,
-    }
+    if res is None or res.get("status") == "disputed":
+        return None
+    return {**res, "outcome": res.get("outcome_yes")}
 
 
 __all__ = [
@@ -438,8 +290,7 @@ __all__ = [
     "Q_SOURCE_FIELDS",
     "market_data_hydration_error",
     "market_data_pricing_error",
-    "trends_limit_for_filters",
-    "get_market_trends",
+    "select_q",
     "fetch_target_markets",
     "fetch_market_row",
     "fetch_resolution",

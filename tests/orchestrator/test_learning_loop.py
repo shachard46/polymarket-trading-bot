@@ -361,7 +361,7 @@ def test_gate_reads_price_band_and_days_window():
     assert gate.eligibility(far)[1] == "too_far"
     assert gate.eligibility(far, knobs_for(max_days_to_resolution=75)) == (True, "ok")
     assert gate.score({**soon, "days_to_resolution": 10}) != gate.score(
-        {**soon, "days_to_resolution": 10}, None, knobs_for(min_days_to_resolution=9)
+        {**soon, "days_to_resolution": 10}, knobs_for(min_days_to_resolution=9)
     )
 
 

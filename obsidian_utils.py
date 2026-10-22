@@ -104,7 +104,6 @@ class FilterLogPayload(BaseModel):
     confidence_multiplier: float
     details: str
     error: Optional[str] = None
-    signal_bundle: Optional[dict[str, Any]] = None
     status: Optional[str] = None
     error_log: Optional[dict[str, Any]] = None
     score: Optional[float] = None
@@ -178,6 +177,8 @@ class TradeLogPayload(BaseModel):
     side: Optional[Literal["YES", "NO"]] = None
     shares: Optional[float] = None
     price: Optional[float] = None
+    ask: Optional[float] = None  # executable best ask of the bought side (CLOB) at decision time
+    depth_usd: Optional[float] = None  # ask depth within 2c of that ask, USD
     directive_version: Optional[int] = None
     event_id: Optional[str] = None
 
@@ -1221,7 +1222,7 @@ standard methodology before forming your probability estimate (`estimated_p`):
    window.  Flag catalysts that could sharply shift the probability.
 
 3. **Liquidity & Market Health** — Check whether the market has sufficient
-   liquidity (see `low_liquidity_breakout_max_liq` below).  Thin markets
+   liquidity (the Hub gate already requires liquidity >= MIN_ORDER_USD / LIQ_FRAC).  Thin markets
    carry higher spread risk; apply a conservatism discount to `estimated_p`
    for markets below the threshold.
 

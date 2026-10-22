@@ -213,15 +213,15 @@ def test_deep_researcher_error_and_unexpected_status():
 def test_directive_coercion():
     md = (
         "## Filter Weightings\n```yaml\nfilters:\n"
-        "  breakout_pct_shift: '0.2'\n  breakout_time_window_hrs: -5\n"
-        "  low_liquidity_dead_window_hrs: .inf\n  bogus: 1\n```\n"
+        "  gate_min_q: '0.07'\n  min_days_to_resolution: -5\n"
+        "  research_max_q_gap: .inf\n  bogus: 1\n```\n"
     )
     from config.trading_constants import FILTERS
 
     out = extract_filter_directives(md)
-    assert out["breakout_pct_shift"] == 0.2
-    assert out["breakout_time_window_hrs"] == FILTERS["breakout_time_window_hrs"]
-    assert out["low_liquidity_dead_window_hrs"] == FILTERS["low_liquidity_dead_window_hrs"]
+    assert out["gate_min_q"] == 0.07
+    assert out["min_days_to_resolution"] == FILTERS["min_days_to_resolution"]
+    assert out["research_max_q_gap"] == FILTERS["research_max_q_gap"]
 
 
 def test_select_q_order_and_range():

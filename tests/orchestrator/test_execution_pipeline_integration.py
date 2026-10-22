@@ -5,12 +5,11 @@ Opt-in only (skipped in normal ``pytest`` runs). Use on a host with:
 - ``PAPER_TRADE_MODE=True`` in ``config/trading_constants.py`` (default)
 - a vault that already has Phase 3 research for your market
   (``02_Active_Research/{market_id}.md``)
-- a readable polymarket-scraper DB (``POLYMARKET_DB_PATH``)
-- ``poly-scan`` on PATH (or ``POLY_SCAN_BIN``)
+- network access to Polymarket's public Gamma API (no auth)
 
 This runs Phase 4 in isolation (no phases 1–3, 5–6). You pass a **pre-researched**
 ``market_id``; the test reads ``p_value`` from vault active research, hydrates
-``market_data`` from the scraper DB, and calls ``phase4_execution`` with a
+``market_data`` from the Polymarket API, and calls ``phase4_execution`` with a
 single-market list.
 
 Trade output is JSON at ``Vault/03_Trades/{market_id}.json`` (not markdown).
@@ -19,7 +18,6 @@ Trade output is JSON at ``Vault/03_Trades/{market_id}.json`` (not markdown).
 export OPENCLAW_PHASE4_LIVE=1
 export OPENCLAW_PHASE4_MARKET_ID=0x...          # required: pre-researched market
 export OPENCLAW_VAULT_PATH=/path/to/vault       # required: must contain active research
-export POLYMARKET_DB_PATH=/path/to/polymarket.db
 
 python tests/orchestrator/test_execution_pipeline_integration.py
 
@@ -101,14 +99,7 @@ def _require_vault_path() -> Path:
 
 
 def _wire_scraper_env(monkeypatch: pytest.MonkeyPatch | None = None) -> None:
-    db_path = os.environ.get("POLYMARKET_DB_PATH", "").strip()
-    if not db_path:
-        raise RuntimeError("POLYMARKET_DB_PATH is required for this live test.")
-
-    if monkeypatch is not None:
-        monkeypatch.setenv("POLYMARKET_DB_PATH", db_path)
-    else:
-        os.environ["POLYMARKET_DB_PATH"] = db_path
+    """No env needed: market data comes from Polymarket's public API."""
 
 
 def _make_vault(*, base: Path) -> ObsidianManager:
@@ -136,7 +127,7 @@ def _build_researched_row(vault: ObsidianManager, market_id: str) -> dict[str, A
     if row is None:
         raise RuntimeError(
             f"scraper.fetch_market_row returned None for market_id={market_id!r}. "
-            "Check POLYMARKET_DB_PATH and poly-scan."
+            "Check network access to Polymarket."
         )
 
     market_data = row.market_data or {}
@@ -144,7 +135,7 @@ def _build_researched_row(vault: ObsidianManager, market_id: str) -> dict[str, A
     if hydration_err:
         raise RuntimeError(
             f"{hydration_err} (market_id={market_id!r}). "
-            "Run `poly-scan scan --market <id>` so latest_change is populated."
+            "The market may be closed or have an empty book."
         )
 
     return {
@@ -217,7 +208,6 @@ def run_phase4_isolated() -> int:
         vault_base = _require_vault_path()
         _log_status(
             "wiring scraper env",
-            db_path=os.environ.get("POLYMARKET_DB_PATH", ""),
             market_id=market_id,
             vault=str(vault_base),
         )
@@ -282,7 +272,7 @@ def phase4_live_env(monkeypatch):
         if row is None:
             pytest.skip(
                 f"scraper.fetch_market_row returned None for {market_id!r} "
-                "(check POLYMARKET_DB_PATH and poly-scan)."
+                "(check network access to Polymarket)."
             )
         _log_status("pytest live env: scraper ok", market_id=market_id)
     except Exception as exc:

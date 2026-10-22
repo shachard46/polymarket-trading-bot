@@ -183,12 +183,3 @@ def test_triage_agent_error_flags_inactive(vault):
     assert vault.is_market_inactive("a")
 
 
-def test_signal_bundle_failure_is_tolerated(vault):
-    from orchestrator.signal_bundle import set_fetch_signal_bundle_impl
-
-    def boom(m, o=None):
-        raise RuntimeError("db down")
-
-    set_fetch_signal_bundle_impl(boom)
-    phases.phase2_quantitative_routing(vault, [mk("a")], runner=Triage())
-    assert vault.read_filter_log("a")["passed"] is True

@@ -36,8 +36,6 @@ STATUS_RETIRED = "retired"
 _CLOSED_STATUSES = frozenset({"closed", "resolved", "archived"})
 
 SWEET_SPOT_DAYS = (14.0, 45.0)
-_MOMENTUM_BONUS_EACH = 0.04
-_MOMENTUM_BONUS_CAP = 0.10
 _TURNOVER_HALF = 20.0  # volume/liquidity at which the attention term is 0.5
 
 
@@ -97,38 +95,13 @@ def eligibility(
     return True, "ok"
 
 
-def _momentum_fired(signal_bundle: Mapping[str, Any] | None) -> int:
-    """Count of fired momentum signals (volume_shock, breakout, info_drift)."""
-    signals = (signal_bundle or {}).get("signals")
-    if not isinstance(signals, Mapping):
-        return 0
-    fired = 0
-    vs = signals.get("volume_shock")
-    if isinstance(vs, Mapping) and vs.get("fired"):
-        fired += 1
-    bo = signals.get("breakout")
-    if isinstance(bo, Mapping):
-        move, thr = _num(bo.get("pct_move")), _num(bo.get("threshold"))
-        thr = thr if thr is not None else FILTERS["breakout_pct_shift"]
-        if bo.get("fired") or (move is not None and move >= thr):
-            fired += 1
-    idr = signals.get("info_drift")
-    if isinstance(idr, Mapping):
-        run, thr = _num(idr.get("max_run")), _num(idr.get("threshold"))
-        thr = thr if thr is not None else FILTERS["info_drift_sequential_trades"]
-        if idr.get("fired") or (run is not None and run >= thr):
-            fired += 1
-    return fired
-
-
 def score(
     market_row: Mapping[str, Any] | None,
-    signal_bundle: Mapping[str, Any] | None = None,
     knobs: Mapping[str, Any] | None = None,
 ) -> float:
     """Ranking score for an *eligible* market (higher = look at it first).
 
-    ``score = 0.5*attention + 0.3*time + 0.2*price + bonus``
+    ``score = 0.5*attention + 0.3*time + 0.2*price``
 
     - attention = 1 / (1 + turnover / 20), turnover = volume / liquidity. Low
       attention (thinly traded relative to depth) means the crowd has not yet
@@ -136,9 +109,6 @@ def score(
     - time = 1.0 for 14-45 days to resolution; linear ramp 0.4 -> 1.0 from 7 to
       14 days and 1.0 -> 0.4 from 45 to 60 days.
     - price = 1 - 2*|q - 0.5| (1.0 at 50c, 0.1 at the 5c/95c edge).
-    - bonus = 0.04 per fired momentum signal (volume_shock, breakout,
-      info_drift), capped at 0.10. A "recheck now" nudge only; momentum never
-      dominates.
     """
     md = _data(market_row)
     q = select_q(dict(md))
@@ -163,8 +133,7 @@ def score(
         time_term = 1.0 - 0.6 * min(days - hi, max_days - hi) / (max_days - hi)
 
     price_term = 1.0 - 2.0 * abs(q - 0.5)
-    bonus = min(_momentum_fired(signal_bundle) * _MOMENTUM_BONUS_EACH, _MOMENTUM_BONUS_CAP)
-    return round(0.5 * attention + 0.3 * time_term + 0.2 * price_term + bonus, 6)
+    return round(0.5 * attention + 0.3 * time_term + 0.2 * price_term, 6)
 
 
 # ---------------------------------------------------------------------------
@@ -173,9 +142,16 @@ def score(
 
 
 def arbitrage_combined(market_row: Mapping[str, Any] | None) -> float | None:
-    """``yes_ask + no_ask`` when it signals an arbitrage (< threshold), else ``None``."""
+    """``yes_ask + no_ask`` when it signals an arbitrage (< threshold), else ``None``.
+
+    Uses the API's ``yes_ask``/``no_ask`` when both are present, else ``yes_price``/``no_price``.
+    Note: Gamma only quotes the YES token, so a row's ``no_ask`` is ``1 - yes_bid`` and the sum
+    is >= 1; the check can only fire on rows carrying a real NO-book ask.
+    """
     md = _data(market_row)
-    yes, no = _num(md.get("yes_price")), _num(md.get("no_price"))
+    yes, no = _num(md.get("yes_ask")), _num(md.get("no_ask"))
+    if yes is None or no is None:
+        yes, no = _num(md.get("yes_price")), _num(md.get("no_price"))
     if yes is None or no is None or not (0.0 < yes < 1.0 and 0.0 < no < 1.0):
         return None
     combined = yes + no

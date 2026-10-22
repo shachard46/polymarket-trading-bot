@@ -7,7 +7,7 @@
 - **Lifecycle:** Orchestrator creates JSON input -> invokes `openclaw agent --agent <id>` -> Agent executes Tools -> Agent returns JSON or Markdown -> Orchestrator parses output.
 - **Tooling:** Agents do not perform math, execute API calls natively, or manage state. Math and trading are deterministic Hub code over the skills in `04_skills_contracts.md` (Phase 4 has no agent).
 - **Price-blind models:** no agent payload contains the market price `q`. Models estimate from market text and evidence; the Hub compares the estimate to `q` (divergence, misread and sample-spread guards) and applies the lambda-shrink toward `q` when sizing. See `02_orchestrator_pipeline.md` section 3.
-- **Quantitative inputs:** Phase 2 is deterministic Hub code (`orchestrator/gate.py`): eligibility, a ranking score, per-market backoff, and an arbitrage check, followed by the price-blind `triage` agent. The `evaluate_market_metrics` skill is a feature source only: the Hub reads its signal bundle (loaded from the polymarket-scraper SQLite DB via `poly-scan`) for a small ranking bonus. No agent consumes it, and agents never query the scraper directly.
+- **Quantitative inputs:** Phase 2 is deterministic Hub code (`orchestrator/gate.py`): eligibility, a ranking score, per-market backoff, and an arbitrage check, followed by the price-blind `triage` agent. Market data comes straight from Polymarket's public APIs (`orchestrator/polymarket_api.py`: Gamma for candidates/prices/resolution, CLOB for executable asks); there is no scraper DB or momentum signal any more. Agents never query Polymarket directly.
 
 ## 2. File System Memory & The Pydantic Gatekeeper
 

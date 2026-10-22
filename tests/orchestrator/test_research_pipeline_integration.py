@@ -4,8 +4,7 @@ Opt-in only (skipped in normal ``pytest`` runs). Use on a host with:
 - OpenClaw Gateway
 - live briefer/deep_researcher agents
 - working A-IQ
-- a readable polymarket-scraper DB (configured via ``POLYMARKET_DB_PATH``)
-- ``poly-scan`` on PATH (or ``POLY_SCAN_BIN``)
+- network access to Polymarket's public Gamma API (no auth)
 
 This runs Phase 3 in isolation (no phases 1–2, 4–6). It fetches one market through
 ``orchestrator.scraper`` and researches **only that market** via
@@ -15,7 +14,6 @@ This runs Phase 3 in isolation (no phases 1–2, 4–6). It fetches one market t
 export OPENCLAW_PHASE3_LIVE=1
 export OPENCLAW_ORCHESTRATOR_MODE=live
 export OPENCLAW_VAULT_PATH=/tmp/phase3-live-vault
-export POLYMARKET_DB_PATH=/path/to/polymarket.db
 # optional: pin a market_id instead of ingesting the freshest open row
 # export OPENCLAW_PHASE3_MARKET_ID=0x...
 
@@ -73,16 +71,7 @@ def _phase3_live_requested() -> bool:
     return os.environ.get(_PHASE3_LIVE_ENV) == "1"
 
 def _wire_scraper_env(monkeypatch: pytest.MonkeyPatch | None = None) -> None:
-    db_path = os.environ.get("POLYMARKET_DB_PATH", "").strip()
-    if not db_path:
-        raise RuntimeError("POLYMARKET_DB_PATH is required for this live test.")
-
-    if monkeypatch is not None:
-        monkeypatch.setenv("POLYMARKET_DB_PATH", db_path)
-        monkeypatch.setenv("OPENCLAW_INGEST_LIMIT", "1")
-    else:
-        os.environ["POLYMARKET_DB_PATH"] = db_path
-        os.environ["OPENCLAW_INGEST_LIMIT"] = "1"
+    """No env needed: market data comes from Polymarket's public API."""
 
 
 def _resolve_market_row() -> MarketRow:
@@ -101,7 +90,7 @@ def _resolve_market_row() -> MarketRow:
     if not rows:
         raise RuntimeError(
             "scraper.fetch_target_markets returned no rows. "
-            "Check POLYMARKET_DB_PATH and that poly-scan is on PATH (or POLY_SCAN_BIN)."
+            "Check network access to Polymarket."
         )
     row = rows[0]
     _log_status("market resolved (ingest)", market_id=row.market_id, title=row.market_title)
@@ -186,7 +175,7 @@ def run_phase3_isolated() -> int:
         return 2
 
     try:
-        _log_status("wiring scraper env", db_path=os.environ.get("POLYMARKET_DB_PATH", ""))
+        _log_status("wiring scraper env")
         _wire_scraper_env()
         market = _resolve_market_row()
     except Exception as exc:
@@ -243,7 +232,7 @@ def phase3_live_env(monkeypatch):
                 reason="fetch_target_markets returned no rows",
             )
             pytest.skip(
-                "scraper.fetch_target_markets returned no rows (check POLYMARKET_DB_PATH and poly-scan)."
+                "scraper.fetch_target_markets returned no rows (check network access to Polymarket)."
             )
         _log_status("pytest live env: scraper ok")
     except Exception as exc:

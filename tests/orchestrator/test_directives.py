@@ -12,8 +12,8 @@ def test_extract_filter_directives_from_seed(tmp_path):
     vault.cold_start_protocol()
     directives = vault.read_directives()
     parsed = extract_filter_directives(directives)
-    assert parsed["breakout_pct_shift"] == FILTERS["breakout_pct_shift"]
-    assert parsed["volume_shock_ma_multiplier"] == FILTERS["volume_shock_ma_multiplier"]
+    assert parsed["gate_min_q"] == FILTERS["gate_min_q"]
+    assert parsed["research_max_quick_width"] == FILTERS["research_max_quick_width"]
 
 
 def test_extract_filter_directives_fallback_on_empty():
@@ -30,8 +30,8 @@ version: "0.2"
 
 ```yaml
 filters:
-  breakout_pct_shift: 0.15
-  volume_shock_ma_multiplier: 4.0
+  gate_min_q: 0.07
+  research_max_quick_width: 0.2
 ```
 
 ## Risk Constraints
@@ -39,6 +39,6 @@ filters:
 x
 """
     parsed = extract_filter_directives(md)
-    assert parsed["breakout_pct_shift"] == 0.15
-    assert parsed["volume_shock_ma_multiplier"] == 4.0
+    assert parsed["gate_min_q"] == 0.07
+    assert parsed["research_max_quick_width"] == 0.2
     assert parsed["arbitrage_max_combined_ask"] == FILTERS["arbitrage_max_combined_ask"]

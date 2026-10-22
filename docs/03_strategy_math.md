@@ -2,7 +2,7 @@
 
 Handled by the `calculate_trade_allocation` Python skill. Constants live in `config/trading_constants.py`.
 
-Inputs: $p$ (blind researcher estimate, optional $p_{low},p_{high}$), $q$ (YES ask; NO ask defaults to $1-q$), $L$ liquidity, $D$ days to resolution, current `bankroll` $B$, `open_exposure_total`, `open_exposure_event`.
+Inputs: $p$ (blind researcher estimate, optional $p_{low},p_{high}$), $q$ (YES ask; NO ask defaults to $1-q$; Phase 4 passes the real CLOB asks for both sides, and shrinks $L$ to ask-depth-within-2c / `LIQ_FRAC` when the book is thinner than the order), $L$ liquidity, $D$ days to resolution, current `bankroll` $B$, `open_exposure_total`, `open_exposure_event`.
 Tax (`TAX = 0.25`, `TAX_MODE`): Israel taxes 25% of NET annual capital gains, with losses offsetting gains within the calendar year. Default `TAX_MODE = "annual_offset"`: trade maths is pre-tax and realised P&L is taxed as `TAX * max(0, net P&L per resolution year)` (see `orchestrator/stats.py`; `stats.md` reports pre-tax, tax and after-tax). `"per_trade"` is the legacy mode (tax on every winning trade, no offset); the skill takes an optional `tax_mode` input defaulting to the constant.
 
 ## Step 1: Shrink toward the market

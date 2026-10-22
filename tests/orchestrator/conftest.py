@@ -6,24 +6,34 @@ from typing import Any
 
 import pytest
 
-from orchestrator.signal_bundle import set_fetch_signal_bundle_impl
+from orchestrator import polymarket_api, scraper
+
+# Per-test hints for the default fake CLOB quotes: market_id -> market_data (see _fake_quote).
+QUOTE_HINTS: dict[str, dict[str, Any]] = {}
+
+
+def _fake_quote(market_id: str, side: str) -> dict[str, Any] | None:
+    """Default executable quote for phase tests: ask = the row's yes/no ask (else price), deep book."""
+    md = QUOTE_HINTS.get(market_id)
+    if md is None:
+        row = scraper.fetch_market_row(market_id)
+        md = row.market_data if row is not None else None
+    if not md:
+        return None
+    yes = md.get("yes_ask", md.get("yes_price"))
+    if side == "YES":
+        ask = yes
+    else:
+        ask = md.get("no_ask", md.get("no_price", None if yes is None else 1.0 - yes))
+    if ask is None:
+        return None
+    return {"ask": ask, "depth_usd_within_2c": 1e9, "spread": 0.01, "token_id": f"tok-{side}"}
 
 
 @pytest.fixture(autouse=True)
-def _stub_signal_bundle_fetch():
-    """Avoid live DB access when the Phase 2 gate fetches ``signal_bundle``."""
-
-    def fake_fetch(
-        market_id: str,
-        filter_overrides: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        return {
-            "market_id": market_id,
-            "stub": True,
-            "signals": {},
-            "error": None,
-        }
-
-    set_fetch_signal_bundle_impl(fake_fetch)
+def _stub_clob_quotes(monkeypatch):
+    """Phase tests never touch the network: executable quotes come from the row under test."""
+    QUOTE_HINTS.clear()
+    monkeypatch.setattr(polymarket_api, "executable_quote", _fake_quote)
     yield
-    set_fetch_signal_bundle_impl(None)
+    QUOTE_HINTS.clear()

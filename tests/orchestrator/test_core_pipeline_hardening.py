@@ -18,6 +18,7 @@ from orchestrator.parse import run_agent_with_format_retries
 from orchestrator.runner import spawn_agent
 from orchestrator.schema_validation import AgentSchemaError
 from orchestrator.scraper import MarketRow
+from tests.orchestrator.conftest import QUOTE_HINTS
 from orchestrator.state import (
     InfraUnavailable,
     flag_inactive,
@@ -345,7 +346,9 @@ def _fake_trade(monkeypatch, calls, **result):
 
 
 def _p4row(market_id, p, data=None, **extra):
-    return {"market_id": market_id, "p_value": p, "market_data": dict(data or GOOD_DATA), **extra}
+    md = dict(data or GOOD_DATA)
+    QUOTE_HINTS[market_id] = md  # the default fake CLOB quote follows the row's prices
+    return {"market_id": market_id, "p_value": p, "market_data": md, **extra}
 
 
 def test_phase4_yes_trade_calls_skill_and_logs(vault, trades):
