@@ -35,6 +35,16 @@ AUTO_REPLAY_DLQ_ENV = "OPENCLAW_AUTO_REPLAY_DLQ"  # deprecated alias
 
 TOP_QUALITATIVE_MARKETS_ENV = "OPENCLAW_TOP_MARKETS"
 
+# Funnel budgets (docs/02): how many markets survive each stage per tick.
+GATE_BUDGET_ENV = "OPENCLAW_GATE_BUDGET"
+DEFAULT_GATE_BUDGET = 15
+TRIAGE_BUDGET_ENV = "OPENCLAW_TRIAGE_BUDGET"
+DEFAULT_TRIAGE_BUDGET = 8
+QUICK_RESEARCH_BUDGET_ENV = "OPENCLAW_QUICK_RESEARCH_BUDGET"  # used in Wave 3
+DEFAULT_QUICK_RESEARCH_BUDGET = 8
+FULL_RESEARCH_BUDGET_ENV = "OPENCLAW_FULL_RESEARCH_BUDGET"  # used in Wave 3
+DEFAULT_FULL_RESEARCH_BUDGET = 3
+
 # Max completed edge-triggered Deep Researcher refresh cycles per market (initial research is not counted).
 EDGE_RESEARCH_REFRESH_MAX_ENV = "OPENCLAW_EDGE_RESEARCH_REFRESH_MAX"
 DEFAULT_EDGE_RESEARCH_REFRESH_MAX = 3
@@ -59,6 +69,36 @@ def top_qualitative_markets() -> int:
         return max(1, int(raw))
     except ValueError:
         return 20
+
+
+def _int_env(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return default
+
+
+def gate_budget() -> int:
+    """Max eligible markets sent from the gate to triage per tick (default 15)."""
+    return _int_env(GATE_BUDGET_ENV, DEFAULT_GATE_BUDGET)
+
+
+def triage_budget() -> int:
+    """Max researchable markets promoted to Phase 3 per tick (default 8)."""
+    return _int_env(TRIAGE_BUDGET_ENV, DEFAULT_TRIAGE_BUDGET)
+
+
+def quick_research_budget() -> int:
+    """Max markets given a quick research pass per tick (default 8; Wave 3)."""
+    return _int_env(QUICK_RESEARCH_BUDGET_ENV, DEFAULT_QUICK_RESEARCH_BUDGET)
+
+
+def full_research_budget() -> int:
+    """Max markets given full research per tick (default 3; Wave 3)."""
+    return _int_env(FULL_RESEARCH_BUDGET_ENV, DEFAULT_FULL_RESEARCH_BUDGET)
 
 
 def max_edge_research_refreshes() -> int:
@@ -154,6 +194,14 @@ __all__ = [
     "openclaw_agent_retry_backoff",
     "TOP_QUALITATIVE_MARKETS_ENV",
     "top_qualitative_markets",
+    "GATE_BUDGET_ENV",
+    "TRIAGE_BUDGET_ENV",
+    "QUICK_RESEARCH_BUDGET_ENV",
+    "FULL_RESEARCH_BUDGET_ENV",
+    "gate_budget",
+    "triage_budget",
+    "quick_research_budget",
+    "full_research_budget",
     "EDGE_RESEARCH_REFRESH_MAX_ENV",
     "max_edge_research_refreshes",
     "MAX_FORMAT_RETRIES",

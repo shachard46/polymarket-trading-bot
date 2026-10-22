@@ -38,6 +38,13 @@ GOOD_DATA = {
     "liquidity": 20_000.0,
     "days_to_resolution": 10,
 }
+GATE_OK = {
+    "yes_price": 0.4,
+    "no_price": 0.6,
+    "volume": 1_000.0,
+    "liquidity": 20_000.0,
+    "days_to_resolution": 30,
+}
 RESEARCH_MD = "## Bull Thesis\n\nb\n\n## Bear Thesis\n\nb\n\n## Post-Mortem\n"
 
 
@@ -133,7 +140,7 @@ def test_phase2_gateway_outage_aborts_without_blacklisting(vault):
     def runner(role, payload):
         raise OpenClawCLIError("gateway down")
 
-    market = MarketRow(market_id="m-out", market_title="T", market_data={})
+    market = MarketRow(market_id="m-out", market_title="T", market_data=dict(GATE_OK))
     with pytest.raises(InfraUnavailable):
         phases.phase2_quantitative_routing(vault, [market], runner=runner)
     assert vault.read_filter_log("m-out") is None
@@ -158,12 +165,12 @@ def test_phase3_missing_price_skips_without_flagging(vault, monkeypatch):
 
 
 def test_flag_inactive_phase2_without_file_writes_minimal_record(vault):
-    flag_inactive(vault, "m-new", "phase2", "evaluator error: x", {"junk": 1})
+    flag_inactive(vault, "m-new", "phase2", "triage error: x", {"junk": 1})
     rec = vault.read_filter_log("m-new")
     assert rec is not None and is_inactive(rec)
     assert rec["passed"] is False
     assert rec["confidence_multiplier"] == 0
-    assert rec["details"] == "evaluator error: x"
+    assert rec["details"] == "triage error: x"
 
 
 def test_flag_inactive_corrupt_file_logs_loudly(vault, caplog):
@@ -317,36 +324,6 @@ def test_forced_synthesis_fetches_last_pending_queries(vault, monkeypatch):
     )
     last = f"follow-up {n['i']}"
     assert last in fetched and last in forced_bundle
-
-
-# --- 9. edge refresh attempt cap -------------------------------------------
-
-
-def test_edge_refresh_attempts_capped_without_retry(vault, monkeypatch):
-    mid = "m-cap2"
-    vault.write_filter_log(
-        mid, {"market_id": mid, "passed": True, "confidence_multiplier": 1.0, "details": "x"}
-    )
-    vault.write_research_report(mid, {"market_id": mid, "estimated_p": 0.5}, RESEARCH_MD)
-    vault.write_trade_log(
-        mid,
-        {"market_id": mid, "allocation_usd": 0.0, "below_edge_threshold": True, "executed": False},
-    )
-    monkeypatch.setattr(scraper, "get_market_trends", lambda m, limit: [])
-    monkeypatch.setattr(scraper, "trends_limit_for_filters", lambda: 10)
-    calls: list[str] = []
-
-    def runner(role, payload):
-        calls.append(role)
-        return {
-            "market_id": mid, "passed": True, "trigger": None, "confidence_multiplier": 1.0,
-            "details": "same", "error": None, "retry_deep_research": False, "refresh_reason": None,
-        }
-
-    market = MarketRow(market_id=mid, market_title="T", market_data={})
-    for _ in range(6):
-        phases.phase2_quantitative_routing(vault, [market], runner=runner)
-    assert len(calls) == orch_config.max_edge_research_refreshes() == 3
 
 
 # --- 10. Phase 4 ------------------------------------------------------------
@@ -558,11 +535,9 @@ def test_stub_responses_satisfy_new_schemas(monkeypatch):
          "research_bundle": [], "system_override": None, "format_validation_error": None},
     )
     spawn_agent(
-        "re_evaluator",
-        {"market_id": "m", "review_kind": "quantitative", "filter_directives": {},
-         "historic_signal_bundle": None, "prior_filter_trigger": None,
-         "prior_evaluator_details": None, "prior_filter_log": None,
-         "prior_filter_result": None, "research_markdown": None, "trade_log": None},
+        "triage",
+        {"market_id": "m", "title": "T", "description": "", "resolution_source": None,
+         "category": None, "end_date": None, "today": "2026-01-01"},
     )
     from obsidian_utils import DirectivesPayload
 

@@ -90,7 +90,12 @@ def _atomic_write_text(path: Path, text: str) -> None:
 # ---------------------------------------------------------------------------
 
 class FilterLogPayload(BaseModel):
-    """Evaluator / Re-Evaluator output — written to 01_Filters/."""
+    """Phase 2 gate/triage state for one market — written to 01_Filters/.
+
+    ``passed`` = promoted to Phase 3; ``confidence_multiplier`` mirrors the gate
+    ``score`` (Phase 3 ranks on it). ``fail_count``/``next_check_at``/``last_q``
+    are the gate backoff state; ``triage`` is the cached Triage verdict.
+    """
 
     market_id: str
     passed: bool
@@ -101,7 +106,12 @@ class FilterLogPayload(BaseModel):
     signal_bundle: Optional[dict[str, Any]] = None
     status: Optional[str] = None
     error_log: Optional[dict[str, Any]] = None
-    pending_edge_refresh: bool = False
+    score: Optional[float] = None
+    event_id: Optional[str] = None
+    fail_count: int = 0
+    next_check_at: Optional[str] = None
+    last_q: Optional[float] = None
+    triage: Optional[dict[str, Any]] = None
 
 
 class ResearchFrontmatter(BaseModel):
@@ -388,7 +398,7 @@ class ObsidianManager:
     # ------------------------------------------------------------------
 
     def write_filter_log(self, market_id: str, payload: dict) -> Path:
-        """Validate an Evaluator payload and write it to ``01_Filters/``.
+        """Validate a Phase 2 filter payload and write it to ``01_Filters/``.
 
         The file is written as a Markdown document whose YAML frontmatter
         contains the entire validated payload as a JSON-compatible block,
@@ -399,7 +409,7 @@ class ObsidianManager:
         market_id:
             Polymarket condition_id; used as the filename stem.
         payload:
-            Raw dict returned by the Evaluator agent.
+            Gate/triage state dict (see ``FilterLogPayload``).
 
         Returns
         -------
@@ -431,8 +441,7 @@ class ObsidianManager:
     def read_filter_log(self, market_id: str) -> dict[str, Any] | None:
         """Return the YAML frontmatter from ``01_Filters/{market_id}.md`` if present.
 
-        Used to give the Re-Evaluator continuity (prior trigger/details) without
-        the agent reading the vault directly.
+        Used by Phase 2 to carry backoff and triage state across ticks.
         """
         path = self._dirs["filters"] / f"{market_id}.md"
         if not path.exists():

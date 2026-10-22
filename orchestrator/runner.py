@@ -201,32 +201,14 @@ def _spawn_stub_error(role: str, spec: dict[str, Any], payload: dict[str, Any]) 
 StubBuilder = Callable[[dict[str, Any]], Any]
 
 
-def _evaluator_stub(payload: dict[str, Any]) -> dict[str, Any]:
+def _triage_stub(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "market_id": payload.get("market_id", "stub"),
-        "passed": False,
-        "trigger": None,
-        "confidence_multiplier": 1.0,
-        "details": "stub: no filter fired",
+        "researchable": True,
+        "category": "stub",
+        "reason": "stub: researchable",
         "error": None,
     }
-
-
-def _re_evaluator_stub(payload: dict[str, Any]) -> dict[str, Any]:
-    mid = payload.get("market_id", "stub")
-    base = {
-        "market_id": mid,
-        "passed": False,
-        "trigger": None,
-        "confidence_multiplier": 1.0,
-        "details": "stub: no filter fired",
-        "error": None,
-        "retry_deep_research": False,
-        "refresh_reason": None,
-    }
-    if payload.get("review_kind") == "edge_research_refresh":
-        return {**base, "refresh_reason": "no_material_quant_change"}
-    return base
 
 
 def _stub_deep_researcher_markdown(
@@ -317,8 +299,7 @@ def _overseer_stub(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 STUB_RESPONSES: dict[str, StubBuilder] = {
-    "evaluator": _evaluator_stub,
-    "re_evaluator": _re_evaluator_stub,
+    "triage": _triage_stub,
     "briefer": _briefer_stub,
     "deep_researcher": _deep_researcher_stub,
     "executioner": _executioner_stub,

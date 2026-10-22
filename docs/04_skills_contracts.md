@@ -7,7 +7,7 @@ Agents must interact with the system via these explicit OpenClaw Skills. For eac
 ```yaml
 ---
 name: evaluate_market_metrics
-description: Loads market history from polymarket-scraper via poly-scan, computes quantitative signal features, and returns a compact signal_bundle for agent reasoning. Does not decide pass/fail for soft filters — only deterministic hard_veto for arbitrage and insufficient data.
+description: Loads market history from polymarket-scraper via poly-scan, computes quantitative signal features, and returns a compact signal_bundle. It is a FEATURE source: the Phase 2 gate (`orchestrator/gate.py`) uses the momentum signals only as a small ranking bonus; no agent reads it. Does not decide pass/fail for soft filters — only deterministic hard_veto for arbitrage and insufficient data.
 ---
 ```
 
@@ -86,7 +86,7 @@ description: Loads market history from polymarket-scraper via poly-scan, compute
 
 - **Pass:** `arbitrage` only when both `yes_price` and `no_price` are numbers in `(0, 1)` and `yes_price + no_price < arbitrage_max_combined_ask`.
 - **Reject:** insufficient data (`snapshots_used` below minimum).
-- All other filters appear in `signals` only; the Evaluator agent decides pass/fail.
+- All other filters appear in `signals` only; they feed the gate's ranking bonus only (no agent decides pass/fail; the Hub gate does, deterministically).
 
 ## 2. Skill: calculate_trade_allocation
 

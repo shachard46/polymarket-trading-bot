@@ -1,0 +1,20 @@
+id: triage
+openclaw_agent_id: polymarket-triage
+description: Researchability triage - decides from the question alone (no price) whether public-information research could beat a liquid market. Cached per market/event by the Hub.
+model: null
+tools:
+  allow: []
+input_schema:
+  market_id: string
+  title: string
+  description: string
+  resolution_source: "string | null"
+  category: "string | null"
+  end_date: "string | null"
+  today: string
+output_schema:
+  market_id: string
+  researchable: boolean
+  category: string
+  reason: string
+  error: "string | null"

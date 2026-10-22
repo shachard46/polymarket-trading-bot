@@ -18,7 +18,6 @@ from typing import Any, Callable, Iterator
 from obsidian_utils import ObsidianManager, VaultWriteError
 from config.trading_constants import (
     ERROR_LOG_KEY,
-    PENDING_EDGE_REFRESH_KEY,
     STATUS_INACTIVE,
     STATUS_KEY,
 )
@@ -81,12 +80,6 @@ def is_inactive(record: dict[str, Any] | None) -> bool:
     return str(record.get(STATUS_KEY) or "").strip().lower() == STATUS_INACTIVE
 
 
-def has_pending_edge_refresh(record: dict[str, Any] | None) -> bool:
-    if not record:
-        return False
-    return bool(record.get(PENDING_EDGE_REFRESH_KEY))
-
-
 def _active_frontmatter(
     vault: ObsidianManager,
     market_id: str,
@@ -125,7 +118,7 @@ def read_edge_refresh_count(vault: ObsidianManager, market_id: str) -> int:
 
 
 def read_edge_refresh_attempts(vault: ObsidianManager, market_id: str) -> int:
-    """Edge refresh cycles *triggered* (Re-Evaluator runs), whether or not research re-ran."""
+    """Edge refresh cycles *triggered* (edge refresh runs; Wave 3 will redo the trigger), whether or not research re-ran."""
     fm = _active_frontmatter(vault, market_id)
     if fm is None:
         return 0
@@ -450,7 +443,6 @@ __all__ = [
     "VALID_REPLAY_DIRS",
     "build_inactive_filter_payload",
     "is_inactive",
-    "has_pending_edge_refresh",
     "is_error_free_active",
     "read_edge_refresh_count",
     "read_edge_refresh_attempts",

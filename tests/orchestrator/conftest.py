@@ -6,12 +6,12 @@ from typing import Any
 
 import pytest
 
-from orchestrator.evaluator_output import set_fetch_signal_bundle_impl
+from orchestrator.signal_bundle import set_fetch_signal_bundle_impl
 
 
 @pytest.fixture(autouse=True)
-def _stub_evaluator_signal_bundle_fetch():
-    """Avoid live DB access when phase tests merge quantitative ``signal_bundle``."""
+def _stub_signal_bundle_fetch():
+    """Avoid live DB access when the Phase 2 gate fetches ``signal_bundle``."""
 
     def fake_fetch(
         market_id: str,

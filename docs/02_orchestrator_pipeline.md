@@ -4,26 +4,27 @@ This document defines _what_ happens and _where_ data moves. Do not implement ag
 
 ## 1. Data Ingestion
 
-- **Action:** Orchestrator queries `polymarket-scraper` local SQLite DB for high-delta/new markets.
+- **Action:** Orchestrator queries `polymarket-scraper` local SQLite DB for high-delta/new markets (`OPENCLAW_INGEST_LIMIT`, default 100).
 - **State:** Generates `target_market_ids: list[str]`.
 
-## 2. Quantitative Routing
+## 2. Gate + Triage (Deterministic Funnel)
 
-- **Action:** Orchestrator iterates over `target_market_ids` (edge refresh only runs when Phase 1 includes the market — not on every tick).
-  - If `/01_Filters/{market_id}.md` exists with **`status: inactive`**, **skip** that market until `orchestrator.replay` clears the flag (no Evaluator/Re-Evaluator spawn).
-  - If an **open** trade log in `/03_Trades/` shows a **bet** (not edge-disqualified: `below_edge_threshold` is false, or legacy `allocation_usd` > 0 with no error), **skip** quantitative routing for that market on this tick.
-  - Otherwise: pass `market_id` and parsed `filter_directives` from `active_directives.md` to **Evaluator** (no active research) or **Re-Evaluator** (`review_kind: quantitative` when active research exists and the trade log is not edge-only disqualified). The agent calls `evaluate_market_metrics`, which loads trends internally via `poly-scan`.
-  - If active research exists and the open trade log is **edge-disqualified** (`below_edge_threshold` true, or legacy zero allocation with no error), spawn **Re-Evaluator** with `review_kind: edge_research_refresh`, prior filter log, research markdown, and trade JSON. On `retry_deep_research`, update `/01_Filters/{market_id}.md` with new quantitative data and set **`pending_edge_refresh: true`** in frontmatter. Phase 2 does **not** run the Deep Researcher.
-- **State:** **Every** quantitative evaluation is written to `/01_Filters/{market_id}.md`. Passing runs keep `passed: true` without an inactive stamp. Soft filter failures (`passed: false` with no agent `error`) are persisted with `passed: false`, **`status: inactive`**, and **`error_log`** (including evaluator `details` and `trigger`). Agent/parse/validation failures also set `status: inactive` and `error_log` in place. Failed markets are **not** sent to the Overseer; macro-learning uses `/04_Post_Mortems/` only.
+The strategy is research-edge, not momentum, so Phase 2 is code (`orchestrator/gate.py`) plus one cheap LLM step (`triage`). Funnel per tick: ingest (100) -> **gate** (eligible, ranked, top `OPENCLAW_GATE_BUDGET`, default 15, go to triage) -> **triage** (top `OPENCLAW_TRIAGE_BUDGET`, default 8, researchable markets become Phase 3 candidates) -> research (`OPENCLAW_QUICK_RESEARCH_BUDGET` 8 / `OPENCLAW_FULL_RESEARCH_BUDGET` 3, applied in Phase 3 from Wave 3).
+
+- **Skip silently** (no state change) when: `/01_Filters/{market_id}.md` has `status: inactive` (until `orchestrator.replay`) or `status: retired`; `next_check_at` is still in the future (backoff); an open trade log shows a bet; or active research already exists (`# TODO(wave3)`: refresh of researched markets).
+- **Arbitrage:** `yes_price + no_price < 0.98` with both in (0, 1) writes a ledger `arb_opportunity` row (paper only, deduplicated) and the market is not researched.
+- **Eligibility** (`gate.eligibility` returns `(ok, reason)`): implied price `q` in [0.05, 0.95]; `MIN_DAYS_TO_RESOLUTION` (7) <= days to resolution <= `MAX_DAYS_TO_RESOLUTION` (60); liquidity >= `MIN_ORDER_USD / LIQ_FRAC` (100 USD); not closed. Reason codes: `closed`, `no_price`, `price_extreme`, `no_end_date`, `too_soon`, `too_far`, `illiquid`. A failure writes ledger `gate_reject` (once per state change) and applies backoff.
+- **Backoff state** lives in the filter frontmatter: `fail_count`, `next_check_at`, `last_q`. After the n-th consecutive failure the next check is `5h * 2^(n-1)` away, capped at 7 days. `fail_count` resets to 0 when `|q - last_q| > 0.05` or when the market passes. After 6 consecutive failures the market is `status: retired` (distinct from `inactive`, which means an error; retired is a deliberate, final "not worth looking at").
+- **Ranking** (`gate.score`): `0.5*attention + 0.3*time + 0.2*price + bonus`. attention = `1/(1 + (volume/liquidity)/20)` (quiet markets first), time = 1.0 for 14-45 days (ramps to 0.4 at the 7/60 day edges), price = `1 - 2|q - 0.5|`, bonus = 0.04 per fired momentum signal (volume_shock, breakout, info_drift; from the `evaluate_market_metrics` signal bundle, fetch failure tolerated), capped at 0.10. Momentum never dominates; it is a "recheck now" nudge.
+- **Triage** (agent `triage`, no price in its input): is public-information research plausibly better than a liquid market? The verdict `{researchable, category, reason, triaged_at}` is cached forever in the filter frontmatter (`triage:`) and shared across markets with the same `event_id` (one agent call per event, also across ticks). `researchable: false` writes ledger `triage_reject` and sets `status: retired`. Triage agent errors follow the usual rule: `status: inactive` + `error_log`.
+- **State:** Every evaluated market is written to `/01_Filters/{market_id}.md` with `passed`, `score` (mirrored in `confidence_multiplier`), `trigger`, `details`, `event_id`, `signal_bundle`, backoff fields, and `triage`. `passed: true` is set only for the top `OPENCLAW_TRIAGE_BUDGET` researchable markets; the rest carry `trigger: over_gate_budget` / `over_triage_budget` and are re-evaluated next tick (their triage is cached, so this is cheap). Failed markets are **not** sent to the Overseer; macro-learning uses `/04_Post_Mortems/` only.
 
 ## 3. Qualitative Pipeline (Decoupled)
 
-- **Action:** Phase 3 scans `/01_Filters/` only (does not poll `/03_Trades/` for edge refresh). A market is eligible if it is not `status: inactive` and **either**:
-  - **A)** `passed: true` and no error-free file in `/02_Active_Research/` → **Surgical Query Planner** (`briefer`) → Hub parallel A-IQ fetch → iterative **Forensic Fact Verifier** (`deep_researcher`) → write active research.
-  - **B)** `pending_edge_refresh: true` and `edge_research_refresh_count` in active research is below the cap → same Forensic Pipeline loop (optional `planning_context` from prior research), overwrite active, increment count, strip `pending_edge_refresh` from the filter file.
+- **Action:** Phase 3 scans `/01_Filters/` only. A market is eligible if it is not `status: inactive`/`retired`, has `passed: true`, and has no error-free file in `/02_Active_Research/` -> **Surgical Query Planner** (`briefer`) -> Hub parallel A-IQ fetch -> iterative **Forensic Fact Verifier** (`deep_researcher`) -> write active research. Edge-triggered refresh is not currently scheduled (redone in Wave 3).
 - **Hub I/O:** A-IQ results accumulate in `/02_Active_Research/research_bundles/{market_id}.json`. If that file already has queries (e.g. after `replay`), Phase 3 skips the Query Planner and redundant fetches and resumes synthesis. Re-fetching the same query string replaces a prior row when the new result has `research_data` and the saved row had an error or empty data (successful rows are not overwritten by later failures). Per-query `research_data` is capped at 4000 characters; A-IQ poll timeout is `AIQ_TIMEOUT_SEC` from `config/trading_constants` (overridable via env).
 - **Loop cap:** At most **four** Forensic Fact Verifier rounds; if still `needs_more_data`, a forced-synthesis override requires `status: complete` before writing `/02_Active_Research/{market_id}.md`.
-- Queue is sorted by `confidence_multiplier` and capped with `OPENCLAW_TOP_MARKETS`.
+- Queue is sorted by `confidence_multiplier` (the gate score) and capped with `OPENCLAW_TOP_MARKETS`.
 
 ## 4. Execution
 

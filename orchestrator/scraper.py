@@ -8,7 +8,7 @@ running even when the scraper is unavailable.
 Environment variables:
 
 - ``POLY_SCAN_BIN``         — path to the ``poly-scan`` executable (default ``poly-scan``).
-- ``OPENCLAW_INGEST_LIMIT`` — max markets pulled per ingestion cycle (default ``50``).
+- ``OPENCLAW_INGEST_LIMIT`` — max markets pulled per ingestion cycle (default ``100``).
 - ``POLY_SCAN_TIMEOUT_SEC`` — per-command timeout in seconds (default ``60``).
 """
 
@@ -32,7 +32,7 @@ log = logging.getLogger(__name__)
 
 _DEFAULT_BIN = "poly-scan"
 _DEFAULT_TIMEOUT_SEC = 60.0
-_DEFAULT_INGEST_LIMIT = 50
+_DEFAULT_INGEST_LIMIT = 100
 
 # Status strings emitted by the scraper that indicate the market has resolved.
 _CLOSED_STATUSES = frozenset({"closed", "resolved", "archived"})
@@ -135,6 +135,9 @@ _MARKET_DATA_FIELDS: tuple[str, ...] = (
     "spread",
     "end_date",
     "days_to_resolution",
+    "category",
+    "event_id",
+    "resolution_source",
 )
 
 

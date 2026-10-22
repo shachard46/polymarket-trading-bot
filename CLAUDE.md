@@ -27,7 +27,7 @@ Hub-and-Spoke LLM trading pipeline for Polymarket. Start with `docs/01_architect
 
 **Hub (`orchestrator/`)** — the only component that spawns agents or touches disk. `loop.run_forever` runs `run_pipeline_tick` every `PIPELINE_INTERVAL_SEC` and the Overseer every `OVERSEER_INTERVAL_SEC`. `phases.py` holds the six phases:
 1. Ingest market ids from the scraper.
-2. Quantitative routing → Evaluator or Re-Evaluator agent; every result is written to `01_Filters/`.
+2. Gate + triage: deterministic code (`orchestrator/gate.py`: eligibility, score, backoff, arbitrage) ranks markets; the top `OPENCLAW_GATE_BUDGET` go to the price-blind `triage` agent (cached per market/event forever); the top `OPENCLAW_TRIAGE_BUDGET` researchable ones get `passed: true` in `01_Filters/` for Phase 3. Triage rejects and 6 consecutive gate fails set `status: retired`.
 3. Qualitative "Forensic Pipeline": `briefer` (query planner) → Hub fetches A-IQ in parallel → iterative `deep_researcher` (max 4 rounds, then a forced-synthesis override) → `02_Active_Research/`.
 4. Execution: Hub computes allocation (`skills/calculate-trade-allocation`) → Executioner → `03_Trades/` (idempotent via intent files).
 5. Resolution → move to `04_Post_Mortems/` and run the Post-Mortem Analyst.
@@ -39,13 +39,13 @@ Hub-and-Spoke LLM trading pipeline for Polymarket. Start with `docs/01_architect
 
 **Vault I/O (`obsidian_utils.ObsidianManager`)** — the single gatekeeper for all writes. It uses Pydantic payload models and atomic writes. The vault root is `OPENCLAW_VAULT_PATH`, or the repo root by default, with subdirectories `Vault/00_System` … `Vault/04_Post_Mortems` (`config/trading_constants.VAULT_PATHS`). Tests should point it at a tmp dir.
 
-**Error model: an in-place state machine with no error directory.** When an agent returns an error or parsing or validation fails, the Hub sets `status: inactive` and `error_log` on that market's own artifact (YAML frontmatter, or the JSON root for trades) and moves on to the next market. Inactive markets are skipped until `orchestrator.replay` clears the flags. Recent commits draw a deliberate line here: infra/transport failures are retried, content failures mark the market inactive, and soft failures are routed to the Re-Evaluator. The Executioner is deliberately *not* retried. Keep these categories separate.
+**Error model: an in-place state machine with no error directory.** When an agent returns an error or parsing or validation fails, the Hub sets `status: inactive` and `error_log` on that market's own artifact (YAML frontmatter, or the JSON root for trades) and moves on to the next market. Inactive markets are skipped until `orchestrator.replay` clears the flags. Recent commits draw a deliberate line here: infra/transport failures are retried, content failures mark the market inactive, and soft gate failures back off (`next_check_at`) instead of being flagged. The Executioner is deliberately *not* retried. Keep these categories separate.
 
-**Config:** trading and strategy constants (`F_MAX`, `LIQ_FRAC`, `FILTERS`, `PAPER_TRADE_MODE`, A-IQ settings) are in `config/trading_constants.py`. Env-driven tunables (`OPENCLAW_*`: timeouts, retries, `OPENCLAW_TOP_MARKETS`, `OPENCLAW_AUTO_REPLAY`, edge-refresh cap) are in `orchestrator/config.py`.
+**Config:** trading and strategy constants (`F_MAX`, `LIQ_FRAC`, `FILTERS`, `PAPER_TRADE_MODE`, A-IQ settings) are in `config/trading_constants.py`. Env-driven tunables (`OPENCLAW_*`: timeouts, retries, `OPENCLAW_TOP_MARKETS`, `OPENCLAW_AUTO_REPLAY`, funnel budgets `OPENCLAW_GATE_BUDGET`/`OPENCLAW_TRIAGE_BUDGET`/`OPENCLAW_QUICK_RESEARCH_BUDGET`/`OPENCLAW_FULL_RESEARCH_BUDGET`, edge-refresh cap) are in `orchestrator/config.py`.
 
 ## Testing notes
 
-- `tests/orchestrator/conftest.py` autouse-stubs the evaluator signal-bundle fetch (`set_fetch_signal_bundle_impl`) so phase tests never touch the scraper DB.
+- `tests/orchestrator/conftest.py` autouse-stubs the gate's signal-bundle fetch (`orchestrator.signal_bundle.set_fetch_signal_bundle_impl`) so phase tests never touch the scraper DB.
 - Skill tests use fixtures under `tests/skills/fixtures/`.
 
 ## Knowledge graph (from `.cursor/rules/graphify.mdc`)

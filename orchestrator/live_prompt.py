@@ -37,8 +37,7 @@ def build_live_response_hint(output_schema: dict[str, Any]) -> str:
             "never omit the key."
         )
     lines.append(
-        "Do not include keys not listed above (e.g. signal_bundle — the Hub "
-        "attaches it after evaluator runs)."
+        "Do not include keys not listed above."
     )
     if "market_id" in output_schema:
         lines.append("Copy market_id from the input JSON when present in input.")

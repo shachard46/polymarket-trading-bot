@@ -73,68 +73,37 @@ def test_validate_payload_rejects_missing_required_field():
 
 def test_spawn_agent_rejects_bad_input_before_calling_runner(monkeypatch):
     with pytest.raises(AgentSchemaError):
-        spawn_agent("evaluator", {"market_id": "x"})  # missing filter_directives
+        spawn_agent("triage", {"market_id": "x"})  # missing title etc.
 
 
 def test_spawn_agent_accepts_valid_input(monkeypatch):
     out = spawn_agent(
-        "evaluator",
-        {"market_id": "x", "filter_directives": dict(FILTERS)},
+        "triage",
+        {
+            "market_id": "x",
+            "title": "Will X?",
+            "description": "",
+            "resolution_source": None,
+            "category": None,
+            "end_date": None,
+            "today": "2026-01-01",
+        },
     )
     assert isinstance(out, dict)
     assert out["market_id"] == "x"
     assert out["error"] is None
-    assert "signal_bundle" not in out
+    assert out["researchable"] is True
 
 
-def test_spawn_agent_re_evaluator_requires_schema_fields():
-    with pytest.raises(AgentSchemaError):
-        spawn_agent(
-            "re_evaluator",
-            {"market_id": "x", "filter_directives": dict(FILTERS)},
-        )
+def test_triage_payload_is_price_blind():
+    # Triage is price-blind by design: the Hub never sends a price.
+    from orchestrator import phases
+    from orchestrator.scraper import MarketRow
 
-
-def test_spawn_agent_re_evaluator_accepts_quantitative_payload():
-    out = spawn_agent(
-        "re_evaluator",
-        {
-            "market_id": "x",
-            "review_kind": "quantitative",
-            "filter_directives": dict(FILTERS),
-            "historic_signal_bundle": None,
-            "prior_filter_trigger": None,
-            "prior_evaluator_details": None,
-            "prior_filter_log": None,
-            "prior_filter_result": None,
-            "research_markdown": None,
-            "trade_log": None,
-        },
+    payload = phases._triage_payload(
+        MarketRow(market_id="x", market_title="T", market_data={"yes_price": 0.4}), "2026-01-01"
     )
-    assert out["market_id"] == "x"
-    assert out["error"] is None
-    assert out["retry_deep_research"] is False
-    assert "signal_bundle" not in out
-
-
-def test_spawn_agent_re_evaluator_accepts_edge_research_refresh_payload():
-    out = spawn_agent(
-        "re_evaluator",
-        {
-            "market_id": "x",
-            "review_kind": "edge_research_refresh",
-            "filter_directives": dict(FILTERS),
-            "historic_signal_bundle": {"signals": {}},
-            "prior_filter_trigger": None,
-            "prior_evaluator_details": None,
-            "prior_filter_log": {"passed": True},
-            "prior_filter_result": None,
-            "research_markdown": "---\nmarket_id: x\n---\n",
-            "trade_log": {"below_edge_threshold": True},
-        },
-    )
-    assert out["market_id"] == "x"
-    assert out["refresh_reason"] == "no_material_quant_change"
+    assert "yes_price" not in payload and "q" not in payload
 
 
 def test_spawn_agent_executioner_requires_paper_trade_mode():

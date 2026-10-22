@@ -4,46 +4,25 @@ This document defines exactly _how_ agents behave and their strict JSON/YAML bou
 
 Each role's [`agents_blueprint/<role>/agent.yaml`](../agents_blueprint/) declares `input_schema` and `output_schema`. In live mode the orchestrator builds the response hint from `output_schema` automatically. Optional `live_response_hint` (multiline string) appends extra rules when the schema alone is insufficient (e.g. Overseer markdown-in-JSON structure).
 
-## 1. The Evaluator & Re-Evaluator
+## 1. The Triage Agent (triage)
 
-- **System Prompt:** Evaluator: first-time quantitative gate; calls `evaluate_market_metrics` and reasons over the returned signal_bundle. Re-Evaluator: same skill contract when Active Research already exists; receives `historic_signal_bundle` from the prior filter log for regime comparison.
-- **Input Schema — Evaluator:** `{"market_id": "string", "filter_directives": "dict"}`
-- **Input Schema — Re-Evaluator:** `{"market_id": "string", "review_kind": "string", "filter_directives": "dict", "historic_signal_bundle": "dict | null", "prior_filter_trigger": "string | null", "prior_evaluator_details": "string | null", "prior_filter_log": "dict | null", "prior_filter_result": "dict | null", "research_markdown": "string | null", "trade_log": "dict | null"}`
-- Re-Evaluator also receives markets that previously failed the filters; `prior_filter_result` carries the earlier filter decision so the agent can re-check whether the signal changed. When a hard veto is copied, the agent sets `retry_deep_research=false` and `refresh_reason=null`.
-- **Signal bundle:** the agent's own output schema (`agent.yaml`) does not include `signal_bundle`; the Hub attaches the authoritative bundle returned by `evaluate_market_metrics` to the stored result after the run. The JSON shapes below show the persisted result.
-- **Output Schema (Re-Evaluator):**
+Phase 2's gate is deterministic code (`orchestrator/gate.py`, see `02_orchestrator_pipeline.md`); the only LLM step in Phase 2 is Triage. The former Evaluator and Re-Evaluator agents are removed.
 
-```json
-  {
-    "market_id": "string",
-    "passed": boolean,
-    "trigger": "string | null",
-    "confidence_multiplier": float,
-    "details": "string",
-    "signal_bundle": "dict | null",
-    "error": "string | null",
-    "retry_deep_research": boolean,
-    "refresh_reason": "string | null"
-  }
-
-
-```
-
-- **Output Schema (Evaluator):**
+- **System Prompt:** Decide whether public-information research by an LLM with web search could plausibly estimate the probability better than a liquid market. **No** for sports game lines/props, short-horizon crypto/asset price thresholds, pure chance, markets resolved by private or unknowable information, and markets whose answer is just a live data feed. **Yes** for politics/policy/legal/regulatory/corporate/scientific events with public evidence and clear resolution rules. The agent is never given the price.
+- **Input Schema:** `{"market_id": "string", "title": "string", "description": "string", "resolution_source": "string | null", "category": "string | null", "end_date": "string | null", "today": "string"}`
+- **Output Schema:**
 
 ```json
-  {
-    "market_id": "string",
-    "passed": boolean,
-    "trigger": "string | null",
-    "confidence_multiplier": float,
-    "details": "string",
-    "signal_bundle": "dict | null",
-    "error": "string | null"
-  }
-
-
+{
+  "market_id": "string",
+  "researchable": boolean,
+  "category": "string",
+  "reason": "string",
+  "error": "string | null"
+}
 ```
+
+- **Caching:** the Hub stores the verdict in the market's `01_Filters/` frontmatter (`triage:`) forever and reuses it for every market with the same `event_id`. `researchable: false` retires the market.
 
 ## 2. The Surgical Query Planner (briefer)
 

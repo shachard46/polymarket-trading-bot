@@ -12,7 +12,6 @@ from obsidian_utils import ObsidianManager, VaultWriteError, _atomic_write_text
 from orchestrator import openclaw_cli
 from orchestrator.agent_outputs import parse_deep_researcher_json
 from orchestrator.directives import extract_filter_directives
-from orchestrator.evaluator_output import attach_signal_bundle, set_fetch_signal_bundle_impl
 from orchestrator.parse import (
     AgentOutputParseError,
     coerce_deep_researcher_state_machine,
@@ -226,19 +225,3 @@ def test_select_q_order_and_range():
     assert select_q({"yes_price": 0.0, "last_trade_price": 1.0, "midpoint": 0.4}) == 0.4
     assert select_q({"yes_price": float("nan"), "midpoint": True}) is None
     assert select_q({}) is None
-
-
-def test_hard_veto_overrides_agent_and_fetch_failure_fails():
-    veto = {"passed": False, "trigger": "arbitrage", "details": "d"}
-    set_fetch_signal_bundle_impl(lambda m, o=None: {"market_id": m, "hard_veto": veto})
-    out = attach_signal_bundle(
-        "evaluator", {"market_id": "m"}, {"market_id": "m", "passed": True, "trigger": "x"}
-    )
-    assert out["passed"] is False and out["trigger"] == "arbitrage"
-
-    def boom(m, o=None):
-        raise RuntimeError("db down")
-
-    set_fetch_signal_bundle_impl(boom)
-    out = attach_signal_bundle("evaluator", {"market_id": "m"}, {"market_id": "m", "passed": True})
-    assert out["passed"] is False and "db down" in out["error"]

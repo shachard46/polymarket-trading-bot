@@ -4,25 +4,20 @@ from __future__ import annotations
 
 import pytest
 
-from config.trading_constants import FILTERS
 from orchestrator import runner
 from orchestrator.config import RUNNER_MODE_ENV, RUNNER_MODE_LIVE
 from orchestrator.parse import agent_error_reason, parse_agent_json_or_yaml
 from orchestrator.agent_outputs import parse_deep_researcher_json
 from orchestrator.research import parse_deep_researcher
 
-_EVALUATOR_IN = {"market_id": "0xabc", "filter_directives": dict(FILTERS)}
-_RE_EVALUATOR_IN = {
+_TRIAGE_IN = {
     "market_id": "0xabc",
-    "review_kind": "quantitative",
-    "filter_directives": dict(FILTERS),
-    "historic_signal_bundle": None,
-    "prior_filter_trigger": None,
-    "prior_evaluator_details": None,
-    "prior_filter_log": None,
-    "prior_filter_result": None,
-    "research_markdown": None,
-    "trade_log": None,
+    "title": "Will X?",
+    "description": "",
+    "resolution_source": None,
+    "category": None,
+    "end_date": None,
+    "today": "2026-01-01",
 }
 
 
@@ -32,13 +27,12 @@ def _clear_mode(monkeypatch):
     yield
 
 
-def test_stub_evaluator_returns_schema_valid_response():
-    out = runner.spawn_agent("evaluator", _EVALUATOR_IN)
+def test_stub_triage_returns_schema_valid_response():
+    out = runner.spawn_agent("triage", _TRIAGE_IN)
     parsed = out if isinstance(out, dict) else parse_agent_json_or_yaml(out)
     assert parsed["market_id"] == "0xabc"
-    assert parsed["passed"] is False
+    assert parsed["researchable"] is True
     assert parsed["error"] is None
-    assert "signal_bundle" not in parsed
 
 
 def test_stub_briefer_includes_market_title():
@@ -79,7 +73,7 @@ def test_stub_deep_researcher_returns_parseable_complete_payload():
 
 def test_stub_error_mode_propagates_error_field(monkeypatch):
     monkeypatch.setenv(RUNNER_MODE_ENV, "stub_error")
-    out = runner.spawn_agent("evaluator", _EVALUATOR_IN)
+    out = runner.spawn_agent("triage", _TRIAGE_IN)
     parsed = out if isinstance(out, dict) else parse_agent_json_or_yaml(out)
     assert agent_error_reason(parsed) == "stub_error mode"
 
@@ -101,14 +95,6 @@ def test_stub_error_deep_researcher_carries_error_in_frontmatter(monkeypatch):
     parsed = parse_deep_researcher_json(out)
     research = parse_deep_researcher(parsed.markdown)
     assert research.error == "stub_error mode"
-
-
-def test_stub_re_evaluator_returns_refresh_fields():
-    out = runner.spawn_agent("re_evaluator", _RE_EVALUATOR_IN)
-    parsed = out if isinstance(out, dict) else parse_agent_json_or_yaml(out)
-    assert parsed["retry_deep_research"] is False
-    assert parsed["refresh_reason"] is None
-    assert "signal_bundle" not in parsed
 
 
 def test_stub_executioner_includes_allocation_tool_fields():
@@ -141,9 +127,8 @@ def test_live_runner_invokes_openclaw_cli(monkeypatch):
             "payloads": [
                 {
                     "text": (
-                        '{"market_id":"0xabc","passed":false,"trigger":null,'
-                        '"confidence_multiplier":1.0,"details":"live fake",'
-                        '"error":null}'
+                        '{"market_id":"0xabc","researchable":false,"category":"sports",'
+                        '"reason":"live fake","error":null}'
                     )
                 }
             ]
@@ -152,13 +137,13 @@ def test_live_runner_invokes_openclaw_cli(monkeypatch):
     monkeypatch.setenv(RUNNER_MODE_ENV, RUNNER_MODE_LIVE)
     monkeypatch.setattr(runner, "run_agent", fake_run_agent)
 
-    out = runner.spawn_agent("evaluator", _EVALUATOR_IN)
+    out = runner.spawn_agent("triage", _TRIAGE_IN)
 
     parsed = parse_agent_json_or_yaml(out)
-    assert parsed["details"] == "live fake"
-    assert calls["agent_id"] == "polymarket-evaluator"
-    assert calls["session_key"] == "agent:polymarket-evaluator:orch-0xabc"
-    assert "OpenClaw agent id: polymarket-evaluator" in calls["message"]
+    assert parsed["reason"] == "live fake"
+    assert calls["agent_id"] == "polymarket-triage"
+    assert calls["session_key"] == "agent:polymarket-triage:orch-0xabc"
+    assert "OpenClaw agent id: polymarket-triage" in calls["message"]
     assert "Input JSON" in calls["message"]
     assert calls["timeout"] is None
 
@@ -172,9 +157,8 @@ def test_live_runner_sanitizes_session_key(monkeypatch):
             "payloads": [
                 {
                     "text": (
-                        '{"market_id":"market with spaces","passed":false,'
-                        '"trigger":null,"confidence_multiplier":1.0,'
-                        '"details":"live fake","error":null}'
+                        '{"market_id":"market with spaces","researchable":false,'
+                        '"category":"sports","reason":"live fake","error":null}'
                     )
                 }
             ]
@@ -183,9 +167,6 @@ def test_live_runner_sanitizes_session_key(monkeypatch):
     monkeypatch.setenv(RUNNER_MODE_ENV, RUNNER_MODE_LIVE)
     monkeypatch.setattr(runner, "run_agent", fake_run_agent)
 
-    runner.spawn_agent(
-        "evaluator",
-        {"market_id": "market with spaces", "filter_directives": dict(FILTERS)},
-    )
+    runner.spawn_agent("triage", {**_TRIAGE_IN, "market_id": "market with spaces"})
 
-    assert calls["session_key"] == "agent:polymarket-evaluator:orch-market-with-spaces"
+    assert calls["session_key"] == "agent:polymarket-triage:orch-market-with-spaces"

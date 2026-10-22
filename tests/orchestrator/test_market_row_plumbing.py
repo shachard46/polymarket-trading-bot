@@ -164,20 +164,26 @@ def test_phase2_writes_filter_for_phase3_scan(monkeypatch, vault):
         market_id="0xabc",
         market_title="Will X happen?",
         market_description="Background.",
-        market_data={"yes_price": 0.42, "volume": 100.0, "liquidity": 200.0},
+        market_data={
+            "yes_price": 0.42,
+            "no_price": 0.58,
+            "volume": 100.0,
+            "liquidity": 20_000.0,
+            "days_to_resolution": 30,
+        },
     )
 
-    def evaluator_runner(role: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def triage_runner(role: str, payload: dict[str, Any]) -> dict[str, Any]:
+        assert role == "triage"
         return {
             "market_id": payload["market_id"],
-            "passed": True,
-            "trigger": "breakout",
-            "confidence_multiplier": 1.0,
-            "details": "ok",
+            "researchable": True,
+            "category": "politics",
+            "reason": "public evidence",
             "error": None,
         }
 
-    phases.phase2_quantitative_routing(vault, [market], runner=evaluator_runner)
+    phases.phase2_quantitative_routing(vault, [market], runner=triage_runner)
     filt = vault.read_filter_log("0xabc")
     assert filt is not None
     assert filt["passed"] is True

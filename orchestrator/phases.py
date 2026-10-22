@@ -17,23 +17,22 @@ import json
 import logging
 import os
 import time
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Literal
 
 from pydantic import ValidationError
 
-from obsidian_utils import ObsidianManager, VaultWriteError
+from obsidian_utils import FilterLogPayload, ObsidianManager, VaultWriteError
 from config.trading_constants import (
     BANKROLL_USD,
     BELOW_EDGE_KEY,
-    PENDING_EDGE_REFRESH_KEY,
 )
-from orchestrator import ledger, scraper, stats
-from orchestrator.config import PAPER_TRADE_MODE, max_edge_research_refreshes, top_qualitative_markets
+from orchestrator import gate, ledger, scraper, stats
+from orchestrator.config import PAPER_TRADE_MODE, gate_budget, top_qualitative_markets, triage_budget
 from orchestrator.state import (
     flag_inactive,
-    has_pending_edge_refresh,
     is_error_free_active,
     is_inactive,
     market_quarantine,
@@ -66,13 +65,14 @@ from orchestrator.parse import (
     run_agent_with_format_retries,
 )
 from orchestrator.research import parse_deep_researcher, split_yaml_frontmatter_markdown
-from orchestrator.evaluator_output import attach_signal_bundle
+from orchestrator.signal_bundle import fetch_signal_bundle
 from orchestrator.runner import AgentRunner, spawn_agent
 from orchestrator.schema_validation import AgentSchemaError
 
 log = logging.getLogger(__name__)
 
-Phase3Kind = Literal["initial", "edge_refresh"]
+# TODO(wave3): re-add an "edge_refresh" kind when Phase 3 refresh is redone.
+Phase3Kind = Literal["initial"]
 
 
 @dataclass(frozen=True)
@@ -89,7 +89,6 @@ class Phase3Candidate:
 # ---------------------------------------------------------------------------
 
 
-_PRIOR_FILTER_KEYS = ("passed", "trigger", "confidence_multiplier", "details", "signal_bundle")
 MAX_POST_MORTEM_ATTEMPTS = 3
 PHASE6_MAX_POST_MORTEMS = 30
 PHASE6_MAX_POST_MORTEM_CHARS = 5 * 1024
@@ -115,13 +114,6 @@ def _load_calculate_trade_allocation() -> Callable[..., Any]:
     spec.loader.exec_module(mod)
     _allocation_fn = mod.calculate_trade_allocation
     return _allocation_fn
-
-
-def _prior_filter_result(prior: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Trimmed prior filter record when its last verdict was ``passed: false``, else ``None``."""
-    if not prior or prior.get("passed"):
-        return None
-    return {key: prior.get(key) for key in _PRIOR_FILTER_KEYS}
 
 
 def _qualitative_rank_key(candidate: Phase3Candidate) -> tuple[float, str]:
@@ -191,7 +183,6 @@ def _run_structured_agent(
         parsed,
         output_schema=spec.get("output_schema"),
     )
-    parsed = attach_signal_bundle(role, payload, parsed)
     err = agent_error_reason(parsed)
     if err:
         return parsed, f"{role} error: {err}"
@@ -218,49 +209,6 @@ def _ledger_safe(
         return None
 
 
-def _persist_phase2_filter(
-    vault: ObsidianManager,
-    market_id: str,
-    parsed: dict[str, Any],
-) -> bool:
-    """Persist quantitative agent output.
-
-    ``passed: false`` is a soft fail: it is *not* stamped inactive (that is reserved
-    for errors) so the next tick re-checks the market via the Re-Evaluator.
-    """
-    if not parsed.get("passed"):
-        log.info(
-            "Market %s did not pass quantitative filters (will be re-checked next tick)",
-            market_id,
-        )
-    return vault_write_or_flag(
-        vault=vault,
-        market_id=market_id,
-        write_fn=lambda: vault.write_filter_log(market_id, parsed),
-        payload=parsed,
-        artifact_label="filter log",
-        phase="phase2",
-    )
-
-
-def _write_filter_with_pending_refresh(
-    vault: ObsidianManager,
-    market_id: str,
-    parsed: dict[str, Any],
-    *,
-    pending_edge_refresh: bool,
-) -> bool:
-    payload = {**parsed, PENDING_EDGE_REFRESH_KEY: pending_edge_refresh}
-    return vault_write_or_flag(
-        vault=vault,
-        market_id=market_id,
-        write_fn=lambda: vault.write_filter_log(market_id, payload),
-        payload=payload,
-        artifact_label="filter log",
-        phase="phase2",
-    )
-
-
 # ---------------------------------------------------------------------------
 # Phase 1 — Data ingestion
 # ---------------------------------------------------------------------------
@@ -283,153 +231,235 @@ def phase1_data_ingestion(vault: ObsidianManager) -> list[MarketRow]:
 # ---------------------------------------------------------------------------
 
 
+_FILTER_FIELDS = tuple(FilterLogPayload.model_fields)
+
+
+def _write_filter_state(
+    vault: ObsidianManager,
+    market_id: str,
+    prior: dict[str, Any] | None,
+    **updates: Any,
+) -> bool:
+    """Merge ``updates`` over the prior filter record and persist (keeps backoff/triage state)."""
+    base = {k: v for k, v in (prior or {}).items() if k in _FILTER_FIELDS}
+    payload = {
+        "market_id": market_id,
+        "passed": False,
+        "trigger": None,
+        "confidence_multiplier": 0.0,
+        "details": "",
+        "error": None,
+        **base,
+        **updates,
+    }
+    return vault_write_or_flag(
+        vault=vault,
+        market_id=market_id,
+        write_fn=lambda: vault.write_filter_log(market_id, payload),
+        payload=payload,
+        artifact_label="filter log",
+        phase="phase2",
+    )
+
+
+def _event_triage_cache(vault: ObsidianManager) -> dict[str, dict[str, Any]]:
+    """``event_id -> cached triage verdict`` from every filter record on disk."""
+    cache: dict[str, dict[str, Any]] = {}
+    for path in vault.iter_dir_files("filters", ".md"):
+        rec = vault.read_market_record(path.stem, "filters") or {}
+        triage, event_id = rec.get("triage"), rec.get("event_id")
+        if event_id and isinstance(triage, dict) and "researchable" in triage:
+            cache.setdefault(str(event_id), triage)
+    return cache
+
+
+def _triage_payload(market: MarketRow, today: str) -> dict[str, Any]:
+    md = market.market_data
+    return {
+        "market_id": market.market_id,
+        "title": market.market_title,
+        "description": market.market_description,
+        "resolution_source": md.get("resolution_source"),
+        "category": md.get("category"),
+        "end_date": md.get("end_date"),
+        "today": today,
+    }
+
+
+def _signal_bundle_or_none(market_id: str) -> dict[str, Any] | None:
+    try:
+        bundle = fetch_signal_bundle(market_id)
+    except Exception as exc:  # noqa: BLE001 - signals are a ranking bonus only
+        log.warning("[PHASE 2] signal bundle unavailable for %s: %s", market_id, exc)
+        return None
+    return bundle if isinstance(bundle, dict) and not bundle.get("error") else None
+
+
 def phase2_quantitative_routing(
     vault: ObsidianManager,
     target_markets: list[MarketRow],
     runner: AgentRunner = spawn_agent,
 ) -> None:
-    """Filter markets through the (re-)Evaluator; persist to ``01_Filters/``."""
-    log.info("[PHASE 2] Quantitative routing")
-    filter_directives = extract_filter_directives(vault.read_directives())
-    last_decision = ledger.latest_decision_by_market(vault)
+    """Deterministic gate -> rank -> Triage; persist state to ``01_Filters/``.
 
+    1. Skip markets that are retired, inactive, not yet due (backoff), already
+       in research, or holding an open bet.
+    2. Arbitrage (yes+no ask < 0.98) is ledgered (paper only) and not researched.
+    3. ``gate.eligibility``: failures are ledgered once per state change and
+       back off (5h * 2^(n-1), retired after 6).
+    4. Eligible markets are ranked by ``gate.score``; the top
+       ``OPENCLAW_GATE_BUDGET`` go to Triage (verdict cached forever, once per event).
+    5. The top ``OPENCLAW_TRIAGE_BUDGET`` researchable markets get ``passed: true``
+       (``confidence_multiplier`` = score), which is all Phase 3 reads.
+    """
+    log.info("[PHASE 2] Gate + triage")
+    now = datetime.now(timezone.utc)
+    today = f"{now:%Y-%m-%d}"
+    last_decision = ledger.latest_decision_by_market(vault)
+    event_cache = _event_triage_cache(vault)
+
+    def ledger_once(market_id: str, stage: str, **fields: Any) -> None:
+        if last_decision.get(market_id, {}).get("stage") == stage:
+            return
+        last_decision[market_id] = _ledger_safe(vault, market_id, stage, **fields) or {
+            "stage": stage
+        }
+
+    # -- Stage 1: eligibility ------------------------------------------------
+    eligible: list[tuple[float, MarketRow, dict[str, Any] | None, dict[str, Any] | None]] = []
     for market in target_markets:
         market_id = market.market_id
         if vault.is_market_inactive(market_id, dir_key="filters"):
             log.info("[PHASE 2] skip %s: filter marked inactive", market_id)
             continue
-        prior_full = vault.read_filter_log(market_id)
+        prior = vault.read_filter_log(market_id)
+        if gate.is_retired(prior) or not gate.is_due(prior, now):
+            continue
 
         with market_quarantine(vault, market_id, "phase2"):
             trade = vault.read_trade_log_dict(market_id)
             if trade is not None and _open_trade_shows_bet_not_edge_dq(trade):
-                log.info(
-                    "[PHASE 2] skip %s: open trade log shows an active bet",
+                log.info("[PHASE 2] skip %s: open trade log shows an active bet", market_id)
+                continue
+            if vault.active_research_path(market_id).exists():
+                # TODO(wave3): re-check researched markets here (edge/price refresh).
+                continue
+
+            md = market.market_data
+            q = scraper.select_q(md)
+            fields = _ledger_market_fields(md)
+
+            combined = gate.arbitrage_combined(md)
+            if combined is not None:
+                ledger_once(
                     market_id,
+                    "arb_opportunity",
+                    reason="arbitrage",
+                    q=q,
+                    combined_ask=combined,
+                    paper_only=True,
+                    **fields,
                 )
                 continue
 
-            has_active = vault.active_research_path(market_id).exists()
-            historic_signal_bundle = (
-                prior_full.get("signal_bundle") if prior_full else None
-            )
-
-            if (
-                has_active
-                and trade is not None
-                and _trade_log_shows_edge_disqualification(trade)
-            ):
-                cap_ref = max_edge_research_refreshes()
-                prev_edge = max(
-                    read_edge_refresh_count(vault, market_id),
-                    read_edge_refresh_attempts(vault, market_id),
-                )
-                if prev_edge >= cap_ref:
-                    log.info(
-                        "[PHASE 2] skip edge research refresh for %s (cap %s)",
-                        market_id,
-                        cap_ref,
-                    )
-                    continue
-
-                prior_trigger = prior_full.get("trigger") if prior_full else None
-                prior_details = prior_full.get("details") if prior_full else None
-                research_md = vault.read_active_research(market_id) or ""
-                payload_re: dict[str, Any] = {
-                    "market_id": market_id,
-                    "review_kind": "edge_research_refresh",
-                    "filter_directives": filter_directives,
-                    "historic_signal_bundle": historic_signal_bundle,
-                    "prior_filter_trigger": prior_trigger,
-                    "prior_evaluator_details": prior_details,
-                    "prior_filter_log": prior_full,
-                    "prior_filter_result": _prior_filter_result(prior_full),
-                    "research_markdown": research_md,
-                    "trade_log": trade,
-                }
-                parsed_re, reason_re = _run_structured_agent(
-                    runner, "re_evaluator", payload_re
-                )
-                # Count the attempt as soon as the refresh was triggered so a
-                # below-edge market with retry_deep_research=false cannot loop forever.
-                vault.patch_frontmatter(
-                    market_id,
-                    "active",
-                    {"edge_research_refresh_attempts": prev_edge + 1},
-                )
-                if reason_re:
-                    flag_inactive(
-                        vault, market_id, "phase2", reason_re, parsed_re or payload_re
-                    )
-                    continue
-                if parsed_re.get("retry_deep_research"):
-                    if not _write_filter_with_pending_refresh(
-                        vault,
-                        market_id,
-                        parsed_re,
-                        pending_edge_refresh=True,
-                    ):
-                        continue
-                else:
-                    if not _write_filter_with_pending_refresh(
-                        vault,
-                        market_id,
-                        parsed_re,
-                        pending_edge_refresh=False,
-                    ):
-                        continue
-                continue
-
-            prior_result = _prior_filter_result(prior_full)
-            # Soft-failed markets (no research yet) go to the Re-Evaluator every tick.
-            role = (
-                "re_evaluator"
-                if has_active or prior_result is not None
-                else "evaluator"
-            )
-            if role == "evaluator":
-                payload: dict[str, Any] = {
-                    "market_id": market_id,
-                    "filter_directives": filter_directives,
-                }
-            else:
-                prior = prior_full
-                payload = {
-                    "market_id": market_id,
-                    "review_kind": "quantitative",
-                    "filter_directives": filter_directives,
-                    "historic_signal_bundle": historic_signal_bundle,
-                    "prior_filter_trigger": prior.get("trigger") if prior else None,
-                    "prior_evaluator_details": prior.get("details") if prior else None,
-                    "prior_filter_log": None,
-                    "prior_filter_result": prior_result,
-                    "research_markdown": None,
-                    "trade_log": None,
-                }
-
-            parsed, reason = _run_structured_agent(runner, role, payload)
-            if reason:
-                flag_inactive(vault, market_id, "phase2", reason, parsed or payload)
-                continue
-
-            if not _persist_phase2_filter(vault, market_id, parsed):
-                continue
-            if not parsed.get("passed") and (
-                last_decision.get(market_id, {}).get("stage") != "gate_reject"
-            ):
-                # Soft fails repeat every tick; log the transition once.
-                md = market.market_data
-                last_decision[market_id] = _ledger_safe(
+            ok, reason = gate.eligibility(md)
+            if not ok:
+                fail = gate.register_failure(prior, q, now)
+                _write_filter_state(
                     vault,
                     market_id,
-                    "gate_reject",
-                    reason=parsed.get("trigger") or parsed.get("details"),
-                    q=scraper.select_q(md),
-                    signals=(parsed.get("signal_bundle") or {}).get("signals"),
-                    **_ledger_market_fields(md),
-                ) or {"stage": "gate_reject"}
+                    prior,
+                    passed=False,
+                    trigger=reason,
+                    confidence_multiplier=0.0,
+                    score=None,
+                    details=f"gate_reject: {reason}",
+                    event_id=fields["event_id"],
+                    **fail,
+                )
+                ledger_once(market_id, "gate_reject", reason=reason, q=q, **fields)
+                continue
 
-    log.info("[PHASE 2] quantitative routing complete")
+            bundle = _signal_bundle_or_none(market_id)
+            eligible.append((gate.score(md, bundle), market, prior, bundle))
+
+    # -- Stage 2: rank, budget, triage ---------------------------------------
+    eligible.sort(key=lambda item: (-item[0], item[1].market_id))
+    budget = gate_budget()
+    researchable: list[tuple[float, MarketRow, dict[str, Any] | None, dict[str, Any]]] = []
+
+    for rank, (sc, market, prior, bundle) in enumerate(eligible):
+        market_id = market.market_id
+        md = market.market_data
+        q = scraper.select_q(md)
+        fields = _ledger_market_fields(md)
+        base = {
+            "confidence_multiplier": sc,
+            "score": sc,
+            "event_id": fields["event_id"],
+            "signal_bundle": bundle,
+            **gate.register_pass(q),
+        }
+        if rank >= budget:
+            _write_filter_state(
+                vault, market_id, prior, passed=False, trigger="over_gate_budget",
+                details="eligible; below OPENCLAW_GATE_BUDGET cut", **base,
+            )
+            continue
+
+        with market_quarantine(vault, market_id, "phase2"):
+            event_id = fields["event_id"]
+            triage = (prior or {}).get("triage")
+            if not (isinstance(triage, dict) and "researchable" in triage):
+                triage = event_cache.get(str(event_id)) if event_id else None
+            if triage is None:
+                parsed, err = _run_structured_agent(
+                    runner, "triage", _triage_payload(market, today)
+                )
+                if err:
+                    flag_inactive(
+                        vault, market_id, "phase2", err,
+                        {**(prior or {}), "market_id": market_id, "passed": False,
+                         "confidence_multiplier": 0.0, "details": err},
+                    )
+                    continue
+                triage = {
+                    "researchable": bool(parsed.get("researchable")),
+                    "category": parsed.get("category"),
+                    "reason": parsed.get("reason"),
+                    "triaged_at": now.isoformat(),
+                }
+                if event_id:
+                    event_cache[str(event_id)] = triage
+
+            if not triage.get("researchable"):
+                _write_filter_state(
+                    vault, market_id, prior, passed=False, trigger="triage_reject",
+                    details=f"triage_reject: {triage.get('reason')}",
+                    status=gate.STATUS_RETIRED, triage=triage, **base,
+                )
+                _ledger_safe(
+                    vault, market_id, "triage_reject",
+                    reason=triage.get("reason"), q=q,
+                    **{**fields, "category": triage.get("category") or fields["category"]},
+                )
+                continue
+            researchable.append((sc, market, prior, {**base, "triage": triage}))
+
+    for idx, (sc, market, prior, base) in enumerate(researchable):
+        with market_quarantine(vault, market.market_id, "phase2"):
+            promoted = idx < triage_budget()
+            _write_filter_state(
+                vault, market.market_id, prior, passed=promoted,
+                trigger=None if promoted else "over_triage_budget",
+                details="researchable" if promoted else "researchable; below OPENCLAW_TRIAGE_BUDGET cut",
+                **base,
+            )
+
+    log.info(
+        "[PHASE 2] gate complete: eligible=%d triaged_researchable=%d promoted=%d",
+        len(eligible), len(researchable), min(len(researchable), triage_budget()),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -438,30 +468,17 @@ def phase2_quantitative_routing(
 
 
 def build_phase3_queue(vault: ObsidianManager) -> list[Phase3Candidate]:
-    """Scan ``01_Filters/`` for initial research or ``pending_edge_refresh`` work."""
-    cap_ref = max_edge_research_refreshes()
+    """Scan 01_Filters/ for gate+triage survivors (``passed: true``) without research.
+
+    TODO(wave3): also queue researched markets due for a refresh.
+    """
     candidates: list[Phase3Candidate] = []
 
     for path in vault.iter_dir_files("filters", ".md"):
         market_id = path.stem
         record = vault.read_market_record(market_id, "filters")
-        if record is None or is_inactive(record):
+        if record is None or is_inactive(record) or gate.is_retired(record):
             continue
-
-        if has_pending_edge_refresh(record):
-            if not is_error_free_active(vault, market_id):
-                continue
-            if read_edge_refresh_count(vault, market_id) >= cap_ref:
-                continue
-            candidates.append(
-                Phase3Candidate(
-                    market_id=market_id,
-                    kind="edge_refresh",
-                    filter_record=record,
-                )
-            )
-            continue
-
         if not record.get("passed"):
             continue
         if is_error_free_active(vault, market_id):
@@ -573,10 +590,14 @@ def _edge_refresh_research(
     directives: str,
     _candidate: Phase3Candidate,
 ) -> dict[str, Any] | None:
-    """Iterative research refresh — overwrite active research; strip pending flag."""
+    """Iterative research refresh — overwrite active research.
+
+    TODO(wave3): the Phase 2 trigger (``pending_edge_refresh``) was removed; Wave 3
+    redoes refresh scheduling and calls this via ``phase3_research_market``.
+    """
     market_id = row["market_id"]
     planning_context = _planning_context_from_active(vault, market_id)
-    result = _run_iterative_research(
+    return _run_iterative_research(
         vault,
         runner,
         row,
@@ -584,11 +605,6 @@ def _edge_refresh_research(
         from_edge=True,
         planning_context=planning_context,
     )
-    if result is None:
-        return None
-
-    vault.strip_keys(market_id, "filters", (PENDING_EDGE_REFRESH_KEY,))
-    return result
 
 
 def _planning_context_from_active(vault: ObsidianManager, market_id: str) -> str | None:
