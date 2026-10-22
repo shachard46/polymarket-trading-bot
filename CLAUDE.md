@@ -9,7 +9,7 @@ pip install -r requirements.txt            # orchestrator deps (pydantic, PyYAML
 python main.py                             # run the orchestrator loop (stub runner by default)
 OPENCLAW_ORCHESTRATOR_MODE=live python main.py   # call real agents via the `openclaw agent` CLI
 
-python -m pytest                           # full suite (fast, no network/DB needed)
+python -m pytest tests                     # full suite (fast, no network/DB needed; bare `pytest` also collects the scraper submodule and breaks)
 python -m pytest tests/orchestrator/test_parse.py::test_name   # single test
 
 python -m orchestrator.replay --market-id 0xabc [--dry-run]   # clear `status: inactive` for one market
@@ -52,3 +52,13 @@ Hub-and-Spoke LLM trading pipeline for Polymarket. Start with `docs/01_architect
 ## Knowledge graph (from `.cursor/rules/graphify.mdc`)
 
 `graphify-out/` holds a code knowledge graph. For architecture questions, try `graphify query "<question>"` / `graphify path "<A>" "<B>"` / `graphify explain "<concept>"` before broad grepping, and read `graphify-out/GRAPH_REPORT.md` only for wide reviews. After changing code, run `graphify update .` (AST-only, no API cost).
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
