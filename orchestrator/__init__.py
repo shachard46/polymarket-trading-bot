@@ -10,7 +10,7 @@ agents. Modules are split by responsibility:
 - :mod:`orchestrator.state` — in-place inactive flagging + replay helpers
 - :mod:`orchestrator.scraper`     — polymarket-scraper integration stubs
 - :mod:`orchestrator.runner`      — OpenClaw agent execution adapter
-- :mod:`orchestrator.phases`      — six pipeline phases
+- :mod:`orchestrator.phases`      — six pipeline phases (package)
 - :mod:`orchestrator.loop`        — top-level scheduling loop
 """
 

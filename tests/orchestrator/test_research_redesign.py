@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 from obsidian_utils import ObsidianManager
 from orchestrator import config as orch_config
+from orchestrator.phases import p3_evidence, p3_queue
 from orchestrator import ledger, phases, scraper
 from orchestrator.agent_outputs import BrieferOutput, DeepResearcherComplete
 from orchestrator.aiq_bundle import fetch_research_bundle_cached, normalize_query
@@ -58,7 +59,7 @@ class World:
         self.dr_p: Any = 0.6  # float, or callable(payload) -> (p, low, high)
         self._lock = threading.Lock()
         monkeypatch.setattr(scraper, "fetch_market_row", lambda mid: self.rows.get(mid))
-        monkeypatch.setattr(phases, "fetch_research_bundle", self._fetch)
+        monkeypatch.setattr(p3_evidence, "fetch_research_bundle", self._fetch)
 
     def market(self, mid: str, q: float, event_id: str | None = None, **md: Any) -> None:
         data = {
@@ -384,7 +385,7 @@ def test_tick_budget_checked_between_full_markets(world, vault, monkeypatch):
     """The QUICK scan fits the budget, but FULL markets queued behind a slow one do not start."""
     monkeypatch.setenv("OPENCLAW_RESEARCH_WORKERS", "1")
     clock = {"t": 0.0}
-    monkeypatch.setattr(phases.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(p3_queue.time, "monotonic", lambda: clock["t"])
     monkeypatch.setenv("OPENCLAW_RESEARCH_TICK_BUDGET_SEC", "100")
     for i, mid in enumerate(("a", "b")):
         world.market(mid, 0.42)

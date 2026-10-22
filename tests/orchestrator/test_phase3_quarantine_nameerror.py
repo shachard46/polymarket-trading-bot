@@ -8,6 +8,7 @@ import pytest
 
 from obsidian_utils import ObsidianManager
 from orchestrator import phases, scraper
+from orchestrator.phases import p3_full
 from orchestrator.scraper import MarketRow
 from tests.orchestrator.test_phase3_helpers import STUB_MARKET_DATA
 
@@ -36,7 +37,7 @@ def test_phase3_survives_research_market_exception(monkeypatch, tmp_path):
     def boom(*_args: Any, **_kwargs: Any) -> None:
         raise RuntimeError("simulated failure")
 
-    monkeypatch.setattr(phases, "_research_market", boom)
+    monkeypatch.setattr(p3_full, "_research_market", boom)
 
     out = phases.phase3_qualitative_pipeline(
         vault,

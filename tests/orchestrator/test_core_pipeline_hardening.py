@@ -12,6 +12,7 @@ import pytest
 from config.trading_constants import BANKROLL_USD
 from obsidian_utils import ObsidianManager
 from orchestrator import config as orch_config
+from orchestrator.phases import p3_evidence, p4_execution
 from orchestrator import ledger, loop, phases, scraper
 from orchestrator.openclaw_cli import OpenClawCLIError
 from orchestrator.parse import run_agent_with_format_retries
@@ -250,7 +251,7 @@ def test_poisoned_bundle_is_replanned_and_refetched(vault, monkeypatch):
         fetched.append(list(qs))
         return [{"query": q, "research_data": "real", "error": None} for q in qs]
 
-    monkeypatch.setattr(phases, "fetch_research_bundle", fetch)
+    monkeypatch.setattr(p3_evidence, "fetch_research_bundle", fetch)
     roles: list[str] = []
 
     def runner(role, payload):
@@ -276,7 +277,7 @@ def test_usable_bundle_is_reused_without_planning(vault, monkeypatch):
 def test_refresh_always_plans_and_replaces_stale_rows(vault, monkeypatch):
     vault.write_research_bundle("m-e", [{"query": "stale q", "research_data": "STALE", "error": None}])
     monkeypatch.setattr(
-        phases,
+        p3_evidence,
         "fetch_research_bundle",
         lambda qs: [{"query": q, "research_data": "FRESH", "error": None} for q in qs],
     )
@@ -299,7 +300,7 @@ def test_forced_synthesis_fetches_last_pending_queries(vault, monkeypatch):
         fetched.extend(qs)
         return [{"query": q, "research_data": "d", "error": None} for q in qs]
 
-    monkeypatch.setattr(phases, "fetch_research_bundle", fetch)
+    monkeypatch.setattr(p3_evidence, "fetch_research_bundle", fetch)
     n = {"i": 0}
     forced_bundle: list[Any] = []
 
@@ -331,7 +332,7 @@ def trades(monkeypatch):
         calls.append(kwargs)
         return real(**kwargs)
 
-    monkeypatch.setattr(phases, "_load_execute_polymarket_trade", lambda: spy)
+    monkeypatch.setattr(p4_execution, "_load_execute_polymarket_trade", lambda: spy)
     return calls
 
 
@@ -342,7 +343,7 @@ def _fake_trade(monkeypatch, calls, **result):
         calls.append(kwargs)
         return out
 
-    monkeypatch.setattr(phases, "_load_execute_polymarket_trade", lambda: fn)
+    monkeypatch.setattr(p4_execution, "_load_execute_polymarket_trade", lambda: fn)
 
 
 def _p4row(market_id, p, data=None, **extra):
@@ -437,7 +438,7 @@ def test_phase4_infra_failure_keeps_intent_and_aborts(vault, monkeypatch):
     def down(**_kw):
         raise OpenClawCLIError("gateway down")
 
-    monkeypatch.setattr(phases, "_load_execute_polymarket_trade", lambda: down)
+    monkeypatch.setattr(p4_execution, "_load_execute_polymarket_trade", lambda: down)
     with pytest.raises(InfraUnavailable):
         phases.phase4_execution(vault, [_p4row("m4f", 0.8)])
     assert vault.has_execution_intent("m4f")

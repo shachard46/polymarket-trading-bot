@@ -8,6 +8,7 @@ import pytest
 
 from config.trading_constants import ERROR_LOG_KEY, STATUS_INACTIVE, STATUS_KEY
 from orchestrator import phases, scraper
+from orchestrator.phases import p3_evidence
 from orchestrator.scraper import MarketRow
 from tests.orchestrator.test_phase3_helpers import (
     briefer_ok,
@@ -71,7 +72,7 @@ def test_phase3_resumes_from_salvaged_bundle_without_briefer_or_fetch(
         raise AssertionError(role)
 
     monkeypatch.setattr(
-        phases,
+        p3_evidence,
         "fetch_research_bundle",
         lambda queries: (calls.__setitem__("fetch", calls["fetch"] + 1) or []),
     )
@@ -100,7 +101,7 @@ def test_phase3_needs_more_data_then_complete(monkeypatch, vault):
         raise AssertionError(role)
 
     monkeypatch.setattr(
-        phases,
+        p3_evidence,
         "fetch_research_bundle",
         lambda queries: [
             {"query": q, "research_data": f"data:{q}", "error": None} for q in queries
@@ -128,7 +129,7 @@ def test_phase3_forced_synthesis_on_iteration_cap(monkeypatch, vault):
         raise AssertionError(role)
 
     monkeypatch.setattr(
-        phases,
+        p3_evidence,
         "fetch_research_bundle",
         lambda queries: [
             {"query": q, "research_data": "x", "error": None} for q in queries
@@ -153,7 +154,7 @@ def test_phase3_forced_synthesis_disobedience_flags_inactive(monkeypatch, vault)
         raise AssertionError(role)
 
     monkeypatch.setattr(
-        phases,
+        p3_evidence,
         "fetch_research_bundle",
         lambda queries: [
             {"query": q, "research_data": "x", "error": None} for q in queries
@@ -186,7 +187,7 @@ def test_phase3_briefer_error_with_empty_queries_flags_inactive(monkeypatch, vau
         raise AssertionError(role)
 
     monkeypatch.setattr(
-        phases,
+        p3_evidence,
         "fetch_research_bundle",
         lambda queries: (calls.__setitem__("fetch", calls["fetch"] + 1) or []),
     )

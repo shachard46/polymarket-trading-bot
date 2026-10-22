@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from orchestrator import phases, scraper
+from orchestrator.phases import p3_evidence
 from orchestrator.scraper import (
     MarketRow,
     market_data_hydration_error,
@@ -199,7 +200,7 @@ def test_phase3_passes_real_title_and_description_to_briefer(monkeypatch, vault)
         raise AssertionError(f"unexpected role {role}")
 
     monkeypatch.setattr(
-        phases,
+        p3_evidence,
         "fetch_research_bundle",
         lambda queries: [
             {"query": q, "research_data": "stub", "error": None} for q in queries

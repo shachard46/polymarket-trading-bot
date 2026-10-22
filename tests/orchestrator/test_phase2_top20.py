@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from obsidian_utils import ObsidianManager
 from orchestrator import phases
+from orchestrator.phases import p3_queue
 
 
 def test_build_phase3_queue_sorts_and_caps(monkeypatch, tmp_path):
     vault = ObsidianManager(vault_base=tmp_path)
-    monkeypatch.setattr(phases, "top_qualitative_markets", lambda: 2)
+    monkeypatch.setattr(p3_queue, "top_qualitative_markets", lambda: 2)
 
     mult_by_id = {"low": 1.0, "high": 5.0, "mid": 3.0}
     for mid, mult in mult_by_id.items():

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from obsidian_utils import ObsidianManager
 from orchestrator import ledger, loop, phases, scraper
+from orchestrator.phases import p3_evidence
 from orchestrator.scraper import MarketRow
 
 
@@ -33,7 +34,7 @@ def test_two_stub_ticks(tmp_path, monkeypatch):
     monkeypatch.setattr(scraper, "fetch_market_row", lambda mid: rows.get(mid))
     monkeypatch.setattr(scraper, "fetch_resolution", lambda mid: None)
     monkeypatch.setattr(
-        phases,
+        p3_evidence,
         "fetch_research_bundle",
         lambda qs: [{"query": q, "research_data": "stub data", "error": None} for q in qs],
     )

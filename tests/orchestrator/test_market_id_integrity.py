@@ -9,6 +9,7 @@ import pytest
 from config.trading_constants import STATUS_INACTIVE, STATUS_KEY
 from obsidian_utils import ObsidianManager
 from orchestrator import phases, scraper
+from orchestrator.phases import p3_evidence
 from orchestrator.runner import _stub_deep_researcher_markdown
 from orchestrator.scraper import MarketRow
 from tests.orchestrator.test_phase3_helpers import (
@@ -56,7 +57,7 @@ def test_mismatched_market_id_flags_inactive(monkeypatch, vault):
         raise AssertionError(role)
 
     monkeypatch.setattr(
-        phases,
+        p3_evidence,
         "fetch_research_bundle",
         lambda queries: [
             {"query": q, "research_data": "x", "error": None} for q in queries
@@ -101,7 +102,7 @@ def test_matching_market_id_proceeds(monkeypatch, vault):
         raise AssertionError(role)
 
     monkeypatch.setattr(
-        phases,
+        p3_evidence,
         "fetch_research_bundle",
         lambda queries: [
             {"query": q, "research_data": "x", "error": None} for q in queries

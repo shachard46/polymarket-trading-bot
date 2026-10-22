@@ -6,6 +6,7 @@ import pytest
 
 from obsidian_utils import ObsidianManager
 from orchestrator import config as orch_config
+from orchestrator.phases import p3_evidence
 from orchestrator import evidence, ledger, phases, polymarket_api, stats
 from orchestrator.runner import spawn_agent
 from tests.orchestrator.test_phase3_helpers import STUB_MARKET_DATA
@@ -70,7 +71,7 @@ def test_aiq_arm_failure_falls_back_to_web(vault, monkeypatch):
     monkeypatch.setenv("OPENCLAW_EVIDENCE_SOURCE", "ab")
     monkeypatch.setattr(evidence, "ab_arm", lambda m: "aiq")
     monkeypatch.setattr(
-        phases,
+        p3_evidence,
         "fetch_research_bundle",
         lambda qs: [{"query": q, "research_data": "", "error": "unreachable"} for q in qs],
     )
@@ -84,7 +85,7 @@ def test_aiq_arm_success_keeps_aiq_and_no_fallback_in_aiq_mode(vault, monkeypatc
     monkeypatch.setenv("OPENCLAW_EVIDENCE_SOURCE", "ab")
     monkeypatch.setattr(evidence, "ab_arm", lambda m: "aiq")
     monkeypatch.setattr(
-        phases,
+        p3_evidence,
         "fetch_research_bundle",
         lambda qs: [{"query": q, "research_data": "real", "error": None} for q in qs],
     )
@@ -93,7 +94,7 @@ def test_aiq_arm_success_keeps_aiq_and_no_fallback_in_aiq_mode(vault, monkeypatc
 
     monkeypatch.setenv("OPENCLAW_EVIDENCE_SOURCE", "aiq")
     monkeypatch.setattr(
-        phases,
+        p3_evidence,
         "fetch_research_bundle",
         lambda qs: [{"query": q, "research_data": "", "error": "down"} for q in qs],
     )
