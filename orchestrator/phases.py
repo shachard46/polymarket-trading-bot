@@ -69,7 +69,7 @@ from orchestrator.scraper import (
     market_data_hydration_error,
     market_data_pricing_error,
 )
-from agents_blueprint import AGENTS
+import agents_blueprint  # module import (not from-import) avoids a cycle when agents_blueprint is imported first
 from orchestrator.agent_outputs import (
     BrieferOutput,
     DeepResearcherComplete,
@@ -221,7 +221,7 @@ def _run_structured_agent(
         parsed = parse_agent_json_or_yaml(raw)
     except AgentOutputParseError as exc:
         return None, f"{role} parse error: {exc}"
-    spec = AGENTS[role]
+    spec = agents_blueprint.AGENTS[role]
     parsed = normalize_structured_output(
         role,
         payload,
@@ -837,7 +837,7 @@ def _plan_research_queries(
 ) -> list[str] | None:
     market_id = row["market_id"]
     brief_in = _text_fields(row, today)
-    spec = AGENTS["briefer"]
+    spec = agents_blueprint.AGENTS["briefer"]
 
     def _validate_briefer(parsed: dict[str, Any]) -> BrieferOutput:
         normalized = normalize_structured_output(

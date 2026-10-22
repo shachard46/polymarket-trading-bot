@@ -300,13 +300,18 @@ def market_row_from_gamma(raw: dict[str, Any], now: datetime | None = None) -> d
 # ---------------------------------------------------------------------------
 
 
-def _raw_market(market_id: str) -> dict[str, Any] | None:
-    """Gamma market object by condition id (0x...) or numeric Gamma id; any open/closed state."""
+def _raw_market(market_id: str, closed_first: bool = False) -> dict[str, Any] | None:
+    """Gamma market object by condition id (0x...) or numeric Gamma id; any open/closed state.
+
+    ``closed_first`` tries ``closed=true`` before the open lookup: just-closed markets can still be
+    served as a stale open record (closed=false, UMA ``proposed``) by the default query.
+    """
     base = gamma_base_url()
     mid = str(market_id).strip()
     if _CONDITION_ID_RE.match(mid):
         # condition_ids hides closed markets unless closed=true is passed too.
-        for extra in ({}, {"closed": "true"}):
+        variants = ({"closed": "true"}, {}) if closed_first else ({}, {"closed": "true"})
+        for extra in variants:
             data = _get_json(f"{base}/markets", {"condition_ids": mid, **extra})
             if isinstance(data, list) and data and isinstance(data[0], dict):
                 return data[0]
@@ -420,7 +425,7 @@ def resolution(market_id: str) -> dict[str, Any] | None:
     (void 50/50, or UMA status still ``disputed``); ``status`` says which (``resolved``, ``void``,
     ``disputed``). Works for any market, traded or not.
     """
-    raw = _raw_market(market_id)
+    raw = _raw_market(market_id, closed_first=True)
     if not raw or not raw.get("closed"):
         return None
     idx = yes_no_indices(raw)

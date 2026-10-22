@@ -339,3 +339,25 @@ def test_base_urls_are_overridable(monkeypatch):
     real_executable_quote(CID, "YES")
     assert sess.calls[0][0] == "http://gamma.test/markets"
     assert sess.calls[-1][0] == "http://clob.test/book"
+
+
+def test_resolution_queries_closed_true_first_and_ignores_stale_open_record():
+    closed = load("market_closed_resolved.json")
+    stale = closed | {"closed": False, "umaResolutionStatus": "proposed", "outcomePrices": '["0.9995", "0.0005"]'}
+    sess = install(lambda url, p: [closed] if p.get("closed") == "true" else [stale])
+    res = api.resolution(closed["conditionId"])
+    assert res is not None and res["status"] == "resolved"
+    assert sess.calls[0][1].get("closed") == "true"
+
+
+def test_resolution_falls_back_to_open_lookup_and_stale_proposed_is_unresolved():
+    stale = load("market_closed_resolved.json") | {"closed": False, "umaResolutionStatus": "proposed"}
+    sess = install(lambda url, p: [] if p.get("closed") == "true" else [stale])
+    assert api.resolution(stale["conditionId"]) is None
+    assert [c[1].get("closed") for c in sess.calls] == ["true", None]
+
+
+def test_fetch_market_still_queries_open_first():
+    sess = install(lambda url, p: [gamma_market()])
+    api.fetch_market(CID)
+    assert "closed" not in sess.calls[0][1]

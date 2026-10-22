@@ -23,7 +23,7 @@ import json
 import logging
 from typing import Any, Callable, Protocol
 
-from agents_blueprint import AGENTS
+import agents_blueprint
 from orchestrator.config import RUNNER_MODE_LIVE, RUNNER_MODE_STUB_ERROR, runner_mode
 from orchestrator.agent_outputs import parse_deep_researcher_json
 from orchestrator.parse import (
@@ -55,7 +55,7 @@ def spawn_agent(role: str, payload: dict[str, Any]) -> Any:
     the local ``input_schema`` declared in ``agent.yaml`` — the cloud agent
     is never invoked with a malformed input.
     """
-    spec = AGENTS[role]
+    spec = agents_blueprint.AGENTS[role]
     validate_payload(role, "input", spec.get("input_model"), payload)
 
     mode = runner_mode()
