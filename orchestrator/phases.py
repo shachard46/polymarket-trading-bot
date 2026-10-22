@@ -15,6 +15,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,7 +29,7 @@ from config.trading_constants import (
     BELOW_EDGE_KEY,
     PENDING_EDGE_REFRESH_KEY,
 )
-from orchestrator import scraper
+from orchestrator import ledger, scraper, stats
 from orchestrator.config import PAPER_TRADE_MODE, max_edge_research_refreshes, top_qualitative_markets
 from orchestrator.state import (
     flag_inactive,
@@ -155,7 +156,7 @@ def _open_trade_shows_bet_not_edge_dq(data: dict[str, Any]) -> bool:
 
 
 def _trade_log_shows_edge_disqualification(data: dict[str, Any]) -> bool:
-    """True when the last run hit the edge gate (no allocation due to score vs ``S_0``)."""
+    """True when the last run hit the edge gate (no allocation: best edge below ``MIN_EDGE``)."""
     if _trade_log_has_nonempty_error(data):
         return False
     bet = data.get(BELOW_EDGE_KEY)
@@ -195,6 +196,26 @@ def _run_structured_agent(
     if err:
         return parsed, f"{role} error: {err}"
     return parsed, None
+
+
+def _ledger_market_fields(market_data: dict[str, Any] | None) -> dict[str, Any]:
+    md = market_data or {}
+    return {
+        "category": md.get("category"),
+        "end_date": md.get("end_date"),
+        "event_id": md.get("event_id"),
+    }
+
+
+def _ledger_safe(
+    vault: ObsidianManager, market_id: str, stage: str, **fields: Any
+) -> dict[str, Any] | None:
+    """Ledger write that can never break the pipeline."""
+    try:
+        return ledger.record(vault, market_id, stage, **fields)
+    except Exception:  # noqa: BLE001
+        log.exception("ledger write failed for %s (%s)", market_id, stage)
+        return None
 
 
 def _persist_phase2_filter(
@@ -270,6 +291,7 @@ def phase2_quantitative_routing(
     """Filter markets through the (re-)Evaluator; persist to ``01_Filters/``."""
     log.info("[PHASE 2] Quantitative routing")
     filter_directives = extract_filter_directives(vault.read_directives())
+    last_decision = ledger.latest_decision_by_market(vault)
 
     for market in target_markets:
         market_id = market.market_id
@@ -392,6 +414,20 @@ def phase2_quantitative_routing(
 
             if not _persist_phase2_filter(vault, market_id, parsed):
                 continue
+            if not parsed.get("passed") and (
+                last_decision.get(market_id, {}).get("stage") != "gate_reject"
+            ):
+                # Soft fails repeat every tick; log the transition once.
+                md = market.market_data
+                last_decision[market_id] = _ledger_safe(
+                    vault,
+                    market_id,
+                    "gate_reject",
+                    reason=parsed.get("trigger") or parsed.get("details"),
+                    q=scraper.select_q(md),
+                    signals=(parsed.get("signal_bundle") or {}).get("signals"),
+                    **_ledger_market_fields(md),
+                ) or {"stage": "gate_reject"}
 
     log.info("[PHASE 2] quantitative routing complete")
 
@@ -917,12 +953,14 @@ def _run_iterative_research(
 # ---------------------------------------------------------------------------
 
 
-def _open_allocated_usd(vault: ObsidianManager) -> float:
-    """Sum ``allocation_usd`` over open (unresolved) trade logs."""
+def _open_allocated_usd(vault: ObsidianManager, event_id: str | None = None) -> float:
+    """Sum ``allocation_usd`` over open (unresolved) trade logs, optionally for one event."""
     total = 0.0
     for path in vault.iter_open_trades():
         record = vault.read_trade_log_dict(path.stem)
         if not record:
+            continue
+        if event_id is not None and record.get("event_id") != event_id:
             continue
         try:
             total += max(0.0, float(record.get("allocation_usd") or 0.0))
@@ -936,20 +974,26 @@ def compute_allocation(
     p: float,
     q: float,
     market_data: dict[str, Any],
+    p_low: float | None = None,
+    p_high: float | None = None,
 ) -> dict[str, Any]:
-    """Run ``calculate_trade_allocation`` in-process with the remaining bankroll."""
+    """Run ``calculate_trade_allocation`` in-process against bankroll + realised P&L."""
     try:
         days = int(float(market_data.get("days_to_resolution")))
     except (TypeError, ValueError):
         days = None  # the skill reports an input error
-    remaining = max(0.0, BANKROLL_USD - _open_allocated_usd(vault))
+    event_id = market_data.get("event_id")
+    bankroll = BANKROLL_USD + stats.realised_pnl(list(ledger.iter_rows(vault)))
     result = _load_calculate_trade_allocation()(
         p=p,
-        q=q,
+        q_yes_ask=q,
         D=days,
         L=market_data.get("liquidity"),
-        V=market_data.get("volume"),
-        remaining_bankroll=remaining,
+        bankroll=bankroll,
+        open_exposure_total=_open_allocated_usd(vault),
+        open_exposure_event=_open_allocated_usd(vault, event_id) if event_id else 0.0,
+        p_low=p_low,
+        p_high=p_high,
     )
     return result.model_dump() if hasattr(result, "model_dump") else dict(result)
 
@@ -1048,7 +1092,9 @@ def phase4_execution(
                 log.warning("[PHASE 4] skip %s this tick: %s", market_id, hydration_err)
                 continue
 
-            allocation = compute_allocation(vault, row["p_value"], q, market_data)
+            allocation = compute_allocation(
+                vault, row["p_value"], q, market_data, row.get("p_low"), row.get("p_high")
+            )
             if allocation.get("error"):
                 log.warning(
                     "[PHASE 4] skip %s this tick: allocation error: %s",
@@ -1089,12 +1135,25 @@ def phase4_execution(
             parsed = {
                 **parsed,
                 "allocation_usd": allocation["allocation_usd"],
-                "score": allocation["score"],
+                "score": allocation.get("edge"),
                 "below_edge_threshold": allocation["below_edge_threshold"],
             }
             if PAPER_TRADE_MODE or not allocation["allocation_usd"] > 0:
                 parsed = {**parsed, "executed": False, "transaction_hash": None}
 
+            size_usd = float(allocation["allocation_usd"])
+            parsed = {
+                **parsed,
+                "p": row["p_value"],
+                "q_entry": q,
+                "side": allocation.get("side"),
+                "price": allocation.get("price"),
+                "shares": allocation.get("shares"),
+                "p_low": row.get("p_low"),
+                "p_high": row.get("p_high"),
+                "directive_version": ledger.current_directive_version(vault),
+                "event_id": market_data.get("event_id"),
+            }
             if vault_write_or_flag(
                 vault=vault,
                 market_id=market_id,
@@ -1104,6 +1163,22 @@ def phase4_execution(
                 phase="phase4",
             ):
                 vault.clear_execution_intent(market_id)
+                below = bool(allocation["below_edge_threshold"]) or not size_usd > 0
+                _ledger_safe(
+                    vault,
+                    market_id,
+                    "below_edge" if below else "traded",
+                    reason="below_edge_threshold" if below else None,
+                    q=q,
+                    p=row["p_value"],
+                    p_low=row.get("p_low"),
+                    p_high=row.get("p_high"),
+                    side=allocation.get("side"),
+                    price=allocation.get("price"),
+                    shares=allocation.get("shares"),
+                    size_usd=size_usd,
+                    **_ledger_market_fields(market_data),
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -1125,6 +1200,26 @@ def phase5_resolution_and_post_mortem(
             continue
         with market_quarantine(vault, market_id, "phase5"):
             _resolve_market(vault, runner, market_id)
+    _resolve_ledger_markets(vault)
+
+
+def _resolve_ledger_markets(vault: ObsidianManager) -> None:
+    """Record resolutions for every unresolved ledger market (capped per tick)."""
+    try:
+        limit = int(os.environ.get("OPENCLAW_LEDGER_RESOLVE_LIMIT", "100"))
+    except ValueError:
+        limit = 100
+    for market_id in ledger.unresolved_market_ids(vault)[: max(limit, 0)]:
+        try:
+            resolution = scraper.fetch_resolution(market_id)
+            outcome_yes = ledger.outcome_yes_from_resolution(resolution)
+            if outcome_yes is None:
+                continue
+            ledger.record_resolution(
+                vault, market_id, outcome_yes, (resolution or {}).get("outcome"), None
+            )
+        except Exception:  # noqa: BLE001 - one bad market must not stop the sweep
+            log.exception("[PHASE 5] ledger resolution failed for %s", market_id)
 
 
 def _post_mortem_failed(

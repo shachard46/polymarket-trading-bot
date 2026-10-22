@@ -22,6 +22,7 @@ from orchestrator.phases import (
     phase5_resolution_and_post_mortem,
     phase6_macro_learning_loop,
 )
+from orchestrator.stats import write_stats
 from orchestrator.state import InfraUnavailable, replay_inactive
 
 log = logging.getLogger(__name__)
@@ -39,6 +40,10 @@ def run_pipeline_tick(vault: ObsidianManager) -> None:
     researched = phase3_qualitative_pipeline(vault)
     phase4_execution(vault, researched)
     phase5_resolution_and_post_mortem(vault)
+    try:
+        write_stats(vault)
+    except Exception:  # noqa: BLE001 - measurement must never break a tick
+        log.exception("write_stats failed")
 
 
 def run_forever(vault: ObsidianManager | None = None) -> None:

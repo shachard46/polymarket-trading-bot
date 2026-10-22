@@ -1,21 +1,20 @@
 """
 Configuration constants for the Polymarket Trading Pipeline.
 """
-# Allocation & Math Constants
-BETA = 0.5
-C1 = 0.02
-C2 = 0.01
-D_MIN = 7
-S_0 = 0.002
-ALPHA = 25
-F_MAX = 0.10             # max bankroll fraction per trade
-EPSILON = 1e-8
-MU_X = 0.05            # Historical mean of |p - q| for rarity bonus
-SIGMA_X = 0.10         # Historical std-dev of |p - q| for rarity bonus
-BANKROLL_USD = 1000.0  # allocation_usd = f * BANKROLL_USD
-LIQ_FRAC = 0.05        # max fraction of market liquidity L a single order may consume
-MAX_ORDER_USD = F_MAX * BANKROLL_USD  # hard per-order ceiling enforced by execute_polymarket_trade
-LIQ_FRAC = 0.05        # max fraction of market liquidity L a single order may consume
+# Allocation & Math Constants (see docs/03_strategy_math.md)
+TAX = 0.25                 # tax on WINNINGS (profit) only; losses do not offset
+LAMBDA = 0.3               # shrink of researcher estimate toward market: p_adj = q + LAMBDA*(p - q)
+UNCERTAINTY_WIDTH = 0.5    # p_high - p_low at which the shrink is fully removed
+MIN_EDGE = 0.04            # minimum (p_adj-based) edge on the chosen side
+KELLY_FRAC = 0.25          # fractional Kelly multiplier
+F_MAX = 0.10               # max bankroll fraction per trade
+LIQ_FRAC = 0.05            # max fraction of market liquidity L a single order may consume
+EVENT_CAP = 0.15           # max bankroll fraction exposed to one event
+TOTAL_EXPOSURE_CAP = 0.60  # max bankroll fraction exposed overall
+MIN_ORDER_USD = 5.0        # orders below this are dropped to 0
+MAX_DAYS_TO_RESOLUTION = 60  # gate (applied by caller): skip markets resolving later
+MIN_DAYS_TO_RESOLUTION = 7   # gate (applied by caller): skip markets resolving sooner
+BANKROLL_USD = 1000.0      # legacy/default bankroll (caller now passes current bankroll)
 MAX_ORDER_USD = F_MAX * BANKROLL_USD  # hard per-order ceiling enforced by execute_polymarket_trade
 
 # A-IQ Service (overridable via env vars AIQ_BASE_URL, AIQ_POLL_INTERVAL_SEC, AIQ_TIMEOUT_SEC)

@@ -36,7 +36,7 @@ from orchestrator.parse import (
 )
 from orchestrator.openclaw_cli import extract_agent_text, run_agent
 from orchestrator.research import parse_deep_researcher
-from orchestrator.live_prompt import build_live_response_hint
+from orchestrator.live_prompt import build_live_response_hint, today_line
 from orchestrator.schema_validation import AgentSchemaError, validate_payload
 
 log = logging.getLogger(__name__)
@@ -386,6 +386,7 @@ def _build_live_prompt(
     if agent_id:
         header = f"{header}\nOpenClaw agent id: {agent_id}"
     return (
+        f"{today_line()}\n\n"
         f"{header}\n\n"
         f"{response_hint}\n\n"
         "Input JSON:\n"

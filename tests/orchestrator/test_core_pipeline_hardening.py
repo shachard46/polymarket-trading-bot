@@ -384,7 +384,8 @@ def test_phase4_overrides_llm_allocation_and_forces_paper(vault, paper):
     expected = payload["allocation"]
     assert trade["allocation_usd"] == expected["allocation_usd"] > 0
     assert trade["allocation_usd"] < 999999
-    assert trade["score"] == expected["score"]
+    assert trade["score"] == expected["edge"]
+    assert (trade["side"], trade["price"], trade["shares"]) == (expected["side"], expected["price"], expected["shares"])
     assert trade["below_edge_threshold"] is False
     assert trade["executed"] is False and trade["transaction_hash"] is None
     assert not vault.has_execution_intent("m4")

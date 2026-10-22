@@ -17,18 +17,15 @@ import shutil
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import yaml
 from pydantic import BaseModel, ValidationError, field_validator
 
 from config.trading_constants import (
-    ALPHA,
-    BETA,
     F_MAX,
     FILTERS,
     PAPER_TRADE_MODE,
-    S_0,
     STATUS_INACTIVE,
     STATUS_KEY,
     VAULT_PATHS,
@@ -145,6 +142,15 @@ class TradeLogPayload(BaseModel):
     error: Optional[str] = None
     status: Optional[str] = None
     error_log: Optional[dict[str, Any]] = None
+    p: Optional[float] = None
+    p_low: Optional[float] = None
+    p_high: Optional[float] = None
+    q_entry: Optional[float] = None
+    side: Optional[Literal["YES", "NO"]] = None
+    shares: Optional[float] = None
+    price: Optional[float] = None
+    directive_version: Optional[int] = None
+    event_id: Optional[str] = None
 
 
 class PostMortemPayload(BaseModel):
@@ -316,6 +322,7 @@ class ObsidianManager:
             key: self._base / Path(rel_path)
             for key, rel_path in VAULT_PATHS.items()
         }
+        self._dirs.setdefault("ledger", self._base / "Vault/05_Ledger/")
         self._ensure_dirs()
 
     # ------------------------------------------------------------------
@@ -1084,10 +1091,7 @@ qualitative reasoning:
 
 | Parameter | Value | Meaning |
 |---|---|---|
-| `BETA` | `{BETA}` | Kelly fraction dampener — never recommend full-Kelly sizing |
 | `F_MAX` | `{F_MAX}` | Hard cap on fraction of bankroll per position |
-| `ALPHA` | `{ALPHA}` | Minimum score scalar for trade to be placed |
-| `S_0` | `{S_0}` | Minimum edge threshold |
 | `PAPER_TRADE_MODE` | `{PAPER_TRADE_MODE}` | Live API disabled — all trades are simulated |
 
 When `PAPER_TRADE_MODE` is `True`, you may be slightly more exploratory
