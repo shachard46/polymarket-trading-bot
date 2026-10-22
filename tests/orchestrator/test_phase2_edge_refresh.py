@@ -253,9 +253,19 @@ def test_phase3_processes_pending_edge_refresh(monkeypatch, vault):
         [{"query": "prior edge", "research_data": "saved", "error": None}],
     )
 
-    from tests.orchestrator.test_phase3_helpers import deep_researcher_complete
+    from tests.orchestrator.test_phase3_helpers import briefer_ok, deep_researcher_complete
+
+    monkeypatch.setattr(
+        phases,
+        "fetch_research_bundle",
+        lambda qs: [{"query": q, "research_data": "fresh", "error": None} for q in qs],
+    )
 
     def runner(role: str, payload: dict[str, Any]) -> Any:
+        if role == "briefer":
+            # Edge refresh always re-plans (F7) with prior-research context.
+            assert payload["planning_context"]
+            return briefer_ok(payload)
         if role == "deep_researcher":
             return deep_researcher_complete(payload, estimated_p=0.6)
         raise AssertionError(f"unexpected role {role}")

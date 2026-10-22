@@ -22,7 +22,7 @@ from orchestrator.phases import (
     phase5_resolution_and_post_mortem,
     phase6_macro_learning_loop,
 )
-from orchestrator.state import replay_inactive
+from orchestrator.state import InfraUnavailable, replay_inactive
 
 log = logging.getLogger(__name__)
 
@@ -54,13 +54,22 @@ def run_forever(vault: ObsidianManager | None = None) -> None:
         summary = replay_inactive(vault)
         log.info("Auto inactive replay: %s", summary)
 
-    last_overseer_run = 0.0
+    # Phase 6 first runs after a full interval, not on the first tick.
+    last_overseer_run = time.time()
     while True:
-        run_pipeline_tick(vault)
+        try:
+            run_pipeline_tick(vault)
+        except InfraUnavailable as exc:
+            log.error("Pipeline tick aborted (infrastructure unavailable): %s", exc)
+        except Exception:  # noqa: BLE001 - one bad tick must never kill the daemon
+            log.exception("Pipeline tick failed; continuing")
 
         now = time.time()
         if now - last_overseer_run >= OVERSEER_INTERVAL_SEC:
-            phase6_macro_learning_loop(vault)
+            try:
+                phase6_macro_learning_loop(vault)
+            except Exception:  # noqa: BLE001
+                log.exception("Phase 6 failed; will retry next interval")
             last_overseer_run = now
 
         log.info("Sleeping %s s until next pipeline tick", PIPELINE_INTERVAL_SEC)

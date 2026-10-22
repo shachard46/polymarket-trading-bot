@@ -12,6 +12,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import logging
+import subprocess
 from typing import Any, Callable, Iterator
 
 from obsidian_utils import ObsidianManager, VaultWriteError
@@ -21,15 +22,49 @@ from config.trading_constants import (
     STATUS_INACTIVE,
     STATUS_KEY,
 )
+from orchestrator.openclaw_cli import OpenClawCLIError
 from orchestrator.research import split_yaml_frontmatter_markdown
 
+try:  # requests is optional; skills that use it surface its errors here
+    from requests.exceptions import RequestException as _RequestException
+except ImportError:  # pragma: no cover
+    _RequestException = None  # type: ignore[assignment,misc]
+
 log = logging.getLogger(__name__)
+
+
+class InfraUnavailable(RuntimeError):
+    """Gateway/network/disk is unavailable — abort the tick (circuit breaker).
+
+    Raised by :func:`market_quarantine` instead of flagging the market inactive,
+    so a transient outage never blacklists markets.
+    """
+
+
+_INFRA_ERRORS: tuple[type[BaseException], ...] = (
+    OpenClawCLIError,
+    OSError,
+    subprocess.TimeoutExpired,
+    *((_RequestException,) if _RequestException is not None else ()),
+)
+# Missing/duplicate vault files are logic errors, not infrastructure outages.
+_NON_INFRA_OS_ERRORS: tuple[type[BaseException], ...] = (
+    FileNotFoundError,
+    FileExistsError,
+)
+
+
+def is_infra_error(exc: BaseException) -> bool:
+    """True for transient infrastructure failures that must not flag a market."""
+    if isinstance(exc, _NON_INFRA_OS_ERRORS):
+        return False
+    return isinstance(exc, _INFRA_ERRORS)
 
 PHASE_ARTIFACTS: dict[str, list[str]] = {
     "phase2": ["filters"],
     "phase3": ["active", "filters"],
     "phase4": ["trades", "active"],
-    "phase5": ["post_mortem", "trades"],
+    "phase5": ["trades", "post_mortem"],
 }
 
 REPLAY_DIRS: tuple[str, ...] = ("filters", "active", "trades", "post_mortem")
@@ -89,6 +124,17 @@ def read_edge_refresh_count(vault: ObsidianManager, market_id: str) -> int:
         return 0
 
 
+def read_edge_refresh_attempts(vault: ObsidianManager, market_id: str) -> int:
+    """Edge refresh cycles *triggered* (Re-Evaluator runs), whether or not research re-ran."""
+    fm = _active_frontmatter(vault, market_id)
+    if fm is None:
+        return 0
+    try:
+        return int(fm.get("edge_research_refresh_attempts") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _build_error_log(phase: str, reason: str, payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "reason": reason,
@@ -117,22 +163,58 @@ def _inactive_keys(flagged: dict[str, Any]) -> dict[str, Any]:
     return {STATUS_KEY: STATUS_INACTIVE, ERROR_LOG_KEY: flagged[ERROR_LOG_KEY]}
 
 
+def _minimal_inactive_filter(
+    market_id: str,
+    flagged: dict[str, Any],
+    reason: str,
+) -> dict[str, Any]:
+    """Smallest valid filter record carrying the inactive stamp."""
+    return {
+        "market_id": market_id,
+        "passed": False,
+        "trigger": None,
+        "confidence_multiplier": 0.0,
+        "details": reason,
+        "error": reason,
+        **_inactive_keys(flagged),
+    }
+
+
 def _patch_dir_inactive(
     vault: ObsidianManager,
     market_id: str,
     dir_key: str,
     flagged: dict[str, Any],
+    reason: str = "",
 ) -> None:
     keys = _inactive_keys(flagged)
+    patched: Any = True
     if dir_key == "filters":
         try:
             vault.write_filter_log(market_id, flagged)
         except VaultWriteError:
-            vault.patch_frontmatter(market_id, dir_key, keys)
+            patched = vault.patch_frontmatter(market_id, dir_key, keys)
+            if patched is None:
+                log.error(
+                    "Filter log for %s is corrupt; overwriting with a minimal "
+                    "inactive record",
+                    market_id,
+                )
+                vault.write_filter_log(
+                    market_id, _minimal_inactive_filter(market_id, flagged, reason)
+                )
+                return
     elif dir_key in ("active", "post_mortem"):
-        vault.patch_frontmatter(market_id, dir_key, keys)
+        patched = vault.patch_frontmatter(market_id, dir_key, keys)
     elif dir_key == "trades":
-        vault.patch_json(market_id, dir_key, keys)
+        patched = vault.patch_json(market_id, dir_key, keys)
+    if patched is None:
+        log.error(
+            "Could not stamp %s inactive in %s (file unreadable/corrupt): %s",
+            market_id,
+            dir_key,
+            reason,
+        )
 
 
 def _cascade_phase3_filter_inactive(
@@ -174,7 +256,7 @@ def flag_inactive(
 
     for dir_key in candidates:
         if vault.market_file(market_id, dir_key) is not None:
-            _patch_dir_inactive(vault, market_id, dir_key, flagged)
+            _patch_dir_inactive(vault, market_id, dir_key, flagged, reason)
             if phase == "phase3" and dir_key == "active":
                 _cascade_phase3_filter_inactive(vault, market_id, flagged)
             log.warning("Market %s flagged inactive (%s): %s", market_id, phase, reason)
@@ -182,7 +264,12 @@ def flag_inactive(
 
     if phase == "phase2":
         try:
-            vault.write_filter_log(market_id, flagged)
+            try:
+                vault.write_filter_log(market_id, flagged)
+            except VaultWriteError:
+                vault.write_filter_log(
+                    market_id, _minimal_inactive_filter(market_id, flagged, reason)
+                )
             log.warning("Market %s flagged inactive (%s): %s", market_id, phase, reason)
             return
         except VaultWriteError as exc:
@@ -222,10 +309,24 @@ def market_quarantine(
     market_id: str,
     phase_name: str,
 ) -> Iterator[None]:
-    """Flag the market inactive if any unhandled exception escapes the block."""
+    """Flag the market inactive if a *content* exception escapes the block.
+
+    Infrastructure errors (see :func:`is_infra_error`) are logged and re-raised as
+    :class:`InfraUnavailable` without flagging, so the caller aborts the tick.
+    """
     try:
         yield
+    except InfraUnavailable:
+        raise
     except Exception as exc:  # noqa: BLE001 - pipeline must continue per market
+        if is_infra_error(exc):
+            log.error(
+                "Infrastructure error for market %s (%s); not flagging, aborting tick: %r",
+                market_id,
+                phase_name,
+                exc,
+            )
+            raise InfraUnavailable(f"{phase_name} {market_id}: {exc!r}") from exc
         record = _primary_artifact_record(vault, market_id, phase_name)
         if is_inactive(record):
             log.warning(
@@ -344,12 +445,15 @@ def replay_inactive(
 
 
 __all__ = [
+    "InfraUnavailable",
+    "is_infra_error",
     "VALID_REPLAY_DIRS",
     "build_inactive_filter_payload",
     "is_inactive",
     "has_pending_edge_refresh",
     "is_error_free_active",
     "read_edge_refresh_count",
+    "read_edge_refresh_attempts",
     "flag_inactive",
     "clear_inactive",
     "market_quarantine",

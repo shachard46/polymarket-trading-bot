@@ -18,6 +18,7 @@ from pydantic import BaseModel, ValidationError
 
 from orchestrator.config import MAX_FORMAT_RETRIES
 from orchestrator.research import parse_deep_researcher
+from orchestrator.schema_validation import AgentSchemaError
 
 log = logging.getLogger(__name__)
 
@@ -295,7 +296,14 @@ def run_agent_with_format_retries(
     max_attempts = max_retries + 1
 
     for attempt in range(max_attempts):
-        raw = runner(role, attempt_payload)
+        try:
+            raw = runner(role, attempt_payload)
+        except AgentSchemaError as exc:
+            # Output-schema mismatch is a format error; an input mismatch is a Hub bug.
+            if exc.direction != "output" or attempt >= max_retries:
+                raise
+            attempt_payload = {**payload, "format_validation_error": str(exc)}
+            continue
         try:
             if parse_response is not None:
                 parsed = parse_response(raw)

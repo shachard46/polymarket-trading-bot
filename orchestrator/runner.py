@@ -275,11 +275,13 @@ def _deep_researcher_stub(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _executioner_stub(payload: dict[str, Any]) -> dict[str, Any]:
+    # Echo the Hub-computed allocation (the real agent must use it verbatim).
+    alloc = payload.get("allocation") or {}
     return {
         "market_id": payload.get("market_id", "stub"),
-        "allocation_usd": 0.0,
-        "score": 0.0,
-        "below_edge_threshold": True,
+        "allocation_usd": float(alloc.get("allocation_usd") or 0.0),
+        "score": float(alloc.get("score") or 0.0),
+        "below_edge_threshold": alloc.get("below_edge_threshold", True),
         "executed": False,
         "transaction_hash": None,
         "error": None,
@@ -305,6 +307,7 @@ def _overseer_stub(payload: dict[str, Any]) -> dict[str, Any]:
             "---\n\n"
             "## Research Protocol\n\nstub.\n\n"
             "## Filter Weightings\n\nstub.\n\n"
+            "```yaml\nfilters:\n  stub: 1\n```\n\n"
             "## Risk Constraints\n\nstub.\n\n"
             "## Output Requirements\n\nstub.\n"
         ),

@@ -12,27 +12,31 @@ A phase:
 
 from __future__ import annotations
 
+import importlib.util
+import json
 import logging
+import time
 from dataclasses import dataclass
-from typing import Any, Literal
+from pathlib import Path
+from typing import Any, Callable, Literal
 
 from pydantic import ValidationError
 
 from obsidian_utils import ObsidianManager, VaultWriteError
 from config.trading_constants import (
+    BANKROLL_USD,
     BELOW_EDGE_KEY,
-    ERROR_LOG_KEY,
     PENDING_EDGE_REFRESH_KEY,
 )
 from orchestrator import scraper
 from orchestrator.config import PAPER_TRADE_MODE, max_edge_research_refreshes, top_qualitative_markets
 from orchestrator.state import (
-    build_inactive_filter_payload,
     flag_inactive,
     has_pending_edge_refresh,
     is_error_free_active,
     is_inactive,
     market_quarantine,
+    read_edge_refresh_attempts,
     read_edge_refresh_count,
     vault_write_or_flag,
 )
@@ -82,6 +86,41 @@ class Phase3Candidate:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+_PRIOR_FILTER_KEYS = ("passed", "trigger", "confidence_multiplier", "details", "signal_bundle")
+MAX_POST_MORTEM_ATTEMPTS = 3
+PHASE6_MAX_POST_MORTEMS = 30
+PHASE6_MAX_POST_MORTEM_CHARS = 5 * 1024
+PHASE6_MAX_TOTAL_CHARS = 90 * 1024
+
+_ROOT = Path(__file__).resolve().parents[1]
+_ALLOCATION_SKILL_PATH = (
+    _ROOT / "skills/calculate-trade-allocation/calculate_trade_allocation.py"
+)
+_allocation_fn: Callable[..., Any] | None = None
+
+
+def _load_calculate_trade_allocation() -> Callable[..., Any]:
+    global _allocation_fn
+    if _allocation_fn is not None:
+        return _allocation_fn
+    spec = importlib.util.spec_from_file_location(
+        "calculate_trade_allocation", _ALLOCATION_SKILL_PATH
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load skill from {_ALLOCATION_SKILL_PATH}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    _allocation_fn = mod.calculate_trade_allocation
+    return _allocation_fn
+
+
+def _prior_filter_result(prior: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Trimmed prior filter record when its last verdict was ``passed: false``, else ``None``."""
+    if not prior or prior.get("passed"):
+        return None
+    return {key: prior.get(key) for key in _PRIOR_FILTER_KEYS}
 
 
 def _qualitative_rank_key(candidate: Phase3Candidate) -> tuple[float, str]:
@@ -163,28 +202,21 @@ def _persist_phase2_filter(
     market_id: str,
     parsed: dict[str, Any],
 ) -> bool:
-    """Persist quantitative agent output; stamp inactive when ``passed`` is false."""
+    """Persist quantitative agent output.
+
+    ``passed: false`` is a soft fail: it is *not* stamped inactive (that is reserved
+    for errors) so the next tick re-checks the market via the Re-Evaluator.
+    """
     if not parsed.get("passed"):
-        reason = str(
-            parsed.get("details") or "did not pass quantitative filters"
-        )
-        body = build_inactive_filter_payload(parsed, "phase2", reason)
-        body[ERROR_LOG_KEY] = {
-            **body[ERROR_LOG_KEY],
-            "trigger": parsed.get("trigger"),
-            "details": parsed.get("details"),
-        }
         log.info(
-            "Market %s did not pass quantitative filters (persisted inactive)",
+            "Market %s did not pass quantitative filters (will be re-checked next tick)",
             market_id,
         )
-    else:
-        body = parsed
     return vault_write_or_flag(
         vault=vault,
         market_id=market_id,
-        write_fn=lambda: vault.write_filter_log(market_id, body),
-        payload=body,
+        write_fn=lambda: vault.write_filter_log(market_id, parsed),
+        payload=parsed,
         artifact_label="filter log",
         phase="phase2",
     )
@@ -266,7 +298,10 @@ def phase2_quantitative_routing(
                 and _trade_log_shows_edge_disqualification(trade)
             ):
                 cap_ref = max_edge_research_refreshes()
-                prev_edge = read_edge_refresh_count(vault, market_id)
+                prev_edge = max(
+                    read_edge_refresh_count(vault, market_id),
+                    read_edge_refresh_attempts(vault, market_id),
+                )
                 if prev_edge >= cap_ref:
                     log.info(
                         "[PHASE 2] skip edge research refresh for %s (cap %s)",
@@ -286,11 +321,19 @@ def phase2_quantitative_routing(
                     "prior_filter_trigger": prior_trigger,
                     "prior_evaluator_details": prior_details,
                     "prior_filter_log": prior_full,
+                    "prior_filter_result": _prior_filter_result(prior_full),
                     "research_markdown": research_md,
                     "trade_log": trade,
                 }
                 parsed_re, reason_re = _run_structured_agent(
                     runner, "re_evaluator", payload_re
+                )
+                # Count the attempt as soon as the refresh was triggered so a
+                # below-edge market with retry_deep_research=false cannot loop forever.
+                vault.patch_frontmatter(
+                    market_id,
+                    "active",
+                    {"edge_research_refresh_attempts": prev_edge + 1},
                 )
                 if reason_re:
                     flag_inactive(
@@ -315,7 +358,13 @@ def phase2_quantitative_routing(
                         continue
                 continue
 
-            role = "re_evaluator" if has_active else "evaluator"
+            prior_result = _prior_filter_result(prior_full)
+            # Soft-failed markets (no research yet) go to the Re-Evaluator every tick.
+            role = (
+                "re_evaluator"
+                if has_active or prior_result is not None
+                else "evaluator"
+            )
             if role == "evaluator":
                 payload: dict[str, Any] = {
                     "market_id": market_id,
@@ -331,6 +380,7 @@ def phase2_quantitative_routing(
                     "prior_filter_trigger": prior.get("trigger") if prior else None,
                     "prior_evaluator_details": prior.get("details") if prior else None,
                     "prior_filter_log": None,
+                    "prior_filter_result": prior_result,
                     "research_markdown": None,
                     "trade_log": None,
                 }
@@ -422,7 +472,8 @@ def phase3_qualitative_pipeline(
 
         pricing_err = market_data_pricing_error(row.market_data)
         if pricing_err:
-            flag_inactive(vault, market_id, "phase3", pricing_err, row.model_dump())
+            # Transient data gap: skip this tick, never blacklist.
+            log.warning("[PHASE 3] skip %s this tick: %s", market_id, pricing_err)
             continue
 
         market_row = row.model_dump()
@@ -460,7 +511,7 @@ def phase3_research_market(
 
     pricing_err = market_data_pricing_error(row.market_data)
     if pricing_err:
-        flag_inactive(vault, market_id, "phase3", pricing_err, row.model_dump())
+        log.warning("[PHASE 3] skip %s this tick: %s", market_id, pricing_err)
         return None
 
     directives = vault.read_directives()
@@ -536,8 +587,13 @@ def _research_market(
     )
 
 
+def _bundle_row_usable(entry: dict[str, Any]) -> bool:
+    return bool(str(entry.get("research_data") or "").strip()) and not entry.get("error")
+
+
 def _bundle_has_entries(bundle: list[dict[str, Any]] | None) -> bool:
-    return bool(bundle)
+    """True only when at least one row carries data and no error (not a poisoned bundle)."""
+    return any(_bundle_row_usable(e) for e in bundle or [])
 
 
 def _plan_research_queries(
@@ -590,11 +646,16 @@ def _fetch_and_persist_bundle(
     vault: ObsidianManager,
     market_id: str,
     queries: list[str],
+    *,
+    fresh: bool = False,
 ) -> None:
     cleaned = [str(q).strip() for q in queries if str(q).strip()]
     if not cleaned:
         return
     results = fetch_research_bundle(cleaned)
+    if fresh and _bundle_has_entries(results):
+        # Edge refresh: drop stale rows (the merge keeps prior rows for repeated queries).
+        vault.clear_research_bundle(market_id)
     vault.write_research_bundle(market_id, results)
 
 
@@ -705,6 +766,7 @@ def _finalize_research(
         "estimated_p": research.estimated_p,
         "error": None,
         "edge_research_refresh_count": edge_count,
+        "edge_research_refresh_attempts": read_edge_refresh_attempts(vault, market_id),
     }
     if not vault_write_or_flag(
         vault=vault,
@@ -769,8 +831,11 @@ def _run_iterative_research(
 ) -> dict[str, Any] | None:
     market_id = row["market_id"]
     existing_bundle = vault.read_research_bundle(market_id)
+    q = scraper.select_q(row.get("market_data") or {})
+    fresh_fetch = from_edge
 
-    if _bundle_has_entries(existing_bundle):
+    # Edge refreshes always re-plan and refetch; otherwise reuse a usable saved bundle.
+    if not from_edge and _bundle_has_entries(existing_bundle):
         pending_queries: list[str] = []
     else:
         planned = _plan_research_queries(vault, runner, row, planning_context)
@@ -783,12 +848,16 @@ def _run_iterative_research(
 
     while iteration < MAX_RESEARCH_ITERATIONS:
         if pending_queries:
-            _fetch_and_persist_bundle(vault, market_id, pending_queries)
+            _fetch_and_persist_bundle(
+                vault, market_id, pending_queries, fresh=fresh_fetch
+            )
+            fresh_fetch = False
 
         bundle = vault.read_research_bundle(market_id) or []
         dr_in: dict[str, Any] = {
             "market_id": market_id,
             "market_data": row.get("market_data") or {},
+            "q": q,
             "directives": directives,
             "research_bundle": bundle,
             "system_override": None,
@@ -816,10 +885,14 @@ def _run_iterative_research(
         iteration += 1
 
     if isinstance(last_out, DeepResearcherNeedsMore):
+        # Fetch the queries requested by the last needs_more_data before forcing synthesis.
+        if pending_queries:
+            _fetch_and_persist_bundle(vault, market_id, pending_queries)
         bundle = vault.read_research_bundle(market_id) or []
         dr_in = {
             "market_id": market_id,
             "market_data": row.get("market_data") or {},
+            "q": q,
             "directives": directives,
             "research_bundle": bundle,
             "system_override": None,
@@ -844,49 +917,193 @@ def _run_iterative_research(
 # ---------------------------------------------------------------------------
 
 
+def _open_allocated_usd(vault: ObsidianManager) -> float:
+    """Sum ``allocation_usd`` over open (unresolved) trade logs."""
+    total = 0.0
+    for path in vault.iter_open_trades():
+        record = vault.read_trade_log_dict(path.stem)
+        if not record:
+            continue
+        try:
+            total += max(0.0, float(record.get("allocation_usd") or 0.0))
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
+def compute_allocation(
+    vault: ObsidianManager,
+    p: float,
+    q: float,
+    market_data: dict[str, Any],
+) -> dict[str, Any]:
+    """Run ``calculate_trade_allocation`` in-process with the remaining bankroll."""
+    try:
+        days = int(float(market_data.get("days_to_resolution")))
+    except (TypeError, ValueError):
+        days = None  # the skill reports an input error
+    remaining = max(0.0, BANKROLL_USD - _open_allocated_usd(vault))
+    result = _load_calculate_trade_allocation()(
+        p=p,
+        q=q,
+        D=days,
+        L=market_data.get("liquidity"),
+        V=market_data.get("volume"),
+        remaining_bankroll=remaining,
+    )
+    return result.model_dump() if hasattr(result, "model_dump") else dict(result)
+
+
+def _phase4_queue(
+    vault: ObsidianManager,
+    researched_markets: list[dict[str, Any]],
+) -> list[tuple[dict[str, Any], bool]]:
+    """This tick's researched markets plus a vault scan; ``(row, from_research)`` deduped by id."""
+    queue: list[tuple[dict[str, Any], bool]] = []
+    seen: set[str] = set()
+    for row in researched_markets:
+        if row["market_id"] not in seen:
+            seen.add(row["market_id"])
+            queue.append((row, True))
+
+    for path in vault.iter_dir_files("active", ".md"):
+        market_id = path.stem
+        if market_id in seen:
+            continue
+        if (
+            not is_error_free_active(vault, market_id)
+            or vault.market_file(market_id, "trades") is not None
+            or vault.has_execution_intent(market_id)
+            or vault.is_market_inactive(market_id, dir_key="filters")
+        ):
+            continue
+        fm = vault.read_market_record(market_id, "active") or {}
+        try:
+            p_value = float(fm["estimated_p"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        fresh = scraper.fetch_market_row(market_id)
+        if fresh is None:
+            log.warning("[PHASE 4] skip %s: could not hydrate market row", market_id)
+            continue
+        seen.add(market_id)
+        queue.append(
+            (
+                {
+                    "market_id": market_id,
+                    "p_value": p_value,
+                    "market_data": fresh.market_data,
+                },
+                False,
+            )
+        )
+    return queue
+
+
 def phase4_execution(
     vault: ObsidianManager,
     researched_markets: list[dict[str, Any]],
     runner: AgentRunner = spawn_agent,
 ) -> None:
-    """Spawn the Trade Executioner; honor :data:`PAPER_TRADE_MODE`."""
+    """Spawn the Trade Executioner; honor :data:`PAPER_TRADE_MODE`.
+
+    The Hub computes the allocation and overrides the agent's allocation fields.
+    An intent record guards against double execution across ticks.
+    """
     log.info("[PHASE 4] Execution")
     if PAPER_TRADE_MODE:
         log.info(
             "[PAPER_TRADE] forcing executed=False and transaction_hash=None on trade logs"
         )
 
-    for row in researched_markets:
+    for row, from_research in _phase4_queue(vault, researched_markets):
         market_id = row["market_id"]
         market_data = row.get("market_data") or {}
-        hydration_err = market_data_hydration_error(market_data)
-        if hydration_err:
-            flag_inactive(vault, market_id, "phase4", hydration_err, row)
-            continue
 
         with market_quarantine(vault, market_id, "phase4"):
+            if vault.has_execution_intent(market_id):
+                log.error(
+                    "[PHASE 4] refusing %s: execution intent exists from an earlier "
+                    "attempt (outcome unknown); resolve manually and delete the intent",
+                    market_id,
+                )
+                continue
+            existing = vault.read_trade_log_dict(market_id)
+            if vault.market_file(market_id, "trades") is not None:
+                # Only an edge-disqualified trade from a fresh research refresh may re-execute.
+                if not (
+                    from_research
+                    and existing is not None
+                    and _trade_log_shows_edge_disqualification(existing)
+                ):
+                    log.info("[PHASE 4] skip %s: trade log already exists", market_id)
+                    continue
+
+            q = scraper.select_q(market_data)
+            if q is None:
+                log.warning("[PHASE 4] skip %s this tick: no usable q", market_id)
+                continue
+            hydration_err = market_data_hydration_error(market_data)
+            if hydration_err:
+                log.warning("[PHASE 4] skip %s this tick: %s", market_id, hydration_err)
+                continue
+
+            allocation = compute_allocation(vault, row["p_value"], q, market_data)
+            if allocation.get("error"):
+                log.warning(
+                    "[PHASE 4] skip %s this tick: allocation error: %s",
+                    market_id,
+                    allocation["error"],
+                )
+                continue
+
             payload = {
                 "market_id": market_id,
                 "p_value": row["p_value"],
+                "q": q,
+                "allocation": allocation,
                 "market_data": market_data,
                 "paper_trade_mode": bool(PAPER_TRADE_MODE),
             }
+            vault.write_execution_intent(
+                market_id,
+                {
+                    "market_id": market_id,
+                    "started_at": time.time(),
+                    "paper_trade_mode": bool(PAPER_TRADE_MODE),
+                    "allocation": allocation,
+                },
+            )
             parsed, reason = _run_structured_agent(runner, "executioner", payload)
             if reason:
+                log.error(
+                    "[PHASE 4] executioner failed for %s (%s); intent left in place, "
+                    "market will not be re-executed automatically",
+                    market_id,
+                    reason,
+                )
                 flag_inactive(vault, market_id, "phase4", reason, parsed or payload)
                 continue
 
-            if PAPER_TRADE_MODE:
+            # The Hub's numbers win; the LLM only reports whether it executed.
+            parsed = {
+                **parsed,
+                "allocation_usd": allocation["allocation_usd"],
+                "score": allocation["score"],
+                "below_edge_threshold": allocation["below_edge_threshold"],
+            }
+            if PAPER_TRADE_MODE or not allocation["allocation_usd"] > 0:
                 parsed = {**parsed, "executed": False, "transaction_hash": None}
 
-            vault_write_or_flag(
+            if vault_write_or_flag(
                 vault=vault,
                 market_id=market_id,
                 write_fn=lambda: vault.write_trade_log(market_id, parsed),
                 payload=parsed,
                 artifact_label="trade log",
                 phase="phase4",
-            )
+            ):
+                vault.clear_execution_intent(market_id)
 
 
 # ---------------------------------------------------------------------------
@@ -910,21 +1127,54 @@ def phase5_resolution_and_post_mortem(
             _resolve_market(vault, runner, market_id)
 
 
+def _post_mortem_failed(
+    vault: ObsidianManager,
+    market_id: str,
+    reason: str,
+    payload: dict[str, Any],
+) -> None:
+    """Count the failed attempt on the trade log; flag it inactive once the cap is hit."""
+    trade = vault.read_trade_log_dict(market_id) or {}
+    try:
+        attempts = int(trade.get("post_mortem_attempts") or 0) + 1
+    except (TypeError, ValueError):
+        attempts = 1
+    vault.patch_json(market_id, "trades", {"post_mortem_attempts": attempts})
+    if attempts >= MAX_POST_MORTEM_ATTEMPTS:
+        flag_inactive(vault, market_id, "phase5", reason, payload)
+    else:
+        log.warning(
+            "[PHASE 5] post-mortem attempt %d/%d failed for %s (retry next tick): %s",
+            attempts,
+            MAX_POST_MORTEM_ATTEMPTS,
+            market_id,
+            reason,
+        )
+
+
 def _resolve_market(
     vault: ObsidianManager,
     runner: AgentRunner,
     market_id: str,
 ) -> None:
-    """Resolve one market and append post-mortem analysis when possible."""
+    """Resolve one market and append post-mortem analysis when possible.
+
+    Idempotent: a post-mortem file left by an earlier failed attempt is reused.
+    """
     resolution = scraper.fetch_resolution(market_id)
     if resolution is None:
         return
 
-    try:
-        vault.move_file(market_id, "active", "post_mortem")
-    except FileNotFoundError:
-        log.warning("No active research file to move for %s", market_id)
-        return
+    if vault.post_mortem_path(market_id).exists():
+        log.info("[PHASE 5] post-mortem file exists for %s; re-running analyst", market_id)
+    else:
+        try:
+            vault.move_file(market_id, "active", "post_mortem")
+        except FileNotFoundError:
+            log.warning("No active research file to move for %s", market_id)
+            return
+        except FileExistsError:
+            log.warning("Post-mortem file already exists for %s; re-running analyst", market_id)
 
     payload = {
         "market_id": market_id,
@@ -934,17 +1184,18 @@ def _resolve_market(
     }
     parsed, reason = _run_structured_agent(runner, "post_mortem_analyst", payload)
     if reason:
-        flag_inactive(vault, market_id, "phase5", reason, parsed or payload)
+        _post_mortem_failed(vault, market_id, reason, parsed or payload)
         return
 
-    if not vault_write_or_flag(
-        vault=vault,
-        market_id=market_id,
-        write_fn=lambda: vault.append_post_mortem(market_id, parsed),
-        payload=parsed,
-        artifact_label="post-mortem append",
-        phase="phase5",
-    ):
+    try:
+        vault.append_post_mortem(market_id, parsed)
+    except VaultWriteError as exc:
+        _post_mortem_failed(
+            vault,
+            market_id,
+            f"post-mortem append validation failed: {exc.cause}",
+            parsed,
+        )
         return
 
     try:
@@ -958,16 +1209,35 @@ def _resolve_market(
 # ---------------------------------------------------------------------------
 
 
+def _bounded_post_mortems(vault: ObsidianManager) -> list[dict[str, Any]]:
+    """Most recent post-mortems by mtime, each truncated, within a total size cap."""
+    paths = sorted(vault.iter_post_mortems(), key=lambda p: p.stat().st_mtime, reverse=True)
+    batch: list[dict[str, Any]] = []
+    total = 0
+    for path in paths[:PHASE6_MAX_POST_MORTEMS]:
+        content = path.read_text(encoding="utf-8")[:PHASE6_MAX_POST_MORTEM_CHARS]
+        if total + len(content) > PHASE6_MAX_TOTAL_CHARS:
+            break
+        total += len(content)
+        batch.append({"market_id": path.stem, "content": content})
+    dropped = len(paths) - len(batch)
+    if dropped:
+        log.info(
+            "[PHASE 6] sending %d of %d post-mortems (%d dropped by size/count caps)",
+            len(batch),
+            len(paths),
+            dropped,
+        )
+    return batch
+
+
 def phase6_macro_learning_loop(
     vault: ObsidianManager,
     runner: AgentRunner = spawn_agent,
 ) -> None:
     """Aggregate post-mortems → Overseer → overwrite ``active_directives.md``."""
     log.info("[PHASE 6] Macro-learning loop (Overseer)")
-    batch = [
-        {"market_id": p.stem, "content": p.read_text(encoding="utf-8")}
-        for p in vault.iter_post_mortems()
-    ]
+    batch = _bounded_post_mortems(vault)
     payload = {
         "post_mortems": batch,
         "current_directives": vault.read_directives(),
@@ -994,6 +1264,7 @@ __all__ = [
     "build_phase3_queue",
     "phase3_qualitative_pipeline",
     "phase3_research_market",
+    "compute_allocation",
     "phase4_execution",
     "phase5_resolution_and_post_mortem",
     "phase6_macro_learning_loop",

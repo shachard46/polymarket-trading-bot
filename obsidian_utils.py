@@ -114,6 +114,7 @@ class ResearchFrontmatter(BaseModel):
     estimated_p: float
     error: Optional[str] = None
     edge_research_refresh_count: int = 0
+    edge_research_refresh_attempts: int = 0
     status: Optional[str] = None
     error_log: Optional[dict[str, Any]] = None
 
@@ -124,11 +125,11 @@ class ResearchFrontmatter(BaseModel):
             raise ValueError(f"estimated_p must be in [0, 1], got {v}")
         return v
 
-    @field_validator("edge_research_refresh_count")
+    @field_validator("edge_research_refresh_count", "edge_research_refresh_attempts")
     @classmethod
     def _edge_refresh_non_negative(cls, v: int) -> int:
         if v < 0:
-            raise ValueError("edge_research_refresh_count must be >= 0")
+            raise ValueError("edge_research_refresh_count/attempts must be >= 0")
         return v
 
 
@@ -799,6 +800,10 @@ class ObsidianManager:
         _atomic_write_text(path, json.dumps(envelope, indent=2))
         return path
 
+    def clear_research_bundle(self, market_id: str) -> None:
+        """Delete the saved bundle so the next write starts from fresh data."""
+        self._research_bundle_path(market_id).unlink(missing_ok=True)
+
     def active_research_path(self, market_id: str) -> Path:
         """Return the path where active research for ``market_id`` lives."""
         return self._dirs["active"] / f"{market_id}.md"
@@ -846,6 +851,25 @@ class ObsidianManager:
         ``03_Trades/_resolved/`` and are skipped.
         """
         return sorted(p for p in self._dirs["trades"].glob("*.json") if p.is_file())
+
+    def _intent_path(self, market_id: str) -> Path:
+        _check_market_id(market_id)
+        return self._dirs["trades"] / "_intents" / f"{market_id}.json"
+
+    def has_execution_intent(self, market_id: str) -> bool:
+        """True when an execution intent record exists for ``market_id``."""
+        return self._intent_path(market_id).exists()
+
+    def write_execution_intent(self, market_id: str, record: dict[str, Any]) -> Path:
+        """Persist an intent record before the Executioner is spawned (kept out of ``iter_open_trades``)."""
+        path = self._intent_path(market_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write_text(path, json.dumps(record, indent=2, default=str))
+        return path
+
+    def clear_execution_intent(self, market_id: str) -> None:
+        """Remove the intent record (no-op if absent)."""
+        self._intent_path(market_id).unlink(missing_ok=True)
 
     def archive_trade(self, market_id: str) -> Path:
         """Move ``03_Trades/{market_id}.json`` to ``03_Trades/_resolved/``.

@@ -18,6 +18,7 @@ RUNNER_MODE_ENV = "OPENCLAW_ORCHESTRATOR_MODE"
 RUNNER_MODE_STUB = "stub"
 RUNNER_MODE_STUB_ERROR = "stub_error"
 RUNNER_MODE_LIVE = "live"
+_VALID_RUNNER_MODES = frozenset({RUNNER_MODE_STUB, RUNNER_MODE_STUB_ERROR, RUNNER_MODE_LIVE})
 
 OPENCLAW_BIN_ENV = "OPENCLAW_BIN"
 OPENCLAW_AGENT_TIMEOUT_ENV = "OPENCLAW_AGENT_TIMEOUT"
@@ -72,8 +73,18 @@ def max_edge_research_refreshes() -> int:
 
 
 def runner_mode() -> str:
-    """Return the active runner mode, defaulting to ``stub``."""
-    return os.environ.get(RUNNER_MODE_ENV, RUNNER_MODE_STUB).strip().lower()
+    """Return the active runner mode, defaulting to ``stub``.
+
+    Raises :class:`ValueError` on an unknown value so a typo can never silently
+    fall back to stub mode.
+    """
+    mode = os.environ.get(RUNNER_MODE_ENV, RUNNER_MODE_STUB).strip().lower()
+    if mode not in _VALID_RUNNER_MODES:
+        raise ValueError(
+            f"Invalid {RUNNER_MODE_ENV}={mode!r}; expected one of "
+            f"{sorted(_VALID_RUNNER_MODES)}"
+        )
+    return mode
 
 
 def openclaw_bin() -> str:

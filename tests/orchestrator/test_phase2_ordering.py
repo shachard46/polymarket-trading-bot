@@ -51,7 +51,7 @@ def test_phase2_passes_filter_directives_to_evaluator(vault):
     record = vault.read_filter_log("m1")
     assert record is not None
     assert record["passed"] is False
-    assert is_inactive(record)
-    assert record[STATUS_KEY] == STATUS_INACTIVE
-    assert record[ERROR_LOG_KEY]["details"] == "test"
-    assert record[ERROR_LOG_KEY]["trigger"] is None
+    # Soft fail: not stamped inactive (reserved for errors); re-checked next tick.
+    assert not is_inactive(record)
+    assert STATUS_KEY not in record or record[STATUS_KEY] != STATUS_INACTIVE
+    assert record.get(ERROR_LOG_KEY) is None
