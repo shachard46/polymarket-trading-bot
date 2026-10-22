@@ -16,6 +16,7 @@ from config.trading_constants import (
     MIN_EDGE,
     MIN_ORDER_USD,
     TAX,
+    TAX_MODE,
     TOTAL_EXPOSURE_CAP,
     UNCERTAINTY_WIDTH,
 )
@@ -35,9 +36,12 @@ class CalculateTradeAllocationInput(BaseModel):
     open_exposure_total: float = Field(default=0.0, ge=0)
     open_exposure_event: float = Field(default=0.0, ge=0)
     lam: float = Field(default=LAMBDA, ge=0, le=1)
+    tax_mode: str = TAX_MODE  # "annual_offset" | "per_trade"
 
     @model_validator(mode="after")
     def _range(self) -> "CalculateTradeAllocationInput":
+        if self.tax_mode not in ("annual_offset", "per_trade"):
+            raise ValueError("tax_mode must be 'annual_offset' or 'per_trade'")
         if (self.p_low is None) != (self.p_high is None):
             raise ValueError("p_low and p_high must be given together")
         if self.p_low is not None and self.p_high is not None:
@@ -87,6 +91,7 @@ def calculate_trade_allocation(
     q_no_ask: float | None = None,
     lam: float | None = None,
     q: float | None = None,
+    tax_mode: str | None = None,
 ) -> CalculateTradeAllocationOutput:
     """``q`` is accepted as an alias for ``q_yes_ask``."""
     if q_yes_ask is None:
@@ -98,6 +103,7 @@ def calculate_trade_allocation(
             open_exposure_total=open_exposure_total,
             open_exposure_event=open_exposure_event,
             **({} if lam is None else {"lam": lam}),
+            **({} if tax_mode is None else {"tax_mode": tax_mode}),
         )
     except ValidationError as exc:
         details = "; ".join(
@@ -133,7 +139,13 @@ def calculate_trade_allocation(
         if edge < MIN_EDGE:
             return out(below=True, cap="min_edge")
 
-        b = (1.0 - price) * (1.0 - TAX) / price
+        # annual_offset: odds are pre-tax. The annual tax scales wins and losses alike at portfolio
+        # level, so it changes neither the sign nor the Kelly fraction; f is deliberately NOT
+        # inflated by 1/(1-TAX) (conservative). per_trade: legacy tax on each winning trade.
+        if args.tax_mode == "per_trade":
+            b = (1.0 - price) * (1.0 - TAX) / price
+        else:
+            b = (1.0 - price) / price
         f_star = (p_side * b - (1.0 - p_side)) / b
         if f_star <= 0:
             return out(cap="kelly_nonpositive")

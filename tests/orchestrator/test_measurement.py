@@ -85,18 +85,46 @@ def test_brier_and_calibration():
     assert cal[1]["hit_rate"] == 0.5 and cal[1]["mean_p"] == pytest.approx(0.835)
 
 
-def test_pnl_with_tax_and_counterfactual():
-    rows = [
-        _row("w", "traded", p=0.8, q=0.5, side="YES", price=0.5, size_usd=10, category="x", reason="r"),
-        _row("w", "resolution", outcome_yes=1),
-        _row("l", "traded", p=0.8, q=0.5, side="YES", price=0.5, size_usd=10, category="x", reason="r"),
-        _row("l", "resolution", outcome_yes=0),
+def _pnl_rows(ts_w="2026-03-01T00:00:00+00:00", ts_l="2026-04-01T00:00:00+00:00"):
+    w = _row("w", "resolution", outcome_yes=1); w["ts"] = ts_w
+    l = _row("l", "resolution", outcome_yes=0); l["ts"] = ts_l
+    return [
+        _row("w", "traded", p=0.8, q=0.5, side="YES", price=0.5, size_usd=10, category="x", reason="r"), w,
+        _row("l", "traded", p=0.8, q=0.5, side="YES", price=0.5, size_usd=10, category="x", reason="r"), l,
         _row("n", "below_edge", q=0.5, side="NO", price=0.5, size_usd=4),
         _row("n", "resolution", outcome_yes=0),
     ]
+
+
+def test_pnl_annual_offset_and_counterfactual(monkeypatch):
+    monkeypatch.setattr(stats, "TAX_MODE", "annual_offset")
+    s = stats.compute_stats(_pnl_rows())
+    # win +10, loss -10 in the same year: net 0 -> no tax
+    assert s["pnl_total"] == pytest.approx(0.0) and s["pnl_tax"] == 0.0
+    assert s["pnl_after_tax"] == pytest.approx(0.0)
+    assert s["pnl_by_category"]["x"] == (2, pytest.approx(0.0))
+    assert s["counterfactual_by_stage"]["below_edge"] == (1, pytest.approx(4.0))
+    assert s["counterfactual_after_tax"]["tax"] == pytest.approx(1.0)  # 25% of +4
+    assert stats.realised_pnl(_pnl_rows()) == pytest.approx(0.0)
+
+
+def test_pnl_annual_offset_taxes_net_per_calendar_year(monkeypatch):
+    monkeypatch.setattr(stats, "TAX_MODE", "annual_offset")
+    rows = _pnl_rows(ts_w="2025-12-31T00:00:00+00:00", ts_l="2026-01-02T00:00:00+00:00")
     s = stats.compute_stats(rows)
-    # win: shares 20 -> profit 10 -> 7.5 after 25% tax; loss: -10
-    assert s["pnl_total"] == pytest.approx(-2.5)
+    # 2025: +10 -> tax 2.5; 2026: -10 -> no tax, no carry-over
+    assert s["pnl_tax_by_year"][2025] == pytest.approx(2.5) and s["pnl_tax_by_year"][2026] == 0.0
+    assert s["pnl_tax"] == pytest.approx(2.5)
+    assert s["pnl_after_tax"] == pytest.approx(-2.5)
+    # per-bet P&L is pre-tax
+    assert stats.bet_pnl({"price": 0.5, "size_usd": 10, "side": "YES"}, 1) == pytest.approx(10.0)
+
+
+def test_pnl_per_trade_mode(monkeypatch):
+    monkeypatch.setattr(stats, "TAX_MODE", "per_trade")
+    s = stats.compute_stats(_pnl_rows())
+    # win: profit 10 -> 7.5 after 25% tax; loss: -10
+    assert s["pnl_total"] == pytest.approx(-2.5) and s["pnl_after_tax"] == pytest.approx(-2.5)
     assert s["pnl_by_category"]["x"] == (2, pytest.approx(-2.5))
     assert s["counterfactual_by_stage"]["below_edge"] == (1, pytest.approx(3.0))
 

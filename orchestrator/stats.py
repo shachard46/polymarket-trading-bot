@@ -17,6 +17,7 @@ from obsidian_utils import ObsidianManager
 from orchestrator import ledger
 
 TAX = getattr(trading_constants, "TAX", 0.25)
+TAX_MODE = getattr(trading_constants, "TAX_MODE", "annual_offset")
 _EPS = 1e-6
 MIN_FIT_N = 50
 _SKIP_STAGES = ("gate_reject", "triage_reject", "research_skip")
@@ -163,7 +164,7 @@ def fit_lambda(rows: list[dict[str, Any]]) -> float | None:
 
 
 def _pnl(row: dict[str, Any], outcome_yes: int, default_size: float | None = None) -> float | None:
-    """P&L of a stated bet; tax applies to profit on wins only."""
+    """P&L of a stated bet: pre-tax in ``annual_offset`` mode, tax on a winning trade in ``per_trade``."""
     price = _num(row.get("price"))
     size = _num(row.get("size_usd"))
     if size is None:
@@ -174,11 +175,14 @@ def _pnl(row: dict[str, Any], outcome_yes: int, default_size: float | None = Non
     side = str(row.get("side") or "YES").upper()
     won = outcome_yes == (1 if side == "YES" else 0)
     profit = shares * (1 if won else 0) - size
-    return profit * (1 - TAX) if profit > 0 else profit
+    if TAX_MODE == "per_trade" and profit > 0:
+        return profit * (1 - TAX)
+    return profit
 
 
 def bet_pnl(row: dict[str, Any], outcome_yes: int) -> float | None:
-    """After-tax realised P&L of a bet row (``price``, ``size_usd``/``shares``, ``side``)."""
+    """Per-bet realised P&L (``price``, ``size_usd``/``shares``, ``side``): pre-tax in
+    ``annual_offset`` mode (tax is levied on the annual net, see :func:`tax_by_year`)."""
     return _pnl(row, outcome_yes)
 
 
@@ -190,6 +194,44 @@ def _pnl_groups(rows, res, stages, default_size=None) -> list[tuple[dict[str, An
             if pnl is not None:
                 out.append((r, pnl))
     return out
+
+
+def resolution_years(rows: Iterable[dict[str, Any]]) -> dict[str, int]:
+    """``{market_id: calendar year}`` of each market's (latest) resolution row ``ts`` (UTC)."""
+    out: dict[str, int] = {}
+    for r in rows:
+        if r.get("stage") == ledger.RESOLUTION_STAGE and r.get("market_id"):
+            try:
+                out[r["market_id"]] = datetime.fromisoformat(str(r.get("ts"))).year
+            except ValueError:
+                continue
+    return out
+
+
+def tax_by_year(pnl_by_year: dict[int, float]) -> dict[int, float]:
+    """``TAX * max(0, net pre-tax P&L)`` per calendar year (losses offset gains within the year)."""
+    return {y: TAX * max(0.0, v) for y, v in sorted(pnl_by_year.items())}
+
+
+def pnl_summary(rows: list[dict[str, Any]], stages, default_size=None) -> dict[str, Any]:
+    """Pre-tax / tax / after-tax totals over the latest bet per resolved market in ``stages``.
+
+    ``annual_offset``: tax = TAX * max(0, net per resolution year). ``per_trade``: per-bet P&L is
+    already taxed, so no gross-up is attempted: ``pre_tax`` and ``after_tax`` both equal that
+    total and ``tax`` is 0.
+    """
+    res = resolutions(rows)
+    years = resolution_years(rows)
+    pairs = _pnl_groups(rows, res, stages, default_size)
+    total = sum(p for _, p in pairs)
+    if TAX_MODE == "per_trade":
+        return {"pre_tax": total, "tax": 0.0, "after_tax": total, "tax_by_year": {}, "n": len(pairs)}
+    by_year: dict[int, float] = defaultdict(float)
+    for r, pnl in pairs:
+        by_year[years.get(r["market_id"], 0)] += pnl
+    taxes = tax_by_year(by_year)
+    tax = sum(taxes.values())
+    return {"pre_tax": total, "tax": tax, "after_tax": total - tax, "tax_by_year": taxes, "n": len(pairs)}
 
 
 def _group(pairs, key) -> dict[str, tuple[int, float]]:
@@ -212,8 +254,8 @@ def false_negative_rate(rows: list[dict[str, Any]]) -> tuple[int, float | None]:
 
 
 def realised_pnl(rows: list[dict[str, Any]]) -> float:
-    """Total realised (after-tax) P&L of resolved traded markets."""
-    return sum(p for _, p in _pnl_groups(rows, resolutions(rows), ("traded",)))
+    """Total realised AFTER-tax P&L of resolved traded markets (annual-net tax in ``annual_offset``)."""
+    return pnl_summary(rows, ("traded",))["after_tax"]
 
 
 def compute_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -234,12 +276,17 @@ def compute_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
         )
     out["calibration"] = calibration_table(triples)
     traded = _pnl_groups(rows, res, ("traded",))
-    out["pnl_total"] = sum(p for _, p in traded)
+    summ = pnl_summary(rows, ("traded",))
+    out["pnl_total"] = summ["pre_tax"]
+    out["pnl_tax"] = summ["tax"]
+    out["pnl_after_tax"] = summ["after_tax"]
+    out["pnl_tax_by_year"] = summ["tax_by_year"]
     out["pnl_n"] = len(traded)
     out["pnl_by_category"] = _group(traded, "category")
     out["pnl_by_reason"] = _group(traded, "reason")
     cf = _pnl_groups(rows, res, _COUNTERFACTUAL_STAGES, default_size=1.0)
     out["counterfactual_by_stage"] = _group(cf, "stage")
+    out["counterfactual_after_tax"] = pnl_summary(rows, _COUNTERFACTUAL_STAGES, default_size=1.0)
     out["false_negative"] = false_negative_rate(rows)
     out["lambda"] = fit_lambda(rows)
     return out
@@ -247,6 +294,12 @@ def compute_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 def _fmt(x: Any, nd: int = 4) -> str:
     return "n/a" if x is None else f"{x:.{nd}f}"
+
+
+def _tax_desc() -> str:
+    if TAX_MODE == "per_trade":
+        return f"per-trade mode: {int(TAX * 100)}% tax on each winning trade, no offset"
+    return f"annual_offset: {int(TAX * 100)}% of net gains per calendar year, losses offset within the year"
 
 
 def render_stats(s: dict[str, Any]) -> str:
@@ -277,10 +330,12 @@ def render_stats(s: dict[str, Any]) -> str:
     L += [f"| {c['bucket']} | {c['n']} | {_fmt(c['mean_p'], 3)} | {_fmt(c['hit_rate'], 3)} |" for c in s["calibration"]]
     L += [
         "",
-        f"## Realised P&L (traded, {int(TAX * 100)}% tax on profit)",
+        f"## Realised P&L (traded; {_tax_desc()})",
         "",
-        f"Total: **{s['pnl_total']:.2f} USD** over {s['pnl_n']} resolved trades.",
+        f"Pre-tax: **{s['pnl_total']:.2f} USD** over {s['pnl_n']} resolved trades; "
+        f"tax: {s['pnl_tax']:.2f} USD; after-tax: **{s['pnl_after_tax']:.2f} USD**.",
     ]
+    L += [f"- {y}: tax {t:.2f} USD" for y, t in s["pnl_tax_by_year"].items()]
     for title, key in (("Per category", "pnl_by_category"), ("Per stage reason", "pnl_by_reason")):
         L += ["", f"### {title}", "", "| key | n | P&L USD |", "|---|---|---|"]
         L += [f"| {k} | {n} | {v:.2f} |" for k, (n, v) in s[key].items()]
@@ -292,6 +347,8 @@ def render_stats(s: dict[str, Any]) -> str:
         "|---|---|---|",
     ]
     L += [f"| {k} | {n} | {v:.2f} |" for k, (n, v) in s["counterfactual_by_stage"].items()]
+    cfs = s["counterfactual_after_tax"]
+    L += ["", f"Counterfactual total: pre-tax {cfs['pre_tax']:.2f}, tax {cfs['tax']:.2f}, after-tax {cfs['after_tax']:.2f} USD."]
     n_fn, rate = s["false_negative"]
     L += [
         "",
@@ -315,4 +372,4 @@ def write_stats(vault: ObsidianManager) -> None:
     path.write_text(render_stats(compute_stats(rows)), encoding="utf-8")
 
 
-__all__ = ["bet_pnl", "brier_by_directive_version", "failure_class_counts", "compute_stats", "fit_lambda", "realised_pnl", "render_stats", "write_stats"]
+__all__ = ["bet_pnl", "brier_by_directive_version", "failure_class_counts", "compute_stats", "fit_lambda", "pnl_summary", "realised_pnl", "render_stats", "tax_by_year", "write_stats"]

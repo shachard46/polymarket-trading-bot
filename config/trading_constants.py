@@ -2,7 +2,10 @@
 Configuration constants for the Polymarket Trading Pipeline.
 """
 # Allocation & Math Constants (see docs/03_strategy_math.md)
-TAX = 0.25                 # tax on WINNINGS (profit) only; losses do not offset
+TAX = 0.25                 # Israeli capital-gains rate
+# "annual_offset": 25% of NET capital gains per calendar year (losses offset gains within the year);
+#                  trade maths is pre-tax. "per_trade": legacy, tax on each winning trade, no offset.
+TAX_MODE = "annual_offset"
 LAMBDA = 0.3               # shrink of researcher estimate toward market: p_adj = q + LAMBDA*(p - q)
 UNCERTAINTY_WIDTH = 0.5    # p_high - p_low at which the shrink is fully removed
 MIN_EDGE = 0.04            # minimum (p_adj-based) edge on the chosen side
@@ -27,7 +30,7 @@ AIQ_TIMEOUT_SEC = 300.0
 RESEARCH_MAX_QUICK_WIDTH = 0.30     # quick range wider than this is "uninformative" -> escalate
 RESEARCH_SAMPLES = 3                # independent Deep Researcher samples in the FULL stage
 RESEARCH_MAX_SAMPLE_SPREAD = 0.15   # max(p) - min(p) across samples above this -> sample_disagreement
-RESEARCH_MAX_Q_GAP = 0.30           # |p_median - q| above this -> probable_misread
+RESEARCH_MAX_Q_GAP = 0.40           # |p_median - q| above this -> probable_misread (paper-trading: wider)
 RESEARCH_REFRESH_PRICE_MOVE = 0.08  # q moved this much since research -> re-research
 RESEARCH_MIN_TTL_HOURS = 48.0       # refresh TTL = max(48h, days_to_resolution * 24h / 10)
 AIQ_CACHE_TTL_SEC = 24 * 3600       # A-IQ query cache lifetime

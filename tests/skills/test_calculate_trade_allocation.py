@@ -21,17 +21,25 @@ _BASE = dict(q_yes_ask=0.5, L=50_000.0, D=30, bankroll=1000.0)
 
 
 def test_worked_example_yes():
+    # annual_offset (default): pre-tax odds b = (1-c)/c = 1
     out = calc(p=0.8, **_BASE)
     assert out.error is None and out.side == "YES"
     assert out.price == 0.5
     assert out.p_adj == pytest.approx(0.59, abs=1e-6)
     assert out.edge == pytest.approx(0.09, abs=1e-6)
-    assert out.kelly_fraction == pytest.approx(0.0108333333, abs=1e-6)
-    assert out.allocation_usd == pytest.approx(10.8333333, abs=1e-6)
-    assert out.shares == pytest.approx(21.6666667, abs=1e-6)
+    assert out.kelly_fraction == pytest.approx(0.045, abs=1e-6)
+    assert out.allocation_usd == pytest.approx(45.0, abs=1e-6)
+    assert out.shares == pytest.approx(90.0, abs=1e-6)
     assert out.binding_cap == "kelly"
     assert out.below_edge_threshold is False
     assert out.edge_per_day == pytest.approx(0.003, abs=1e-6)
+
+
+def test_worked_example_yes_per_trade():
+    out = calc(p=0.8, tax_mode="per_trade", **_BASE)
+    assert out.kelly_fraction == pytest.approx(0.0108333333, abs=1e-6)
+    assert out.allocation_usd == pytest.approx(10.8333333, abs=1e-6)
+    assert out.shares == pytest.approx(21.6666667, abs=1e-6)
 
 
 def test_worked_example_no():
@@ -39,6 +47,12 @@ def test_worked_example_no():
     assert out.side == "NO" and out.price == 0.48
     assert out.p_adj == pytest.approx(0.41, abs=1e-6)
     assert out.edge == pytest.approx(0.11, abs=1e-6)
+    assert out.allocation_usd == pytest.approx(52.8846154, abs=1e-6)
+    assert out.shares == pytest.approx(110.1762821, abs=1e-6)
+
+
+def test_worked_example_no_per_trade():
+    out = calc(p=0.2, q_no_ask=0.48, tax_mode="per_trade", **_BASE)
     assert out.allocation_usd == pytest.approx(21.3461538, abs=1e-6)
     assert out.shares == pytest.approx(44.4711538, abs=1e-6)
 
@@ -54,10 +68,18 @@ def test_below_min_edge_is_zero():
     assert out.error is None
 
 
-def test_tax_makes_kelly_nonpositive():
-    out = calc(p=0.7, **_BASE)  # edge 0.06 but f* < 0 after tax
-    assert out.allocation_usd == 0.0 and out.below_edge_threshold is False
-    assert out.binding_cap == "kelly_nonpositive"
+def test_small_edge_trades_only_in_annual_offset():
+    # p=0.70, q=0.50: p_adj 0.56, edge 0.06 >= MIN_EDGE
+    out = calc(p=0.7, **_BASE)
+    assert out.allocation_usd > 0 and out.binding_cap == "kelly"
+    assert out.kelly_fraction == pytest.approx(0.25 * 0.12)  # f* = p_s - (1-p_s) at b = 1
+    old = calc(p=0.7, tax_mode="per_trade", **_BASE)  # per-trade tax: f* < 0
+    assert old.allocation_usd == 0.0 and old.below_edge_threshold is False
+    assert old.binding_cap == "kelly_nonpositive"
+
+
+def test_invalid_tax_mode_errors():
+    assert calc(p=0.7, tax_mode="bogus", **_BASE).error
 
 
 def test_wide_range_shrinks_to_zero():

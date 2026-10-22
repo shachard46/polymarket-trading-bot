@@ -314,14 +314,14 @@ def test_sample_disagreement_is_skipped(world, vault):
 def test_probable_misread_is_skipped_with_all_values(world, vault):
     world.market("m1", 0.2)
     _seed(vault, "m1")
-    world.dr_p = 0.55
+    world.dr_p = 0.65  # |p - q| = 0.45 > 0.40
     out = phases.phase3_qualitative_pipeline(vault, runner=world.runner)
     assert out == [] and not vault.active_research_path("m1").exists()
     (skip,) = _skips(vault, "m1")
     assert skip["reason"] == "probable_misread"
-    assert skip["q"] == 0.2 and skip["p"] == 0.55
-    assert skip["p_low"] == pytest.approx(0.47) and skip["p_high"] == pytest.approx(0.63)
-    assert skip["samples"] == [0.55, 0.55, 0.55] and skip["confidence"] == "medium"
+    assert skip["q"] == 0.2 and skip["p"] == 0.65
+    assert skip["p_low"] == pytest.approx(0.57) and skip["p_high"] == pytest.approx(0.73)
+    assert skip["samples"] == [0.65, 0.65, 0.65] and skip["confidence"] == "medium"
     # not retried next tick while q is unchanged
     world.calls.clear()
     phases.phase3_qualitative_pipeline(vault, runner=world.runner)

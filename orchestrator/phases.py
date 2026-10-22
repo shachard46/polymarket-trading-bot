@@ -1702,7 +1702,7 @@ def _post_mortem_payload(
 ) -> dict[str, Any]:
     """Structured Post-Mortem Analyst input: the decision, the outcome and the realised P&L.
 
-    P&L reuses ``stats.bet_pnl`` (after-tax, wins only taxed) so the analyst, the ledger and
+    P&L reuses ``stats.bet_pnl`` (pre-tax per bet in annual_offset mode; the after-tax total is portfolio-level in stats.md) so the analyst, the ledger and
     ``stats.md`` agree. ``None`` fields mean "not available" (e.g. a below-edge market has no bet).
     """
     trade = vault.read_trade_log_dict(market_id) or {}

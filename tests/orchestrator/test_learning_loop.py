@@ -78,8 +78,8 @@ def test_legacy_seed_version_migrates_to_one(tmp_path):
 
 
 def test_write_increments_and_archives_each_version(vault):
-    write(vault, doc(research_max_q_gap=0.33))
-    write(vault, doc("New protocol.", research_max_q_gap=0.33))
+    write(vault, doc(research_max_q_gap=0.36))
+    write(vault, doc("New protocol.", research_max_q_gap=0.36))
     assert ledger.current_directive_version(vault) == 3
     hist = vault.directives_history_dir()
     assert sorted(p.name for p in hist.glob("v*.md")) == ["v1.md", "v2.md", "v3.md"]
@@ -97,7 +97,7 @@ def test_overseer_cannot_set_bookkeeping_frontmatter(vault):
 
 
 def test_ledger_rows_stamp_integer_version(vault):
-    write(vault, doc(research_max_q_gap=0.33))
+    write(vault, doc(research_max_q_gap=0.36))
     row = ledger.record(vault, "m", "gate_reject", q=0.4)
     assert row["directive_version"] == 2 and isinstance(row["directive_version"], int)
 
@@ -116,7 +116,7 @@ def test_bounds_table_has_only_gate_and_research_knobs():
 
 def test_valid_small_change_accepted():
     old = doc()
-    assert validate_directive_change(old, doc(research_max_q_gap=0.33), 2) == ["research_max_q_gap"]
+    assert validate_directive_change(old, doc(research_max_q_gap=0.36), 2) == ["research_max_q_gap"]
     # integer knobs may always move by 1
     assert validate_directive_change(old, doc(min_days_to_resolution=8), 2) == ["min_days_to_resolution"]
     assert validate_directive_change(old, old, 2) == []
@@ -127,16 +127,16 @@ def test_valid_small_change_accepted():
     [
         ({"gate_min_q": 0.031}, {"gate_min_q": 0.029}, "outside"),  # small step, below min
         ({}, {"research_max_q_gap": 0.5}, "outside"),
-        ({}, {"research_max_q_gap": 0.40}, "exceeds"),  # 33% step, in range
+        ({}, {"research_max_q_gap": 0.30}, "exceeds"),  # 25% step, in range
         ({}, {"max_days_to_resolution": 80}, "exceeds"),
         (
             {},
-            {"research_max_q_gap": 0.33, "research_max_sample_spread": 0.16, "gate_min_q": 0.055},
+            {"research_max_q_gap": 0.36, "research_max_sample_spread": 0.16, "gate_min_q": 0.055},
             "3 knobs",
         ),
         ({}, {"mystery_knob": 1}, "unknown filter keys"),
         ({}, {"LAMBDA": 0.5}, "unknown filter keys"),  # sizing is off-limits
-        ({}, {"research_max_q_gap": "'0.33'"}, "not a finite number"),
+        ({}, {"research_max_q_gap": "'0.36'"}, "not a finite number"),
         ({}, {"min_days_to_resolution": 7.5}, "integer"),
     ],
 )
@@ -148,35 +148,35 @@ def test_bounds_rejections(old_kw, new_kw, match):
 
 
 def test_two_knobs_ok_three_rejected(vault):
-    write(vault, doc(research_max_q_gap=0.33, research_max_sample_spread=0.16))
+    write(vault, doc(research_max_q_gap=0.36, research_max_sample_spread=0.16))
     assert ledger.current_directive_version(vault) == 2
 
 
 def test_rejection_keeps_old_directives_and_history(vault):
     before = vault.read_directives()
     with pytest.raises(VaultWriteError):
-        write(vault, doc(research_max_q_gap=0.45))
+        write(vault, doc(research_max_q_gap=0.46))
     assert vault.read_directives() == before
     assert sorted(p.name for p in vault.directives_history_dir().glob("v*.md")) == ["v1.md"]
 
 
 def test_cooldown_blocks_same_knob_for_three_versions(vault):
-    write(vault, doc(research_max_q_gap=0.33))  # v2 changes it
+    write(vault, doc(research_max_q_gap=0.36))  # v2 changes it
     assert fm_of(vault)["knob_last_changed"] == {"research_max_q_gap": 2}
     with pytest.raises(VaultWriteError):  # v3 would be 1 version later
-        write(vault, doc(research_max_q_gap=0.36))
-    write(vault, doc(research_max_q_gap=0.33, gate_min_q=0.055))  # v3: other knob is fine
+        write(vault, doc(research_max_q_gap=0.33))
+    write(vault, doc(research_max_q_gap=0.36, gate_min_q=0.055))  # v3: other knob is fine
     with pytest.raises(VaultWriteError):  # v4: still cooling (2 versions)
-        write(vault, doc(research_max_q_gap=0.36, gate_min_q=0.055))
-    write(vault, doc(research_max_q_gap=0.33, gate_min_q=0.055, research_max_sample_spread=0.16))  # v4
-    write(vault, doc(research_max_q_gap=0.36, gate_min_q=0.055, research_max_sample_spread=0.16))  # v5 ok
+        write(vault, doc(research_max_q_gap=0.33, gate_min_q=0.055))
+    write(vault, doc(research_max_q_gap=0.36, gate_min_q=0.055, research_max_sample_spread=0.16))  # v4
+    write(vault, doc(research_max_q_gap=0.33, gate_min_q=0.055, research_max_sample_spread=0.16))  # v5 ok
     assert ledger.current_directive_version(vault) == 5
     assert fm_of(vault)["knob_last_changed"]["research_max_q_gap"] == 5
 
 
 def test_restore_is_not_bounds_checked(vault):
-    write(vault, doc(research_max_q_gap=0.33))
-    write(vault, doc(research_max_q_gap=0.33, gate_min_q=0.055))
+    write(vault, doc(research_max_q_gap=0.36))
+    write(vault, doc(research_max_q_gap=0.36, gate_min_q=0.055))
     assert vault.restore_directives(1, "test") == 4  # a 2-knob jump is fine for a restore
 
 
@@ -244,7 +244,7 @@ def test_phase6_payload_has_stats_failure_classes_bounds_and_15_post_mortems(vau
     assert payload["stats_md"].startswith("# Stats")
     assert {b["knob"] for b in payload["bounds"]} == set(BOUNDS)
     row = next(b for b in payload["bounds"] if b["knob"] == "research_max_q_gap")
-    assert row["current"] == 0.3 and row["min"] == 0.2 and row["locked"] is False
+    assert row["current"] == 0.4 and row["min"] == 0.2 and row["locked"] is False
 
 
 def test_phase6_applies_valid_change_and_noop_does_not_bump(vault, monkeypatch):
@@ -252,15 +252,15 @@ def test_phase6_applies_valid_change_and_noop_does_not_bump(vault, monkeypatch):
     phases.phase6_macro_learning_loop(vault, runner=Overseer())  # no change proposed
     assert ledger.current_directive_version(vault) == 1
     vault.patch_directives_frontmatter({"last_overseer_at": "2020-01-01T00:00:00+00:00"})
-    phases.phase6_macro_learning_loop(vault, runner=Overseer(doc(research_max_q_gap=0.33)))
+    phases.phase6_macro_learning_loop(vault, runner=Overseer(doc(research_max_q_gap=0.36)))
     assert ledger.current_directive_version(vault) == 2
-    assert effective_knobs(vault.read_directives())["research_max_q_gap"] == 0.33
+    assert effective_knobs(vault.read_directives())["research_max_q_gap"] == 0.36
 
 
 def test_phase6_rejects_whole_doc_on_bounds_violation(vault, monkeypatch, caplog):
     monkeypatch.setenv("OVERSEER_MIN_NEW_RESOLVED", "0")
     before = vault.read_directives()
-    bad = doc("Rewritten protocol.", research_max_q_gap=0.45)  # also edits the protocol text
+    bad = doc("Rewritten protocol.", research_max_q_gap=0.46)  # also edits the protocol text
     phases.phase6_macro_learning_loop(vault, runner=Overseer(bad))
     assert vault.read_directives() == before  # protocol edit rejected with it
     assert "rejected" in caplog.text
@@ -288,10 +288,10 @@ def test_brier_by_directive_version():
 
 
 def test_auto_revert_restores_previous_version_and_skips_overseer(vault, caplog):
-    write(vault, doc(research_max_q_gap=0.33))  # v2
+    write(vault, doc(research_max_q_gap=0.36))  # v2
     _scored_rows(vault, 1, 30, 0.9, "good")  # Brier 0.01
     _scored_rows(vault, 2, 30, 0.6, "bad")  # Brier 0.16
-    run = Overseer(doc(research_max_q_gap=0.30))
+    run = Overseer(doc(research_max_q_gap=0.40))
     with caplog.at_level("ERROR"):
         phases.phase6_macro_learning_loop(vault, runner=run)
     assert run.payloads == []  # Overseer skipped this run
@@ -299,7 +299,7 @@ def test_auto_revert_restores_previous_version_and_skips_overseer(vault, caplog)
     assert ledger.current_directive_version(vault) == 3
     fm = fm_of(vault)
     assert fm["restored_from"] == 1 and "auto-revert" in fm["restore_note"]
-    assert effective_knobs(vault.read_directives())["research_max_q_gap"] == 0.3
+    assert effective_knobs(vault.read_directives())["research_max_q_gap"] == 0.4
     assert (vault.directives_history_dir() / "v3.md").exists()
     # the restored version is never itself auto-reverted
     phases.phase6_macro_learning_loop(vault, runner=run)
@@ -311,7 +311,7 @@ def test_auto_revert_restores_previous_version_and_skips_overseer(vault, caplog)
     [(29, 0.6), (30, 0.85)],  # too few samples; or Brier 0.0225 vs 0.01 (worse by < 0.02)
 )
 def test_no_auto_revert(vault, n_cur, p_cur):
-    write(vault, doc(research_max_q_gap=0.33))
+    write(vault, doc(research_max_q_gap=0.36))
     _scored_rows(vault, 1, 30, 0.9, "good")
     _scored_rows(vault, 2, n_cur, p_cur, "cur")
     phases.phase6_macro_learning_loop(vault, runner=Overseer())
@@ -326,8 +326,8 @@ def test_replay_directives_cli_restores_as_new_version(tmp_path, capsys):
     v = ObsidianManager(vault_base=tmp_path)
     v.cold_start_protocol()
     v1_text = v.read_directives()
-    write(v, doc("Second.", research_max_q_gap=0.33))
-    write(v, doc("Third.", research_max_q_gap=0.33, gate_min_q=0.055))
+    write(v, doc("Second.", research_max_q_gap=0.36))
+    write(v, doc("Third.", research_max_q_gap=0.36, gate_min_q=0.055))
     assert replay.main(["--directives", "1", "--vault-path", str(tmp_path)]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out == {"restored_from": 1, "new_version": 4}
@@ -397,10 +397,10 @@ def test_phase3_sample_spread_and_q_gap_follow_directives(monkeypatch, vault):
     write(vault, doc(research_max_sample_spread=0.25), enforce_bounds=False)
     assert len(ran("s_loose", 0.42, spread_p)) == 1
 
-    # |p - q| = 0.35: a misread by default, fine with a 0.40 gap knob
-    assert ran("g_default", 0.20, 0.55) == []
-    write(vault, doc(research_max_sample_spread=0.25, research_max_q_gap=0.40), enforce_bounds=False)
-    assert len(ran("g_loose", 0.20, 0.55)) == 1
+    # |p - q| = 0.45: a misread by default (gap 0.40), fine with a 0.46 gap knob
+    assert ran("g_default", 0.20, 0.65) == []
+    write(vault, doc(research_max_sample_spread=0.25, research_max_q_gap=0.46), enforce_bounds=False)
+    assert len(ran("g_loose", 0.20, 0.65)) == 1
 
 
 # --- Phase 5: post-mortem payload + failure_class ---------------------------
@@ -459,7 +459,7 @@ def test_post_mortem_payload_fields_and_persistence(vault, monkeypatch):
     assert payload["q_entry"] == 0.4 and payload["side"] == "YES" and payload["price"] == 0.4
     assert payload["size_usd"] == 10.0 and payload["outcome_yes"] == 1
     expected = stats.bet_pnl({"price": 0.4, "size_usd": 10.0, "side": "YES"}, 1)
-    assert payload["realised_pnl_usd"] == pytest.approx(expected) == pytest.approx(11.25)
+    assert payload["realised_pnl_usd"] == pytest.approx(expected) == pytest.approx(15.0)  # pre-tax
     assert payload["category"] == "politics" and payload["gate_score"] == 0.81
     assert payload["research_confidence"] == "high"
     assert payload["resolution_checklist"] == ["YES needs the titled event"]
@@ -468,7 +468,7 @@ def test_post_mortem_payload_fields_and_persistence(vault, monkeypatch):
     # failure_class: post-mortem frontmatter + a ledger `post_mortem` row
     assert vault.read_market_record("0xpm", "post_mortem")["failure_class"] == "variance"
     (row,) = [r for r in ledger.iter_rows(vault) if r["stage"] == "post_mortem"]
-    assert row["failure_class"] == "variance" and row["pnl_usd"] == pytest.approx(11.25)
+    assert row["failure_class"] == "variance" and row["pnl_usd"] == pytest.approx(15.0)
     assert row["outcome_yes"] == 1 and row["category"] == "politics"
     assert stats.failure_class_counts(list(ledger.iter_rows(vault))) == {"variance": 1}
     # the post_mortem row does not disturb the decision bookkeeping
