@@ -258,6 +258,22 @@ def _briefer_stub(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _web_searcher_stub(payload: dict[str, Any]) -> dict[str, Any]:
+    today = payload.get("today", "")
+    return {
+        "market_id": payload.get("market_id", "stub"),
+        "results": [
+            {
+                "query": q,
+                "research_data": f"stub web finding for: {q} (source: example.org, {today})",
+                "error": None,
+            }
+            for q in payload.get("queries") or []
+        ],
+        "error": None,
+    }
+
+
 def _deep_researcher_stub(payload: dict[str, Any]) -> dict[str, Any]:
     market_id = payload.get("market_id", "stub")
     today = payload.get("today") or "2026-01-01"
@@ -309,6 +325,7 @@ def _overseer_stub(payload: dict[str, Any]) -> dict[str, Any]:
 STUB_RESPONSES: dict[str, StubBuilder] = {
     "triage": _triage_stub,
     "briefer": _briefer_stub,
+    "web_searcher": _web_searcher_stub,
     "deep_researcher": _deep_researcher_stub,
     "post_mortem_analyst": _post_mortem_stub,
     "overseer": _overseer_stub,

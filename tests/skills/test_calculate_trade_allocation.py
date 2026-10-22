@@ -17,6 +17,15 @@ _mod = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_mod)
 calc = _mod.calculate_trade_allocation
 
+import config.trading_constants as _tc
+
+
+@pytest.fixture(autouse=True)
+def _live_sizing(monkeypatch):
+    """The worked examples are the live (LAMBDA / MIN_EDGE) numbers."""
+    monkeypatch.setattr(_tc, "PAPER_TRADE_MODE", False)
+
+
 _BASE = dict(q_yes_ask=0.5, L=50_000.0, D=30, bankroll=1000.0)
 
 
@@ -161,3 +170,27 @@ def test_invalid_inputs_error(override):
     out = calc(**args)
     assert out.error and "invalid input" in out.error
     assert out.allocation_usd == 0.0 and out.below_edge_threshold is None
+
+
+def test_effective_helpers_follow_paper_mode(monkeypatch):
+    monkeypatch.setattr(_tc, "PAPER_TRADE_MODE", True)
+    assert (_tc.effective_lambda(), _tc.effective_min_edge()) == (_tc.PAPER_LAMBDA, _tc.PAPER_MIN_EDGE)
+    monkeypatch.setattr(_tc, "PAPER_TRADE_MODE", False)
+    assert (_tc.effective_lambda(), _tc.effective_min_edge()) == (_tc.LAMBDA, _tc.MIN_EDGE)
+
+
+def test_paper_trades_where_live_is_below_edge(monkeypatch):
+    kw = dict(p=0.42, q_yes_ask=0.29, L=50_000.0, D=30, bankroll=1000.0)
+    live = calc(**kw)  # fixture: live
+    assert live.below_edge_threshold is True and live.allocation_usd == 0.0
+    assert (live.lam, live.min_edge) == (_tc.LAMBDA, _tc.MIN_EDGE)
+    monkeypatch.setattr(_tc, "PAPER_TRADE_MODE", True)
+    paper = calc(**kw)
+    assert paper.below_edge_threshold is False and paper.allocation_usd > 0
+    assert paper.side == "YES"
+    assert (paper.lam, paper.min_edge) == (_tc.PAPER_LAMBDA, _tc.PAPER_MIN_EDGE)
+
+
+def test_explicit_min_edge_overrides_default():
+    out = calc(p=0.42, q_yes_ask=0.29, L=50_000.0, D=30, bankroll=1000.0, min_edge=0.03)
+    assert out.below_edge_threshold is False and out.min_edge == 0.03

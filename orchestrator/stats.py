@@ -99,6 +99,23 @@ def brier_by_directive_version(rows: list[dict[str, Any]]) -> dict[int, tuple[in
     }
 
 
+def brier_by_evidence_source(rows: list[dict[str, Any]]) -> dict[str, tuple[int, float, float]]:
+    """``{evidence_source: (n, brier_p, brier_p - brier_q)}`` over resolved scored markets.
+
+    Attributed via the latest scored decision row's ``evidence_source`` (``unknown`` if absent).
+    """
+    res = resolutions(rows)
+    groups: dict[str, list[tuple[float, float, int]]] = defaultdict(list)
+    for m, r in _latest_scored(rows).items():
+        groups[str(r.get("evidence_source") or "unknown")].append((_num(r["p"]), _num(r["q"]), res[m]))
+    out = {}
+    for src, t in sorted(groups.items()):
+        ys = [y for _, _, y in t]
+        bp = brier([p for p, _, _ in t], ys)
+        out[src] = (len(t), bp, bp - brier([q for _, q, _ in t], ys))
+    return out
+
+
 def failure_class_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
     """Count of the latest ``post_mortem`` row's ``failure_class`` per market."""
     latest: dict[str, str] = {}
@@ -275,6 +292,7 @@ def compute_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
             brier_diff_ci=bootstrap_diff_ci(triples),
         )
     out["calibration"] = calibration_table(triples)
+    out["brier_by_evidence_source"] = brier_by_evidence_source(rows)
     traded = _pnl_groups(rows, res, ("traded",))
     summ = pnl_summary(rows, ("traded",))
     out["pnl_total"] = summ["pre_tax"]
@@ -326,6 +344,11 @@ def render_stats(s: dict[str, Any]) -> str:
         ]
     else:
         L.append("No resolved markets with both p and q yet.")
+    L += ["", "### Brier by evidence source", "", "| evidence_source | n | Brier(p) | Brier(p) - Brier(q) |", "|---|---|---|---|"]
+    L += [
+        f"| {k} | {n} | {_fmt(bp)} | {_fmt(d)} |"
+        for k, (n, bp, d) in s.get("brier_by_evidence_source", {}).items()
+    ]
     L += ["", "## Calibration (p in 10% buckets)", "", "| bucket | n | mean p | hit rate |", "|---|---|---|---|"]
     L += [f"| {c['bucket']} | {c['n']} | {_fmt(c['mean_p'], 3)} | {_fmt(c['hit_rate'], 3)} |" for c in s["calibration"]]
     L += [
@@ -372,4 +395,4 @@ def write_stats(vault: ObsidianManager) -> None:
     path.write_text(render_stats(compute_stats(rows)), encoding="utf-8")
 
 
-__all__ = ["bet_pnl", "brier_by_directive_version", "failure_class_counts", "compute_stats", "fit_lambda", "pnl_summary", "realised_pnl", "render_stats", "tax_by_year", "write_stats"]
+__all__ = ["bet_pnl", "brier_by_evidence_source", "brier_by_directive_version", "failure_class_counts", "compute_stats", "fit_lambda", "pnl_summary", "realised_pnl", "render_stats", "tax_by_year", "write_stats"]

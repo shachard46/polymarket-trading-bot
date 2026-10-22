@@ -73,7 +73,7 @@ Validated by the Hub: all probabilities in `[0, 1]` and `p_low <= estimated_p <=
 
 **Hub caps (Forensic Pipeline):** FULL stage: **1 round + 1 follow-up round** (`MAX_RESEARCH_ITERATIONS = 2`), then forced synthesis requiring `status: complete`; 3 samples per market; per-query `research_data` capped at **4000** characters; A-IQ poll timeout **`AIQ_TIMEOUT_SEC`**; A-IQ results cached 24h.
 
-Hub persistence: cumulative A-IQ results live in `02_Active_Research/research_bundles/{market_id}.json`; the query cache in `02_Active_Research/aiq_cache.json`.
+Hub persistence: cumulative A-IQ results live in `02_Active_Research/research_bundles/{market_id}.json`; the query caches in `02_Active_Research/aiq_cache.json` and `web_cache.json` (web arm, see `docs/02`). The bundle envelope also stores `evidence_source` / `evidence_fallback`.
 
 ## 4. Trade execution (no agent)
 
@@ -118,6 +118,7 @@ After the Wave 3 research redesign lands, sync each OpenClaw workspace from [`ag
 
 | Role | OpenClaw agent id | Critical contract changes |
 |------|-------------------|---------------------------|
+| **web_searcher** | `polymarket-web-searcher` | Spoke for the `web` evidence arm. Input `{market_id, queries: list[str], today}`; tools `web_search`, `web_fetch`. Output `{market_id, results: [{query, research_data (<= 4000 chars, sourced and dated facts), error}], error}`. Price-blind: it must never report prediction-market or betting prices/odds; the Hub also redacts such lines. |
 | **briefer** | `polymarket-briefer` | Input is price-blind text (`title`, `description`, `resolution_source`, `end_date`, `category`, `today`). Output `research_queries`: exactly 4 fixed-slot strings with `as of {today}`. `tools.allow` is empty — Hub runs `execute_aiq_query`. |
 | **deep_researcher** | `polymarket-deep-researcher` | Price-blind input (no `q`), `mode`, `session_tag`. Complete output adds `p_low`, `p_high`, `confidence`, `resolution_checklist`, `key_assumptions`, `as_of`. JSON state machine, no agent tools. |
 | **executioner** | `polymarket-executioner` | **Removed.** Phase 4 is deterministic Hub code; delete this OpenClaw agent workspace. |

@@ -10,7 +10,7 @@ $$p_{adj}=q+\lambda\,(p-q)\cdot\max\!\Big(0,\,1-\frac{p_{high}-p_{low}}{0.5}\Big
 The range factor is 1 when no range is given; a range of width $\ge 0.5$ collapses $p_{adj}$ to $q$ (no trade).
 
 ## Step 2: Side and edge
-$e_{YES}=p_{adj}-c_{YES}$, $e_{NO}=(1-p_{adj})-c_{NO}$ (with $c_{YES}=q_{yes\_ask}$, $c_{NO}=q_{no\_ask}$). Take the larger edge; require $e\ge$ `MIN_EDGE` $=0.04$, else allocation 0 and `below_edge_threshold=true`.
+$e_{YES}=p_{adj}-c_{YES}$, $e_{NO}=(1-p_{adj})-c_{NO}$ (with $c_{YES}=q_{yes\_ask}$, $c_{NO}=q_{no\_ask}$). Take the larger edge; require $e\ge$ `MIN_EDGE` $=0.04$ (live), else allocation 0 and `below_edge_threshold=true`.
 
 ## Step 3: Kelly
 Buying one share at price $c$ paying 1.
@@ -47,3 +47,7 @@ $p=0.70$, $q=0.50$: $p_{adj}=0.56$, edge 0.06 $\ge$ 0.04. `annual_offset`: $f^*=
 
 ## Effective minimum $|p-q|$ to trade
 Edge gate: $\lambda\,|p-q|\ge$ `MIN_EDGE` (no range) -> $|p-q|\ge 0.04/0.3\approx0.133$ in `annual_offset` mode at any $q$ (also bounded by the 0.40 misread gap above). Legacy `per_trade` needs $|p-q|\approx0.238$ at $q=0.5$ (YES or NO), $\approx0.167$ (YES) / $0.141$ (NO) at $q=0.2$. A range narrows the shrink and raises the bar.
+
+## Paper-only sizing overrides
+
+While `PAPER_TRADE_MODE` is true the skill defaults to the looser `PAPER_LAMBDA = 0.5` and `PAPER_MIN_EDGE = 0.03` (via `effective_lambda()` / `effective_min_edge()`, read at call time) so outcomes accumulate faster for `fit_lambda`. Live (`PAPER_TRADE_MODE = False`) uses `LAMBDA = 0.3` / `MIN_EDGE = 0.04`, unchanged. Example: $p=0.42$, YES ask $0.29$ gives $e=0.065$ in paper (trades) but $0.039$ live (`below_edge`). `traded` / `below_edge` ledger rows record the `lam` and `min_edge` used.

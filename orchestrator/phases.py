@@ -42,7 +42,7 @@ from config.trading_constants import (
     RESEARCH_REFRESH_PRICE_MOVE,
     RESEARCH_SAMPLES,
 )
-from orchestrator import gate, ledger, polymarket_api, scraper, stats
+from orchestrator import evidence, gate, ledger, polymarket_api, scraper, stats
 from orchestrator.config import (
     OVERSEER_INTERVAL_SEC,
     PAPER_TRADE_MODE,
@@ -78,7 +78,12 @@ from orchestrator.agent_outputs import (
 )
 from orchestrator.aiq_bundle import fetch_research_bundle, fetch_research_bundle_cached
 from orchestrator.live_prompt import today_date
-from orchestrator.config import FORCED_SYNTHESIS_OVERRIDE, MAX_RESEARCH_ITERATIONS
+from orchestrator.config import (
+    EVIDENCE_AB,
+    FORCED_SYNTHESIS_OVERRIDE,
+    MAX_RESEARCH_ITERATIONS,
+    evidence_source,
+)
 from orchestrator.parse import (
     AgentOutputParseError,
     agent_error_reason,
@@ -878,14 +883,38 @@ def _fetch_and_persist_bundle(
     vault: ObsidianManager,
     market_id: str,
     queries: list[str],
-) -> None:
+    runner: AgentRunner = spawn_agent,
+    today: str | None = None,
+) -> dict[str, Any]:
+    """Fetch evidence for ``queries`` (A-IQ or web searcher) and persist the bundle.
+
+    The source is the market's recorded one (follow-up queries stay on it), else chosen by
+    ``OPENCLAW_EVIDENCE_SOURCE`` (``ab``: stable per-market arm). In ``ab`` mode an A-IQ arm
+    whose rows all failed falls back to web. Returns ``{evidence_source, evidence_fallback}``.
+    """
     cleaned = [str(q).strip() for q in queries if str(q).strip()]
+    stored = vault.read_research_bundle_meta(market_id)
     if not cleaned:
-        return
-    results = fetch_research_bundle_cached(
-        cleaned, _aiq_cache_path(vault), fetch=fetch_research_bundle
-    )
-    vault.write_research_bundle(market_id, results)
+        return stored
+    source = stored.get("evidence_source") or evidence.intended_source(market_id)
+    fallback = bool(stored.get("evidence_fallback"))
+    when = today or today_date()
+
+    def web() -> list[dict[str, Any]]:
+        return evidence.fetch_web_bundle(runner, vault, market_id, cleaned, when)
+
+    if source == evidence.AIQ:
+        results = fetch_research_bundle_cached(
+            cleaned, _aiq_cache_path(vault), fetch=fetch_research_bundle
+        )
+        if evidence_source() == EVIDENCE_AB and not evidence.rows_usable(results):
+            log.warning("[PHASE 3] A-IQ arm failed for %s; falling back to web search", market_id)
+            results, source, fallback = web(), evidence.WEB, True
+    else:
+        results = web()
+    meta = {"evidence_source": source, "evidence_fallback": fallback}
+    vault.write_research_bundle(market_id, results, meta=meta)
+    return meta
 
 
 def _invoke_deep_researcher(
@@ -1028,7 +1057,10 @@ def _quick_stage(
     if _check_complete(vault, market_id, out) is None:
         return "failed"
 
-    values = {"q": q, "p": out.estimated_p, "p_low": out.p_low, "p_high": out.p_high}
+    values = {
+        "q": q, "p": out.estimated_p, "p_low": out.p_low, "p_high": out.p_high,
+        "evidence_source": "none",  # the quick stage sees no evidence bundle
+    }
     knobs = extract_filter_directives(directives)
     if quick_decision(out.p_low, out.p_high, q, knobs["research_max_quick_width"]) == "no_divergence":
         _skip_research(vault, row, "quick", "no_divergence", **values)
@@ -1064,7 +1096,9 @@ def _research_loop(
             return None
         if isinstance(last_out, DeepResearcherComplete):
             return last_out
-        _fetch_and_persist_bundle(vault, market_id, list(last_out.new_queries))
+        _fetch_and_persist_bundle(
+            vault, market_id, list(last_out.new_queries), runner, today
+        )
 
     override_in = _dr_payload(
         row, directives, vault.read_research_bundle(market_id) or [],
@@ -1123,6 +1157,7 @@ def _research_market(
     *,
     refresh: bool = False,
     shared_bundle: list[dict[str, Any]] | None = None,
+    shared_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """FULL stage for one market: Briefer -> A-IQ -> Deep Researcher x3 -> Hub decision.
 
@@ -1136,14 +1171,14 @@ def _research_market(
 
     if shared_bundle:  # same-event sibling: reuse the first market's evidence
         vault.clear_research_bundle(market_id)
-        vault.write_research_bundle(market_id, shared_bundle)
+        vault.write_research_bundle(market_id, shared_bundle, meta=shared_meta)
     elif refresh or not _bundle_has_entries(vault.read_research_bundle(market_id)):
         if refresh:
             vault.clear_research_bundle(market_id)
         queries = _plan_research_queries(vault, runner, row, today)
         if queries is None:
             return None
-        _fetch_and_persist_bundle(vault, market_id, queries)
+        _fetch_and_persist_bundle(vault, market_id, queries, runner, today)
 
     lead = _research_loop(vault, runner, row, directives, today, "s1")
     if lead is None:
@@ -1166,9 +1201,13 @@ def _research_market(
         return None
 
     agg = aggregate_samples(samples)
+    ev_meta = vault.read_research_bundle_meta(market_id)
+    ev_source = ev_meta.get("evidence_source") or evidence.AIQ  # legacy bundles were A-IQ
+    ev_fallback = bool(ev_meta.get("evidence_fallback"))
     values = {
         "q": q, "p": agg["p"], "p_low": agg["p_low"], "p_high": agg["p_high"],
         "samples": agg["samples"], "spread": agg["spread"], "confidence": agg["confidence"],
+        "evidence_source": ev_source, "evidence_fallback": ev_fallback,
     }
     knobs = extract_filter_directives(directives)
     if agg["spread"] > knobs["research_max_sample_spread"]:
@@ -1194,6 +1233,8 @@ def _research_market(
         "end_date": md.get("end_date"),
         "days_at_research": _as_float(md.get("days_to_resolution")),
         "samples": agg["samples"],
+        "evidence_source": ev_source,
+        "evidence_fallback": ev_fallback,
     }
     if not vault_write_or_flag(
         vault=vault,
@@ -1211,6 +1252,8 @@ def _research_market(
         "p_low": agg["p_low"],
         "p_high": agg["p_high"],
         "market_data": md,
+        "evidence_source": ev_source,
+        "evidence_fallback": ev_fallback,
     }
 
 
@@ -1237,6 +1280,7 @@ def _run_full_stage(
     def run_group(group: list[_Job]) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         shared: list[dict[str, Any]] | None = None
+        shared_meta: dict[str, Any] | None = None
         for job in group:
             if abort.is_set():
                 break
@@ -1250,7 +1294,7 @@ def _run_full_stage(
                 with market_quarantine(vault, job.market_id, "phase3"):
                     result = _research_market(
                         vault, runner, job.row, directives,
-                        refresh=job.refresh, shared_bundle=shared,
+                        refresh=job.refresh, shared_bundle=shared, shared_meta=shared_meta,
                     )
             except InfraUnavailable:
                 abort.set()
@@ -1259,6 +1303,7 @@ def _run_full_stage(
                 leader_bundle = vault.read_research_bundle(job.market_id)
                 if _bundle_has_entries(leader_bundle):
                     shared = leader_bundle
+                    shared_meta = vault.read_research_bundle_meta(job.market_id)
             if result is not None:
                 out.append(result)
         return out
@@ -1511,6 +1556,8 @@ def _phase4_queue(
                     "p_value": p_value,
                     "p_low": _as_float(fm.get("p_low")),
                     "p_high": _as_float(fm.get("p_high")),
+                    "evidence_source": fm.get("evidence_source"),
+                    "evidence_fallback": fm.get("evidence_fallback"),
                     "market_data": fresh.market_data,
                 },
                 False,
@@ -1661,6 +1708,10 @@ def phase4_execution(
                     depth_usd=bought.get("depth_usd_within_2c"),
                     shares=allocation.get("shares"),
                     size_usd=size_usd,
+                    evidence_source=row.get("evidence_source"),
+                    evidence_fallback=row.get("evidence_fallback"),
+                    lam=allocation.get("lam"),
+                    min_edge=allocation.get("min_edge"),
                     **_ledger_market_fields(market_data),
                 )
 

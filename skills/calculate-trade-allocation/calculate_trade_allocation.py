@@ -11,14 +11,14 @@ from config.trading_constants import (
     EVENT_CAP,
     F_MAX,
     KELLY_FRAC,
-    LAMBDA,
     LIQ_FRAC,
-    MIN_EDGE,
     MIN_ORDER_USD,
     TAX,
     TAX_MODE,
     TOTAL_EXPOSURE_CAP,
     UNCERTAINTY_WIDTH,
+    effective_lambda,
+    effective_min_edge,
 )
 
 
@@ -35,7 +35,8 @@ class CalculateTradeAllocationInput(BaseModel):
     bankroll: float = Field(gt=0)
     open_exposure_total: float = Field(default=0.0, ge=0)
     open_exposure_event: float = Field(default=0.0, ge=0)
-    lam: float = Field(default=LAMBDA, ge=0, le=1)
+    lam: float = Field(default_factory=effective_lambda, ge=0, le=1)
+    min_edge: float = Field(default_factory=effective_min_edge, ge=0, le=1)
     tax_mode: str = TAX_MODE  # "annual_offset" | "per_trade"
 
     @model_validator(mode="after")
@@ -53,7 +54,7 @@ class CalculateTradeAllocationInput(BaseModel):
 
 
 class CalculateTradeAllocationOutput(BaseModel):
-    """``below_edge_threshold`` is ``True`` iff best edge < MIN_EDGE; ``None`` on error."""
+    """``below_edge_threshold`` is ``True`` iff best edge < ``min_edge``; ``None`` on error."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -68,6 +69,8 @@ class CalculateTradeAllocationOutput(BaseModel):
     binding_cap: str | None
     edge_per_day: float
     error: str | None
+    lam: float | None = None       # shrink actually used
+    min_edge: float | None = None  # edge gate actually used
 
 
 def _error(message: str) -> CalculateTradeAllocationOutput:
@@ -90,6 +93,7 @@ def calculate_trade_allocation(
     p_high: float | None = None,
     q_no_ask: float | None = None,
     lam: float | None = None,
+    min_edge: float | None = None,
     q: float | None = None,
     tax_mode: str | None = None,
 ) -> CalculateTradeAllocationOutput:
@@ -103,6 +107,7 @@ def calculate_trade_allocation(
             open_exposure_total=open_exposure_total,
             open_exposure_event=open_exposure_event,
             **({} if lam is None else {"lam": lam}),
+            **({} if min_edge is None else {"min_edge": min_edge}),
             **({} if tax_mode is None else {"tax_mode": tax_mode}),
         )
     except ValidationError as exc:
@@ -134,9 +139,10 @@ def calculate_trade_allocation(
                 shares=alloc / price if alloc > 0 else 0.0, p_adj=p_adj, edge=edge,
                 kelly_fraction=kelly, below_edge_threshold=below, binding_cap=cap,
                 edge_per_day=edge_per_day, error=None,
+                lam=args.lam, min_edge=args.min_edge,
             )
 
-        if edge < MIN_EDGE:
+        if edge < args.min_edge:
             return out(below=True, cap="min_edge")
 
         # annual_offset: odds are pre-tax. The annual tax scales wins and losses alike at portfolio

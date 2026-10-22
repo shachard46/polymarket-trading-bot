@@ -140,6 +140,8 @@ class ResearchFrontmatter(BaseModel):
     end_date: Optional[str] = None
     days_at_research: Optional[float] = None
     samples: list[float] = []
+    evidence_source: Optional[str] = None
+    evidence_fallback: Optional[bool] = None
     status: Optional[str] = None
     error_log: Optional[dict[str, Any]] = None
 
@@ -919,10 +921,22 @@ class ObsidianManager:
             return []
         return [q for q in queries if isinstance(q, dict)]
 
+    def read_research_bundle_meta(self, market_id: str) -> dict[str, Any]:
+        """``{evidence_source, evidence_fallback}`` stored with the bundle (empty if absent)."""
+        path = self._research_bundle_path(market_id)
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        if not isinstance(raw, dict):
+            return {}
+        return {k: raw[k] for k in ("evidence_source", "evidence_fallback") if k in raw}
+
     def write_research_bundle(
         self,
         market_id: str,
         bundle: list[dict[str, Any]],
+        meta: dict[str, Any] | None = None,
     ) -> Path:
         """Write or merge A-IQ results under ``research_bundles/{market_id}.json``.
 
@@ -949,6 +963,8 @@ class ObsidianManager:
             "fetched_at": datetime.now(tz=timezone.utc).isoformat(),
             "queries": merged,
         }
+        stored = self.read_research_bundle_meta(market_id) if path.exists() else {}
+        envelope.update({**stored, **(meta or {})})
         _atomic_write_text(path, json.dumps(envelope, indent=2))
         return path
 

@@ -37,3 +37,9 @@ def _stub_clob_quotes(monkeypatch):
     monkeypatch.setattr(polymarket_api, "executable_quote", _fake_quote)
     yield
     QUOTE_HINTS.clear()
+
+
+@pytest.fixture(autouse=True)
+def _aiq_evidence_by_default(monkeypatch):
+    """Existing phase tests exercise the A-IQ path; evidence tests override the env."""
+    monkeypatch.setenv("OPENCLAW_EVIDENCE_SOURCE", "aiq")

@@ -113,6 +113,28 @@ def research_tick_budget_sec() -> int:
     return _int_env(RESEARCH_TICK_BUDGET_ENV, DEFAULT_RESEARCH_TICK_BUDGET_SEC)
 
 
+# Phase 3 evidence source: A-IQ, a price-blind web searcher agent, or a stable per-market A/B.
+EVIDENCE_SOURCE_ENV = "OPENCLAW_EVIDENCE_SOURCE"
+EVIDENCE_AIQ = "aiq"
+EVIDENCE_WEB = "web"
+EVIDENCE_AB = "ab"
+_VALID_EVIDENCE_SOURCES = frozenset({EVIDENCE_AIQ, EVIDENCE_WEB, EVIDENCE_AB})
+DEFAULT_EVIDENCE_SOURCE = EVIDENCE_AB
+
+
+def evidence_source() -> str:
+    """``aiq`` | ``web`` | ``ab`` (default ``ab``); read at call time. Unknown values raise."""
+    mode = os.environ.get(EVIDENCE_SOURCE_ENV, DEFAULT_EVIDENCE_SOURCE).strip().lower()
+    if mode not in _VALID_EVIDENCE_SOURCES:
+        raise ValueError(
+            f"Invalid {EVIDENCE_SOURCE_ENV}={mode!r}; expected one of "
+            f"{sorted(_VALID_EVIDENCE_SOURCES)}"
+        )
+    return mode
+
+
+EVIDENCE_SOURCE = evidence_source()  # import-time snapshot; phases call evidence_source()
+
 OVERSEER_MIN_NEW_RESOLVED_ENV = "OVERSEER_MIN_NEW_RESOLVED"
 DEFAULT_OVERSEER_MIN_NEW_RESOLVED = 30
 

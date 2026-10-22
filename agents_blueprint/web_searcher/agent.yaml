@@ -1,0 +1,16 @@
+id: web_searcher
+openclaw_agent_id: polymarket-web-searcher
+description: Price-blind web evidence gatherer — runs the Briefer's queries and reports sourced, dated facts (never market prices or odds).
+model: null
+tools:
+  allow: [web_search, web_fetch]
+input_schema:
+  market_id: string
+  queries: list[str]
+  today: string
+output_schema:
+  market_id: string
+  results: list[dict]
+  error: "string | null"
+live_response_hint: |
+  Return raw JSON only: {"market_id":"...","results":[{"query":"<exact input query>","research_data":"<=4000 chars of factual findings, each with source and date>","error":null}],"error":null}. One result per input query, same text. NEVER report prediction-market or betting prices/odds.

@@ -68,6 +68,21 @@ AUTO_REVERT_BRIER_WORSE_BY = 0.02   # current Brier worse than previous by more 
 # Execution Safety
 PAPER_TRADE_MODE = True  # If True, execute_polymarket_trade logs the trade but does NOT hit the live API
 
+# Paper-only sizing overrides: looser while PAPER_TRADE_MODE, to collect outcomes faster for
+# fit_lambda; live uses LAMBDA / MIN_EDGE.
+PAPER_LAMBDA = 0.5
+PAPER_MIN_EDGE = 0.03
+
+
+def effective_lambda() -> float:
+    """PAPER_LAMBDA iff PAPER_TRADE_MODE (read at call time), else LAMBDA."""
+    return PAPER_LAMBDA if PAPER_TRADE_MODE else LAMBDA
+
+
+def effective_min_edge() -> float:
+    """PAPER_MIN_EDGE iff PAPER_TRADE_MODE (read at call time), else MIN_EDGE."""
+    return PAPER_MIN_EDGE if PAPER_TRADE_MODE else MIN_EDGE
+
 # Orchestrator Scheduling (in seconds)
 PIPELINE_INTERVAL_SEC = 5 * 3600       # 5 hours
 OVERSEER_INTERVAL_SEC = 24 * 3600      # 24 hours
