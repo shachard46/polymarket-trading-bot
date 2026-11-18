@@ -6,10 +6,6 @@ import json
 
 import pytest
 
-from orchestrator.agent_outputs import (
-    DeepResearcherComplete,
-    parse_deep_researcher_json,
-)
 from orchestrator.parse import (
     AgentOutputParseError,
     coerce_deep_researcher_state_machine,
@@ -17,11 +13,11 @@ from orchestrator.parse import (
     normalize_structured_output,
     parse_agent_json_or_yaml,
 )
+from orchestrator.research import parse_deep_researcher
 from orchestrator.runner import _stub_deep_researcher_markdown
 from orchestrator.schema_validation import build_model, validate_payload
 
-
-PADDED_EVALUATOR_OUTPUT = """All values match the prompt data. The evaluation is confirmed. Here's the result:
+PADDED_TRIAGE_OUTPUT = """All values match the prompt data. The evaluation is confirmed. Here's the result:
 
 ```json
 {
@@ -36,8 +32,8 @@ PADDED_EVALUATOR_OUTPUT = """All values match the prompt data. The evaluation is
 **Summary:** The market passed the **volume_shock** filter."""
 
 
-def test_parse_padded_evaluator_output_with_fenced_json():
-    parsed = parse_agent_json_or_yaml(PADDED_EVALUATOR_OUTPUT)
+def test_parse_padded_triage_output_with_fenced_json():
+    parsed = parse_agent_json_or_yaml(PADDED_TRIAGE_OUTPUT)
     assert parsed["passed"] is True
     assert parsed["trigger"] == "volume_shock"
     assert parsed["confidence_multiplier"] == 1.0
@@ -55,7 +51,7 @@ def test_parse_raw_json_object():
 
 
 def test_extract_fenced_block_from_prose():
-    body = extract_fenced_block(PADDED_EVALUATOR_OUTPUT)
+    body = extract_fenced_block(PADDED_TRIAGE_OUTPUT)
     assert body is not None
     assert body.startswith("{")
     assert '"passed": true' in body
@@ -71,7 +67,7 @@ def test_normalize_structured_output_backfills_market_id():
         "error": None,
     }
     out = normalize_structured_output(
-        "evaluator",
+        "triage",
         payload,
         parsed,
         output_schema={"market_id": "string", "passed": "boolean"},
@@ -83,7 +79,7 @@ def test_normalize_structured_output_skips_when_market_id_present():
     payload = {"market_id": "0xabc"}
     parsed = {"market_id": "0xdef", "passed": False}
     out = normalize_structured_output(
-        "evaluator",
+        "triage",
         payload,
         parsed,
         output_schema={"market_id": "string"},
@@ -91,11 +87,11 @@ def test_normalize_structured_output_skips_when_market_id_present():
     assert out["market_id"] == "0xdef"
 
 
-def test_padded_evaluator_output_passes_schema_after_normalization():
-    parsed = parse_agent_json_or_yaml(PADDED_EVALUATOR_OUTPUT)
+def test_padded_triage_output_passes_schema_after_normalization():
+    parsed = parse_agent_json_or_yaml(PADDED_TRIAGE_OUTPUT)
     market_id = "0x02deb9538f5c123373adaa4ee6217b01745f1662bc902e46ac92f3fe6f8741e8"
     normalized = normalize_structured_output(
-        "evaluator",
+        "triage",
         {"market_id": market_id},
         parsed,
         output_schema={
@@ -107,7 +103,7 @@ def test_padded_evaluator_output_passes_schema_after_normalization():
             "error": "string | null",
         },
     )
-    model = build_model("EvaluatorOutput", {
+    model = build_model("TriageOutput", {
         "market_id": "string",
         "passed": "boolean",
         "trigger": "string | null",
@@ -115,7 +111,7 @@ def test_padded_evaluator_output_passes_schema_after_normalization():
         "details": "string",
         "error": "string | null",
     })
-    validate_payload("evaluator", "output", model, normalized)
+    validate_payload("triage", "output", model, normalized)
 
 
 def test_parse_empty_output_raises():
@@ -136,47 +132,19 @@ def test_parse_double_encoded_json_string():
     assert parsed["market_id"].startswith("0x")
 
 
-def _legacy_markdown(market_id: str, p: float) -> str:
-    """Frontmatter carrying the full contract (the Hub no longer invents missing fields)."""
-    md = _stub_deep_researcher_markdown(market_id, estimated_p=p)
-    extra = (
-        "confidence: medium\nresolution_checklist: [a]\nkey_assumptions: [b]\n"
-        "as_of: '2026-10-22'\n"
-    )
-    return md.replace("error: null\n", extra + "error: null\n")
-
-
-def test_legacy_markdown_without_contract_fields_is_rejected():
-    from pydantic import ValidationError
-
-    coerced = coerce_deep_researcher_state_machine(
-        _stub_deep_researcher_markdown("0xabc", estimated_p=0.42), {"market_id": "0xabc"}
-    )
-    with pytest.raises(ValidationError):
-        parse_deep_researcher_json(coerced)
-
-
-def test_coerce_deep_researcher_state_machine_from_legacy_markdown():
-    payload = {"market_id": "0xabc"}
-    markdown = _legacy_markdown("0xabc", 0.42)
-    coerced = coerce_deep_researcher_state_machine(markdown, payload)
-    out = parse_deep_researcher_json(coerced)
-    assert isinstance(out, DeepResearcherComplete)
-    assert out.market_id == "0xabc"
-    assert out.estimated_p == 0.42
-
-
 def test_coerce_deep_researcher_state_machine_needs_more_unchanged():
     raw = {"status": "needs_more_data", "new_queries": ["follow-up"]}
     assert coerce_deep_researcher_state_machine(raw, {"market_id": "x"}) == raw
 
 
-def test_coerce_deep_researcher_state_machine_markdown_dict():
-    markdown = _legacy_markdown("0xabc", 0.55)
-    coerced = coerce_deep_researcher_state_machine({"markdown": markdown}, {"market_id": "0xabc"})
-    out = parse_deep_researcher_json(coerced)
-    assert isinstance(out, DeepResearcherComplete)
-    assert out.estimated_p == 0.55
+def test_coerce_deep_researcher_state_machine_rejects_markdown_and_missing_status():
+    for raw in (
+        _stub_deep_researcher_markdown("0xabc", estimated_p=0.42),
+        {"markdown": _stub_deep_researcher_markdown("0xabc", estimated_p=0.42)},
+        {"estimated_p": 0.4},
+    ):
+        with pytest.raises(AgentOutputParseError):
+            coerce_deep_researcher_state_machine(raw, {"market_id": "0xabc"})
 
 
 def test_normalize_structured_output_rejects_legacy_briefer_summary():
@@ -187,3 +155,28 @@ def test_normalize_structured_output_rejects_legacy_briefer_summary():
             {"market_id": "0xabc", "summary": "old style context"},
             output_schema={"market_id": "string"},
         )
+
+
+def _research_md(body_suffix: str = "") -> str:
+    return (
+        "---\n"
+        'market_id: "x"\n'
+        "estimated_p: 0.5\n"
+        "error: null\n"
+        "---\n\n"
+        "## Bull Thesis\n\nb.\n\n"
+        "## Bear Thesis\n\nbe.\n\n"
+        "## Post-Mortem\n"
+        f"{body_suffix}"
+    )
+
+
+def test_parse_accepts_empty_post_mortem_section():
+    r = parse_deep_researcher(_research_md())
+    assert "b." in r.body
+    assert "## Post-Mortem" in r.body
+
+
+def test_parse_rejects_nonempty_post_mortem_section():
+    with pytest.raises(ValueError, match="Post-Mortem"):
+        parse_deep_researcher(_research_md("oops"))

@@ -2,7 +2,7 @@
 
 The concierge is the user-facing side of the bot: an OpenClaw agent on Discord. It relays what the Hub wrote and records yes/no votes. It never decides, trades, filters or tunes knobs, and it keeps no user preferences. The Hub writes, the concierge reads, code decides.
 
-Spec: `agents_blueprint/concierge/` (`AGENTS.md`, `TOOLS.md`, `agent.yaml`, `hub_spawned: false`). Hub side: `orchestrator/notify.py`, `p4_execution.process_inbox`, `p6_overseer.process_directive_votes`.
+Spec: `agents_blueprint/concierge/` (`AGENTS.md`, `TOOLS.md`, `agent.yaml`, `hub_spawned: false`). Hub side: `orchestrator/notify.py`, `p4_approval.process_inbox`, `p6_overseer.process_directive_votes`.
 
 ## 1. Setup
 

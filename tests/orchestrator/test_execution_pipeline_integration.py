@@ -45,9 +45,9 @@ if str(_REPO_ROOT) not in sys.path:
 from config.vault import VAULT_PATH_ENV
 from obsidian_utils import ObsidianManager, TradeLogPayload
 from orchestrator import phases, scraper
-from orchestrator.scraper import market_data_hydration_error
 from orchestrator.config import PAPER_TRADE_MODE
 from orchestrator.research import parse_deep_researcher
+from orchestrator.scraper import market_data_hydration_error
 from orchestrator.state import is_inactive
 
 _PHASE4_LIVE_ENV = "OPENCLAW_PHASE4_LIVE"

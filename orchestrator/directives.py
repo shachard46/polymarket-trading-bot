@@ -192,19 +192,8 @@ def validate_directive_change(old_markdown: str, new_markdown: str, new_version:
     return changed
 
 
-def bounds_table_text() -> str:
-    """Human/LLM-readable bounds table for the Overseer payload."""
-    lines = ["| knob | default | min | max | max step |", "|---|---|---|---|---|"]
-    for key, b in BOUNDS.items():
-        lines.append(
-            f"| {key} | {FILTERS[key]} | {b['min']} | {b['max']} | {b['max_step_frac']:.0%} of current |"
-        )
-    return "\n".join(lines)
-
-
 __all__ = [
     "DirectiveBoundsError",
-    "bounds_table_text",
     "changed_knobs",
     "directive_version",
     "effective_knobs",

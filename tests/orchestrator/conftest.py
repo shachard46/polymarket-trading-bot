@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from obsidian_utils import ObsidianManager
 from orchestrator import polymarket_api, scraper
 
 # Per-test hints for the default fake CLOB quotes: market_id -> market_data (see _fake_quote).
@@ -57,3 +58,11 @@ def _no_integrity_network(monkeypatch):
 def _aiq_evidence_by_default(monkeypatch):
     """Existing phase tests exercise the A-IQ path; evidence tests override the env."""
     monkeypatch.setenv("OPENCLAW_EVIDENCE_SOURCE", "aiq")
+
+
+@pytest.fixture()
+def vault(tmp_path):
+    """Cold-started ObsidianManager rooted at tmp_path (override locally for variants)."""
+    v = ObsidianManager(vault_base=tmp_path)
+    v.cold_start_protocol()
+    return v

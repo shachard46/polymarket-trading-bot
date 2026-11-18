@@ -10,25 +10,18 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import time
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
 from config.trading_constants import INTEGRITY
+from orchestrator.util import to_float
 
 _DAY = 86400.0
 _BAND = 0.02  # depth band around mid (2c)
 
 
-def _num(value: Any) -> float | None:
-    if isinstance(value, bool):
-        return None
-    try:
-        f = float(value)
-    except (TypeError, ValueError):
-        return None
-    return f if math.isfinite(f) else None
+_num = to_float
 
 
 def _secs(value: Any) -> float | None:

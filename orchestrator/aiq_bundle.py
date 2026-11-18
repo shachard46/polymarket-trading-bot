@@ -8,8 +8,6 @@ and map all failures into per-query JSON payloads so the main thread never crash
 from __future__ import annotations
 
 import importlib.util
-import json
-import os
 import sys
 import threading
 import time
@@ -18,6 +16,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from config.trading_constants import AIQ_CACHE_TTL_SEC
+from obsidian_utils import read_json, write_json_atomic
 from orchestrator.config import RESEARCH_DATA_MAX_CHARS
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -148,18 +147,12 @@ def normalize_query(query: str) -> str:
 
 
 def _read_cache(path: Path) -> dict[str, dict[str, Any]]:
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
+    raw = read_json(path)
     return raw if isinstance(raw, dict) else {}
 
 
 def _write_cache(path: Path, cache: dict[str, dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
-    tmp.write_text(json.dumps(cache, indent=1, sort_keys=True), encoding="utf-8")
-    os.replace(tmp, path)
+    write_json_atomic(path, cache, indent=1, sort_keys=True)
 
 
 def _fresh(entry: Any, now: float, ttl: float) -> bool:

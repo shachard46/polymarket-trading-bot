@@ -4,19 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from obsidian_utils import ObsidianManager
 from orchestrator import config as orch_config
-from orchestrator.phases import p3_evidence
 from orchestrator import evidence, ledger, phases, polymarket_api, stats
+from orchestrator.phases import p3_evidence
 from orchestrator.runner import spawn_agent
 from tests.orchestrator.test_phase3_helpers import STUB_MARKET_DATA
-
-
-@pytest.fixture()
-def vault(tmp_path):
-    v = ObsidianManager(vault_base=tmp_path)
-    v.cold_start_protocol()
-    return v
 
 
 def _row(market_id):

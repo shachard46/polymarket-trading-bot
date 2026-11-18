@@ -7,16 +7,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from obsidian_utils import ObsidianManager
 from orchestrator import ledger, phases, polymarket_api, stats
 from tests.orchestrator.test_phase2_gate_triage import Triage, mk
-
-
-@pytest.fixture()
-def vault(tmp_path):
-    v = ObsidianManager(vault_base=tmp_path)
-    v.cold_start_protocol()
-    return v
 
 
 def _cov(vault):

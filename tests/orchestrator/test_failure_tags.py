@@ -2,18 +2,14 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
 
-from obsidian_utils import ObsidianManager
-from orchestrator import scraper
-from tests.orchestrator.test_phase5_archive import _seed_resolved_market
-
 from config.trading_constants import FAILURE_TAG_MIN_COUNT
+from obsidian_utils import ObsidianManager
 from orchestrator import failure_tags as ft
-from orchestrator import ledger, phases
+from orchestrator import ledger, phases, scraper
 from tests.orchestrator.test_learning_loop import Overseer
+from tests.orchestrator.test_phase5_archive import _seed_resolved_market
 
 
 @pytest.fixture

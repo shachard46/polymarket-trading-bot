@@ -86,7 +86,7 @@ def test_phase5_skips_inactive_trade_log(vault, monkeypatch):
             "transaction_hash": None,
             "error": None,
             STATUS_KEY: STATUS_INACTIVE,
-            ERROR_LOG_KEY: {"reason": "executioner failed"},
+            ERROR_LOG_KEY: {"reason": "phase4 failed"},
         },
     )
     resolution_calls: list[str] = []

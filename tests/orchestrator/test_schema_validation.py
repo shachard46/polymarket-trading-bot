@@ -5,9 +5,13 @@ from __future__ import annotations
 import pytest
 
 from agents_blueprint import AGENTS
-from config.trading_constants import FILTERS
 from orchestrator.live_prompt import build_live_response_hint
-from orchestrator.runner import STUB_RESPONSES, _build_live_prompt, _live_session_key, spawn_agent
+from orchestrator.runner import (
+    STUB_RESPONSES,
+    _build_live_prompt,
+    _live_session_key,
+    spawn_agent,
+)
 from orchestrator.schema_validation import (
     AgentSchemaError,
     build_model,
@@ -133,6 +137,9 @@ def test_spawn_agent_overseer_accepts_valid_payload():
     assert out["rationale"]
     assert out.get("error") is None
     assert "market_id" not in out
+    from obsidian_utils import DirectivesPayload
+
+    DirectivesPayload.model_validate(out)
 
 
 def test_spawn_agent_overseer_rejects_evaluator_shape(monkeypatch):

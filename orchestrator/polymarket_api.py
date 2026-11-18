@@ -31,6 +31,8 @@ from typing import Any
 
 import requests
 
+from orchestrator.util import to_float
+
 from config.trading_constants import (
     LIQ_FRAC,
     MANIP,
@@ -186,14 +188,7 @@ def _json_list(value: Any) -> list[Any]:
     return []
 
 
-def _num(value: Any) -> float | None:
-    if isinstance(value, bool) or value is None:
-        return None
-    try:
-        f = float(value)
-    except (TypeError, ValueError):
-        return None
-    return f if math.isfinite(f) else None
+_num = to_float
 
 
 def _unit(value: Any) -> float | None:

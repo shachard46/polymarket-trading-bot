@@ -3,9 +3,8 @@ Configuration constants for the Polymarket Trading Pipeline.
 """
 # Allocation & Math Constants (see docs/03_strategy_math.md)
 TAX = 0.25                 # Israeli capital-gains rate
-# "annual_offset": 25% of NET capital gains per calendar year (losses offset gains within the year);
-#                  trade maths is pre-tax. "per_trade": legacy, tax on each winning trade, no offset.
-TAX_MODE = "annual_offset"
+# Tax is 25% of NET capital gains per calendar year (losses offset gains within the year);
+# trade maths is pre-tax.
 LAMBDA = 0.3               # shrink of researcher estimate toward market: p_adj = q + LAMBDA*(p - q)
 UNCERTAINTY_WIDTH = 0.5    # p_high - p_low at which the shrink is fully removed
 MIN_EDGE = 0.04            # minimum (p_adj-based) edge on the chosen side

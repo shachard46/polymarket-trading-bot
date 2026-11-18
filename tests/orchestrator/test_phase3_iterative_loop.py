@@ -8,9 +8,10 @@ import pytest
 
 from config.trading_constants import ERROR_LOG_KEY, STATUS_INACTIVE, STATUS_KEY
 from orchestrator import phases, scraper
-from orchestrator.phases import p3_evidence
+from orchestrator.phases import p3_evidence, p3_full
 from orchestrator.scraper import MarketRow
 from tests.orchestrator.test_phase3_helpers import (
+    STUB_MARKET_DATA,
     briefer_ok,
     deep_researcher_complete,
     deep_researcher_needs_more,
@@ -200,3 +201,36 @@ def test_phase3_briefer_error_with_empty_queries_flags_inactive(monkeypatch, vau
     assert filt is not None
     assert filt.get(STATUS_KEY) == STATUS_INACTIVE
     assert "briefer error" in str(filt.get(ERROR_LOG_KEY, {}).get("reason", ""))
+
+
+def test_phase3_survives_research_market_exception(monkeypatch, vault):
+    vault.write_filter_log(
+        "cond-x",
+        {
+            "market_id": "cond-x",
+            "passed": True,
+            "trigger": "stub",
+            "confidence_multiplier": 1.0,
+            "details": "ok",
+            "error": None,
+        },
+    )
+    monkeypatch.setattr(
+        scraper,
+        "fetch_market_row",
+        lambda mid: MarketRow(
+            market_id=mid, market_title="T", market_data=dict(STUB_MARKET_DATA)
+        ),
+    )
+
+    def boom(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("simulated failure")
+
+    monkeypatch.setattr(p3_full, "_research_market", boom)
+
+    out = phases.phase3_qualitative_pipeline(
+        vault,
+        runner=lambda _role, _payload: {},
+    )
+
+    assert out == []

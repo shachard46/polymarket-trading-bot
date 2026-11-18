@@ -23,9 +23,8 @@ from config.trading_constants import (
     MIN_ORDER_USD,
 )
 from orchestrator.scraper import select_q
+from orchestrator.util import parse_ts
 
-Q_MIN = FILTERS["gate_min_q"]  # defaults; the live values come from the directives `filters:` block
-Q_MAX = FILTERS["gate_max_q"]
 MIN_LIQUIDITY_USD = MIN_ORDER_USD / LIQ_FRAC
 
 # Backoff schedule (docs/02): 5h * 2^(fail_count-1), capped at 7d; retire after 6 fails.
@@ -233,16 +232,7 @@ def backoff_delay(fail_count: int) -> timedelta:
     return timedelta(hours=hours)
 
 
-def _parse_ts(value: Any) -> datetime | None:
-    if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-    if not isinstance(value, str) or not value.strip():
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+_parse_ts = parse_ts  # kept for phases/p6_overseer and phases/research_state
 
 
 def is_retired(record: Mapping[str, Any] | None) -> bool:
@@ -253,7 +243,7 @@ def is_due(record: Mapping[str, Any] | None, now: datetime | None = None) -> boo
     """True when the market has no backoff pending (never checked, or next_check_at passed)."""
     if not record:
         return True
-    nxt = _parse_ts(record.get("next_check_at"))
+    nxt = parse_ts(record.get("next_check_at"))
     if nxt is None:
         return True
     return (now or datetime.now(timezone.utc)) >= nxt

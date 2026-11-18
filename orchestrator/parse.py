@@ -17,7 +17,6 @@ import yaml
 from pydantic import BaseModel, ValidationError
 
 from orchestrator.config import MAX_FORMAT_RETRIES
-from orchestrator.research import parse_deep_researcher
 from orchestrator.schema_validation import AgentSchemaError
 
 log = logging.getLogger(__name__)
@@ -178,65 +177,29 @@ def normalize_structured_output(
     return parsed
 
 
-def _legacy_markdown_to_complete(markdown: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """Wrap pre–state-machine Deep Researcher markdown as ``status: complete``."""
-    log.info("[deep_researcher] coerced legacy markdown to status=complete")
-    market_id = str(payload.get("market_id") or "")
-    out: dict[str, Any] = {"status": "complete", "market_id": market_id, "markdown": markdown}
-    try:
-        research = parse_deep_researcher(markdown)
-        out["estimated_p"] = research.estimated_p
-        if research.market_id:
-            out["market_id"] = research.market_id
-        # Carry the new contract fields when the frontmatter has them; otherwise the
-        # state-machine validation rejects the response (no silent defaults).
-        for key in (
-            "p_low", "p_high", "confidence", "resolution_checklist", "key_assumptions", "as_of",
-        ):
-            if research.frontmatter.get(key) is not None:
-                out[key] = research.frontmatter[key]
-    except ValueError:
-        out["estimated_p"] = 0.5
-    return out
-
-
 def coerce_deep_researcher_state_machine(
     raw: Any,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
-    """Normalize Deep Researcher output to the JSON state-machine shape.
+    """Validate that a Deep Researcher response is a JSON state-machine object.
 
-    Accepts legacy raw markdown (or markdown-only dicts) and maps them to
-    ``status: complete`` for rollout compatibility.
+    Requires ``status`` of ``needs_more_data`` or ``complete``; anything else raises
+    :class:`AgentOutputParseError` (which drives the format retry).
     """
     if isinstance(raw, dict):
         status = raw.get("status")
         if status in ("needs_more_data", "complete"):
             return raw
-        if status is None:
-            return _legacy_markdown_to_complete(_require_frontmatter_markdown(raw), payload)
         raise AgentOutputParseError(
-            f"deep researcher unexpected status: {status!r}",
+            f"deep researcher unexpected status: {status!r} (expected a JSON object with "
+            "status needs_more_data or complete)",
             raw=json.dumps(raw, default=str),
         )
-    if isinstance(raw, str):
-        return _legacy_markdown_to_complete(_require_frontmatter_markdown(raw), payload)
     raise AgentOutputParseError(
-        f"deep researcher returned unsupported type: {type(raw).__name__}",
-        raw=repr(raw),
+        "deep researcher output is not a JSON state-machine object "
+        f"(got {type(raw).__name__})",
+        raw=raw if isinstance(raw, str) else repr(raw),
     )
-
-
-def _require_frontmatter_markdown(raw: Any) -> str:
-    """Legacy markdown coercion applies only to text starting with ``---``."""
-    text = coerce_deep_researcher_markdown(raw)
-    if not text.lstrip().startswith("---"):
-        raise AgentOutputParseError(
-            "deep researcher output is neither a JSON state-machine object nor "
-            "markdown starting with '---' YAML frontmatter",
-            raw=text,
-        )
-    return text
 
 
 def coerce_deep_researcher_markdown(raw: Any) -> str:

@@ -7,16 +7,8 @@ import re
 
 import pytest
 
-from obsidian_utils import ObsidianManager
 from orchestrator import ledger, loop, phases, scraper, stats
 from orchestrator.runner import _build_live_prompt
-
-
-@pytest.fixture()
-def vault(tmp_path):
-    v = ObsidianManager(vault_base=tmp_path)
-    v.cold_start_protocol()
-    return v
 
 
 def test_ledger_round_trip_and_unresolved(vault):
@@ -96,8 +88,7 @@ def _pnl_rows(ts_w="2026-03-01T00:00:00+00:00", ts_l="2026-04-01T00:00:00+00:00"
     ]
 
 
-def test_pnl_annual_offset_and_counterfactual(monkeypatch):
-    monkeypatch.setattr(stats, "TAX_MODE", "annual_offset")
+def test_pnl_annual_offset_and_counterfactual():
     s = stats.compute_stats(_pnl_rows())
     # win +10, loss -10 in the same year: net 0 -> no tax
     assert s["pnl_total"] == pytest.approx(0.0) and s["pnl_tax"] == 0.0
@@ -108,8 +99,7 @@ def test_pnl_annual_offset_and_counterfactual(monkeypatch):
     assert stats.realised_pnl(_pnl_rows()) == pytest.approx(0.0)
 
 
-def test_pnl_annual_offset_taxes_net_per_calendar_year(monkeypatch):
-    monkeypatch.setattr(stats, "TAX_MODE", "annual_offset")
+def test_pnl_annual_offset_taxes_net_per_calendar_year():
     rows = _pnl_rows(ts_w="2025-12-31T00:00:00+00:00", ts_l="2026-01-02T00:00:00+00:00")
     s = stats.compute_stats(rows)
     # 2025: +10 -> tax 2.5; 2026: -10 -> no tax, no carry-over
@@ -118,15 +108,6 @@ def test_pnl_annual_offset_taxes_net_per_calendar_year(monkeypatch):
     assert s["pnl_after_tax"] == pytest.approx(-2.5)
     # per-bet P&L is pre-tax
     assert stats.bet_pnl({"price": 0.5, "size_usd": 10, "side": "YES"}, 1) == pytest.approx(10.0)
-
-
-def test_pnl_per_trade_mode(monkeypatch):
-    monkeypatch.setattr(stats, "TAX_MODE", "per_trade")
-    s = stats.compute_stats(_pnl_rows())
-    # win: profit 10 -> 7.5 after 25% tax; loss: -10
-    assert s["pnl_total"] == pytest.approx(-2.5) and s["pnl_after_tax"] == pytest.approx(-2.5)
-    assert s["pnl_by_category"]["x"] == (2, pytest.approx(-2.5))
-    assert s["counterfactual_by_stage"]["below_edge"] == (1, pytest.approx(3.0))
 
 
 def test_false_negative_proxy():
@@ -162,5 +143,5 @@ def test_tick_writes_stats_md(vault, monkeypatch):
 
 
 def test_live_prompt_has_date_line():
-    prompt = _build_live_prompt("evaluator", {"output_schema": {}}, {"market_id": "m"})
+    prompt = _build_live_prompt("triage", {"output_schema": {}}, {"market_id": "m"})
     assert re.match(r"Today's date: \d{4}-\d{2}-\d{2} \(UTC\)\.\n", prompt)

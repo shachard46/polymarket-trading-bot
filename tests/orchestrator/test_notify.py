@@ -91,3 +91,9 @@ def test_runner_backend_stats_tolerates_absence():
     assert list(stats.brier_by_runner_backend(rows)) == ["unknown"]
     rows[0]["runner_backend"] = "direct"
     assert list(stats.brier_by_runner_backend(rows)) == ["direct"]
+
+
+def test_write_offer_stringifies_datetime(vault):
+    offer = {"offer_id": "o1", "created_at": datetime(2026, 5, 1, 12, tzinfo=timezone.utc)}
+    path = notify.write_offer(vault, offer)
+    assert notify.read_json(path)["created_at"] == "2026-05-01 12:00:00+00:00"

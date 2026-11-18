@@ -4,18 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from obsidian_utils import ObsidianManager
 from orchestrator import evidence, ledger, phases
-from orchestrator.phases import p3_evidence
-from tests.orchestrator.test_phase3_helpers import briefer_ok, deep_researcher_complete
+from tests.orchestrator.helpers import _ids, _rows
+from tests.orchestrator.test_phase3_helpers import deep_researcher_complete
 from tests.orchestrator.test_research_redesign import World, _seed
-
-
-@pytest.fixture()
-def vault(tmp_path):
-    v = ObsidianManager(vault_base=tmp_path)
-    v.cold_start_protocol()
-    return v
 
 
 @pytest.fixture()
@@ -24,12 +16,6 @@ def world(monkeypatch, vault):
     return World(monkeypatch, vault)
 
 
-def _ids(pred, n):
-    return [m for m in (f"s{i}" for i in range(4000)) if pred(m)][:n]
-
-
-def _rows(vault, stage):
-    return [r for r in ledger.iter_rows(vault) if r["stage"] == stage]
 from config.trading_constants import INDEP_SAMPLE_RATE
 
 

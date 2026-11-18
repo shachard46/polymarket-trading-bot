@@ -10,9 +10,9 @@ from orchestrator import phases, scraper
 from orchestrator.phases import p3_evidence
 from orchestrator.scraper import (
     MarketRow,
-    market_data_hydration_error,
     _market_row_from_scraper,
     _market_snapshot_from_scraper_row,
+    market_data_hydration_error,
     select_q,
 )
 from tests.orchestrator.test_phase3_helpers import briefer_ok, deep_researcher_complete
@@ -78,40 +78,33 @@ def test_market_snapshot_derives_days_to_resolution_from_end_date():
     assert snapshot["days_to_resolution"] >= 1
 
 
-def test_select_q_prefers_the_yes_bid_ask_mid():
+def test_select_q_order_and_range():
     assert select_q({"yes_bid": 0.40, "yes_ask": 0.44, "yes_price": 0.9}) == pytest.approx(0.42)
     assert select_q({"yes_bid": 0.5, "yes_ask": 0.4, "yes_price": 0.3}) == 0.3  # crossed -> ignore
+    assert select_q({"yes_price": 0.3, "midpoint": 0.4}) == 0.3
+    assert select_q({"yes_price": 0.0, "last_trade_price": 1.0, "midpoint": 0.4}) == 0.4
+    assert select_q({"yes_price": float("nan"), "midpoint": True}) is None
+    assert select_q({}) is None
 
 
-def test_market_data_hydration_error_when_pricing_missing():
-    assert market_data_hydration_error({}) is not None
-    assert market_data_hydration_error({"volume": 1.0, "liquidity": 2.0}) is not None
-
-
-def test_market_data_hydration_error_when_volume_liquidity_missing():
-    assert market_data_hydration_error({"yes_price": 0.42}) is not None
-
-
-def test_market_data_hydration_error_when_volume_nonpositive():
-    err = market_data_hydration_error(
-        {"yes_price": 0.42, "volume": 0.0, "liquidity": 200.0}
-    )
-    assert err is not None
-    assert "volume" in err
-
-
-def test_market_data_hydration_error_when_liquidity_nonpositive():
-    err = market_data_hydration_error(
-        {"yes_price": 0.42, "volume": 100.0, "liquidity": -1.0}
-    )
-    assert err is not None
-    assert "liquidity" in err
-
-
-def test_market_data_hydration_error_ok_with_q_and_liquidity_fields():
-    assert market_data_hydration_error(
-        {"yes_price": 0.42, "volume": 100.0, "liquidity": 200.0}
-    ) is None
+@pytest.mark.parametrize(
+    ("market_data", "expected_substr"),
+    [
+        ({}, ""),
+        ({"volume": 1.0, "liquidity": 2.0}, ""),
+        ({"yes_price": 0.42}, ""),
+        ({"yes_price": 0.42, "volume": 0.0, "liquidity": 200.0}, "volume"),
+        ({"yes_price": 0.42, "volume": 100.0, "liquidity": -1.0}, "liquidity"),
+        ({"yes_price": 0.42, "volume": 100.0, "liquidity": 200.0}, None),
+    ],
+)
+def test_market_data_hydration_error(market_data, expected_substr):
+    err = market_data_hydration_error(market_data)
+    if expected_substr is None:
+        assert err is None
+    else:
+        assert err is not None
+        assert expected_substr in err
 
 
 def test_market_row_drops_rows_without_title():

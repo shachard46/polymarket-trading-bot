@@ -42,6 +42,13 @@ from orchestrator.parse import (
 )
 from orchestrator.openclaw_cli import extract_agent_text, run_agent
 from orchestrator.research import parse_deep_researcher
+from orchestrator.runner_stubs import (
+    STUB_ESTIMATED_P,
+    STUB_RESPONSES,
+    _deep_researcher_stub,
+    _stub_deep_researcher_markdown,
+)
+from orchestrator.util import safe_key
 from orchestrator.live_prompt import build_live_response_hint, today_line
 from orchestrator.schema_validation import AgentSchemaError, validate_payload
 
@@ -80,45 +87,33 @@ def spawn_agent(role: str, payload: dict[str, Any]) -> Any:
     return result
 
 
-def _validate_response(
-    role: str,
-    spec: dict[str, Any],
-    result: Any,
-    payload: dict[str, Any],
+def _validate_markdown(role: str, spec: dict[str, Any], result: Any, payload: dict[str, Any]) -> None:
+    try:
+        markdown = coerce_deep_researcher_markdown(result)
+        parse_deep_researcher(markdown)
+    except (AgentOutputParseError, ValueError) as exc:
+        raise AgentSchemaError(role, "output", str(exc)) from exc
+
+
+def _validate_state_machine(
+    role: str, spec: dict[str, Any], result: Any, payload: dict[str, Any]
 ) -> None:
-    """Validate the agent response against the local ``output_schema``.
+    try:
+        if isinstance(result, dict):
+            base: Any = result
+        else:
+            text = result if isinstance(result, str) else str(result)
+            try:
+                base = parse_agent_json_or_yaml(preprocess_agent_text(text))
+            except AgentOutputParseError:
+                base = result
+        coerced = coerce_deep_researcher_state_machine(base, payload)
+        parse_deep_researcher_json(coerced)
+    except (AgentOutputParseError, ValueError) as exc:
+        raise AgentSchemaError(role, "output", str(exc)) from exc
 
-    Empty responses (the bare stub) and explicit errors propagated through
-    the ``error`` field are left for the orchestrator's existing parse path
-    to handle — this guard catches *structural* mismatches only.
-    """
-    if result is None or (isinstance(result, str) and not result.strip()):
-        return
 
-    if spec.get("output_is_markdown"):
-        try:
-            markdown = coerce_deep_researcher_markdown(result)
-            parse_deep_researcher(markdown)
-        except (AgentOutputParseError, ValueError) as exc:
-            raise AgentSchemaError(role, "output", str(exc)) from exc
-        return
-
-    if spec.get("output_is_state_machine"):
-        try:
-            if isinstance(result, dict):
-                base: Any = result
-            else:
-                text = result if isinstance(result, str) else str(result)
-                try:
-                    base = parse_agent_json_or_yaml(preprocess_agent_text(text))
-                except AgentOutputParseError:
-                    base = result
-            coerced = coerce_deep_researcher_state_machine(base, payload)
-            parse_deep_researcher_json(coerced)
-        except (AgentOutputParseError, ValueError) as exc:
-            raise AgentSchemaError(role, "output", str(exc)) from exc
-        return
-
+def _validate_structured(role: str, spec: dict[str, Any], result: Any, payload: dict[str, Any]) -> None:
     output_model = spec.get("output_model")
     if output_model is None:
         return
@@ -153,6 +148,32 @@ def _validate_response(
                 sorted(parsed.keys()),
             )
         raise
+
+
+def _validator_for(spec: dict[str, Any]) -> Callable[[str, dict[str, Any], Any, dict[str, Any]], None]:
+    """Per-role validator, chosen by the output kind declared in the agent spec."""
+    if spec.get("output_is_markdown"):
+        return _validate_markdown
+    if spec.get("output_is_state_machine"):
+        return _validate_state_machine
+    return _validate_structured
+
+
+def _validate_response(
+    role: str,
+    spec: dict[str, Any],
+    result: Any,
+    payload: dict[str, Any],
+) -> None:
+    """Validate the agent response against the local ``output_schema``.
+
+    Empty responses (the bare stub) and explicit errors propagated through
+    the ``error`` field are left for the orchestrator's existing parse path
+    to handle — this guard catches *structural* mismatches only.
+    """
+    if result is None or (isinstance(result, str) and not result.strip()):
+        return
+    _validator_for(spec)(role, spec, result, payload)
 
 
 def _spawn_stub(role: str, spec: dict[str, Any], payload: dict[str, Any]) -> Any:
@@ -202,149 +223,6 @@ def _spawn_stub_error(role: str, spec: dict[str, Any], payload: dict[str, Any]) 
     return {"error": "stub_error mode"}
 
 
-# ---------------------------------------------------------------------------
-# Schema-valid stub responses (success path) — keyed by agent role.
-# ---------------------------------------------------------------------------
-
-StubBuilder = Callable[[dict[str, Any]], Any]
-
-
-def _triage_stub(payload: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "market_id": payload.get("market_id", "stub"),
-        "researchable": True,
-        "category": "stub",
-        "reason": "stub: researchable",
-        "manipulation_risk": "low",
-        "manipulation_reason": "stub",
-        "error": None,
-    }
-
-
-# Stub estimate: far enough from a q of ~0.26 to escalate, pass the misread guard and
-# clear the shrunk, tax-aware Kelly edge (so the stub pipeline reaches a paper trade),
-# yet inside the range for a q of ~0.55 (quick-stage ``no_divergence``).
-STUB_ESTIMATED_P = 0.55
-STUB_P_LOW = 0.51
-STUB_P_HIGH = 0.59
-
-
-def _stub_deep_researcher_markdown(
-    market_id: str,
-    *,
-    estimated_p: float = STUB_ESTIMATED_P,
-    p_low: float | None = None,
-    p_high: float | None = None,
-    error: str | None = None,
-) -> str:
-    err_yaml = "null" if error is None else f'"{error}"'
-    p_low = max(0.0, estimated_p - 0.08) if p_low is None else p_low
-    p_high = min(1.0, estimated_p + 0.08) if p_high is None else p_high
-    return (
-        "---\n"
-        f'market_id: "{market_id}"\n'
-        f"estimated_p: {estimated_p}\n"
-        f"p_low: {p_low}\n"
-        f"p_high: {p_high}\n"
-        f"error: {err_yaml}\n"
-        "---\n\n"
-        "## Bull Thesis\n\n(stub bull thesis)\n\n"
-        "## Bear Thesis\n\n(stub bear thesis)\n\n"
-        "## Post-Mortem\n"
-    )
-
-
-def _briefer_stub(payload: dict[str, Any]) -> dict[str, Any]:
-    title = str(payload.get("title", "")).strip()
-    today = payload.get("today", "")
-    slots = (
-        "resolution criteria and polarity",
-        "reference class base rate",
-        "current state",
-        "strongest disconfirming evidence",
-    )
-    return {
-        "market_id": payload.get("market_id", "stub"),
-        "research_queries": [f"stub {slot} for {title} as of {today}" for slot in slots],
-        "error": None,
-    }
-
-
-def _web_searcher_stub(payload: dict[str, Any]) -> dict[str, Any]:
-    today = payload.get("today", "")
-    return {
-        "market_id": payload.get("market_id", "stub"),
-        "results": [
-            {
-                "query": q,
-                "research_data": f"stub web finding for: {q} (source: example.org, {today})",
-                "error": None,
-            }
-            for q in payload.get("queries") or []
-        ],
-        "error": None,
-    }
-
-
-def _deep_researcher_stub(payload: dict[str, Any]) -> dict[str, Any]:
-    market_id = payload.get("market_id", "stub")
-    today = payload.get("today") or "2026-01-01"
-    return {
-        "status": "complete",
-        "market_id": market_id,
-        "estimated_p": STUB_ESTIMATED_P,
-        "p_low": STUB_P_LOW,
-        "p_high": STUB_P_HIGH,
-        "confidence": "medium",
-        "resolution_checklist": ["stub: YES requires the titled event"],
-        "key_assumptions": ["stub assumption"],
-        "as_of": today,
-        "markdown": _stub_deep_researcher_markdown(
-            market_id, p_low=STUB_P_LOW, p_high=STUB_P_HIGH
-        ),
-    }
-
-
-def _post_mortem_stub(payload: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "market_id": payload.get("market_id", "stub"),
-        "post_mortem_analysis": "stub post-mortem analysis paragraph.",
-        "failure_class": "variance",
-        "failure_tag_definition": None,
-        "error": None,
-    }
-
-
-def _overseer_stub(payload: dict[str, Any]) -> dict[str, Any]:
-    # Re-emit the existing directives so the structural validator still passes.
-    current = payload.get("current_directives") or ""
-    return {
-        "new_directives_markdown": current
-        or (
-            "---\n"
-            "title: stub\n"
-            "---\n\n"
-            "## Research Protocol\n\nstub.\n\n"
-            "## Filter Weightings\n\nstub.\n\n"
-            "```yaml\nfilters:\n  gate_min_q: 0.05\n```\n\n"
-            "## Risk Constraints\n\nstub.\n\n"
-            "## Output Requirements\n\nstub.\n"
-        ),
-        "rationale": "stub: no changes recommended",
-        "error": None,
-    }
-
-
-STUB_RESPONSES: dict[str, StubBuilder] = {
-    "triage": _triage_stub,
-    "briefer": _briefer_stub,
-    "web_searcher": _web_searcher_stub,
-    "deep_researcher": _deep_researcher_stub,
-    "post_mortem_analyst": _post_mortem_stub,
-    "overseer": _overseer_stub,
-}
-
-
 def _spawn_live(role: str, spec: dict[str, Any], payload: dict[str, Any]) -> Any:
     oc = spec.get("openclaw") or {}
     agent_id = oc.get("openclaw_agent_id")
@@ -367,7 +245,7 @@ _run_nonce: str = uuid.uuid4().hex[:12]
 def set_run_nonce(nonce: str) -> None:
     """Set the per-run (tick) nonce mixed into OpenClaw session keys."""
     global _run_nonce
-    _run_nonce = "".join(c if c.isalnum() or c in "._-" else "-" for c in str(nonce)) or "run"
+    _run_nonce = safe_key(nonce) or "run"
 
 
 def get_run_nonce() -> str:
@@ -383,14 +261,11 @@ def _live_session_key(agent_id: str, role: str, payload: dict[str, Any]) -> str:
     if role == "overseer":
         return f"agent:{agent_id}:orch-overseer-directives-{_run_nonce}"
     raw_market_id = str(payload.get("market_id") or "global")
-    safe_market_id = "".join(
-        char if char.isalnum() or char in "._-" else "-" for char in raw_market_id
-    )
-    key = f"agent:{agent_id}:orch-{_run_nonce}-{safe_market_id}"
+    key = f"agent:{agent_id}:orch-{_run_nonce}-{safe_key(raw_market_id)}"
     tag = payload.get("session_tag")
     if tag:
         # Independent Deep Researcher samples must not share a transcript.
-        key += "-" + "".join(c if c.isalnum() or c in "._-" else "-" for c in str(tag))
+        key += "-" + safe_key(tag)
     return key
 
 

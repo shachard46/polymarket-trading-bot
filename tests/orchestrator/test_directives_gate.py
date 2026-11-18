@@ -6,13 +6,13 @@ from typing import Any
 
 import pytest
 
+from config.trading_constants import FILTERS
 from obsidian_utils import (
     DirectivesPayload,
     ObsidianManager,
-    VaultWriteError,
 )
 from orchestrator import phases
-
+from orchestrator.directives import extract_filter_directives
 
 _VALID_DIRECTIVES = """\
 ---
@@ -106,3 +106,50 @@ def test_phase6_writes_directives_when_valid(tmp_path, monkeypatch):
     # the Hub stamps the next version; the Overseer's body is kept verbatim
     assert "version: 2" in vault.read_directives()
     assert "# Active Directives\n\n## Research Protocol\n\nBody." in vault.read_directives()
+
+
+def test_extract_filter_directives_from_seed(vault):
+    directives = vault.read_directives()
+    parsed = extract_filter_directives(directives)
+    assert parsed["gate_min_q"] == FILTERS["gate_min_q"]
+    assert parsed["research_max_quick_width"] == FILTERS["research_max_quick_width"]
+
+
+def test_extract_filter_directives_fallback_on_empty():
+    parsed = extract_filter_directives("")
+    assert parsed == FILTERS
+
+
+def test_extract_filter_directives_custom_yaml():
+    md = """---
+version: "0.2"
+---
+
+## Filter Weightings
+
+```yaml
+filters:
+  gate_min_q: 0.07
+  research_max_quick_width: 0.2
+```
+
+## Risk Constraints
+
+x
+"""
+    parsed = extract_filter_directives(md)
+    assert parsed["gate_min_q"] == 0.07
+    assert parsed["research_max_quick_width"] == 0.2
+    assert parsed["arbitrage_max_combined_ask"] == FILTERS["arbitrage_max_combined_ask"]
+
+
+def test_directive_coercion():
+    md = (
+        "## Filter Weightings\n```yaml\nfilters:\n"
+        "  gate_min_q: '0.07'\n  min_days_to_resolution: -5\n"
+        "  research_max_q_gap: .inf\n  bogus: 1\n```\n"
+    )
+    out = extract_filter_directives(md)
+    assert out["gate_min_q"] == 0.07
+    assert out["min_days_to_resolution"] == FILTERS["min_days_to_resolution"]
+    assert out["research_max_q_gap"] == FILTERS["research_max_q_gap"]

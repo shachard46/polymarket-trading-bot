@@ -27,12 +27,12 @@ def test_flag_inactive_on_filter(vault):
             "error": None,
         },
     )
-    flag_inactive(vault, "0xabc", "phase2", "evaluator error", {"x": 1})
+    flag_inactive(vault, "0xabc", "phase2", "triage error", {"x": 1})
 
     record = vault.read_filter_log("0xabc")
     assert record is not None
     assert is_inactive(record)
-    assert record[ERROR_LOG_KEY]["reason"] == "evaluator error"
+    assert record[ERROR_LOG_KEY]["reason"] == "triage error"
 
 
 def test_phase3_cascade_inactive_to_filter_when_active_exists(vault):

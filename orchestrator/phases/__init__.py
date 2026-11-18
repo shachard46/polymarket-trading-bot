@@ -11,7 +11,7 @@ A phase:
 
 Modules: ``common`` (shared helpers), ``agent_call`` (runner->parse->validate plumbing),
 ``research_state`` (TTL/refresh bookkeeping), ``p1_ingest``, ``p2_routing``, ``p3_quick``,
-``p3_full``, ``p3_evidence``, ``p3_queue``, ``p4_execution``, ``p5_resolution``,
+``p3_full``, ``p3_evidence``, ``p3_queue``, ``p4_execution``, ``p4_approval``, ``p5_resolution``,
 ``p6_overseer``. This package re-exports every name that callers used to import from the
 old ``orchestrator/phases.py``. Tests that monkeypatch must patch the defining submodule.
 """

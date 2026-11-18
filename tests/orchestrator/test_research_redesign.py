@@ -10,12 +10,11 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from obsidian_utils import ObsidianManager
 from orchestrator import config as orch_config
-from orchestrator.phases import p3_evidence, p3_queue
 from orchestrator import ledger, phases, scraper
 from orchestrator.agent_outputs import BrieferOutput, DeepResearcherComplete
 from orchestrator.aiq_bundle import fetch_research_bundle_cached, normalize_query
+from orchestrator.phases import p3_evidence, p3_queue
 from orchestrator.scraper import MarketRow
 from tests.orchestrator.test_phase3_helpers import (
     briefer_ok,
@@ -23,13 +22,6 @@ from tests.orchestrator.test_phase3_helpers import (
 )
 
 Q_PRICE_FIELDS = {"q", "yes_price", "no_price", "last_trade_price", "midpoint", "spread"}
-
-
-@pytest.fixture()
-def vault(tmp_path):
-    v = ObsidianManager(vault_base=tmp_path)
-    v.cold_start_protocol()
-    return v
 
 
 def _seed(vault, mid: str, score: float = 1.0, **extra: Any) -> None:

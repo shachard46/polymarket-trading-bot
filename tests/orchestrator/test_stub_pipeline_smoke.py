@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-
 from obsidian_utils import ObsidianManager
-from orchestrator import ledger, loop, phases, polymarket_api, scraper
+from orchestrator import ledger, loop, polymarket_api, scraper
 from orchestrator.phases import p3_evidence
 from orchestrator.scraper import MarketRow
 

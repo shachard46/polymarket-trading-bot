@@ -35,43 +35,33 @@ _INDEP_KEYS = ("indep_p", "indep_p_low", "indep_p_high", "indep_source", "indep_
 _ALLOCATION_SKILL_PATH = (
     _ROOT / "skills/calculate-trade-allocation/calculate_trade_allocation.py"
 )
-_allocation_fn: Callable[..., Any] | None = None
 _TRADE_SKILL_PATH = (
     _ROOT / "skills/execute-polymarket-trade/execute_polymarket_trade.py"
 )
-_trade_fn: Callable[..., Any] | None = None
+_skill_cache: dict[str, Callable[..., Any]] = {}
 
 
-def _load_calculate_trade_allocation() -> Callable[..., Any]:
-    global _allocation_fn
-    if _allocation_fn is not None:
-        return _allocation_fn
-    spec = importlib.util.spec_from_file_location(
-        "calculate_trade_allocation", _ALLOCATION_SKILL_PATH
-    )
+def _load_skill(path: Path, cache_key: str) -> Callable[..., Any]:
+    """Load ``path`` once and return its function named ``cache_key`` (the skill's entry point)."""
+    if cache_key in _skill_cache:
+        return _skill_cache[cache_key]
+    spec = importlib.util.spec_from_file_location(cache_key, path)
     if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load skill from {_ALLOCATION_SKILL_PATH}")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    _allocation_fn = mod.calculate_trade_allocation
-    return _allocation_fn
-
-
-def _load_execute_polymarket_trade() -> Callable[..., Any]:
-    global _trade_fn
-    if _trade_fn is not None:
-        return _trade_fn
-    spec = importlib.util.spec_from_file_location(
-        "execute_polymarket_trade", _TRADE_SKILL_PATH
-    )
-    if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load skill from {_TRADE_SKILL_PATH}")
+        raise ImportError(f"cannot load skill from {path}")
     mod = importlib.util.module_from_spec(spec)
     # pydantic resolves the skill's postponed annotations through sys.modules.
     sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)
-    _trade_fn = mod.execute_polymarket_trade
-    return _trade_fn
+    _skill_cache[cache_key] = getattr(mod, cache_key)
+    return _skill_cache[cache_key]
+
+
+def _load_calculate_trade_allocation() -> Callable[..., Any]:
+    return _load_skill(_ALLOCATION_SKILL_PATH, "calculate_trade_allocation")
+
+
+def _load_execute_polymarket_trade() -> Callable[..., Any]:
+    return _load_skill(_TRADE_SKILL_PATH, "execute_polymarket_trade")
 
 
 def _open_allocated_usd(vault: ObsidianManager, event_id: str | None = None) -> float:
@@ -90,6 +80,11 @@ def _open_allocated_usd(vault: ObsidianManager, event_id: str | None = None) -> 
     return total
 
 
+def _bankroll(vault: ObsidianManager) -> float:
+    """Starting bankroll plus realised after-tax P&L from the ledger."""
+    return BANKROLL_USD + stats.realised_pnl(list(ledger.iter_rows(vault)))
+
+
 def compute_allocation(
     vault: ObsidianManager,
     p: float,
@@ -98,19 +93,22 @@ def compute_allocation(
     p_low: float | None = None,
     p_high: float | None = None,
     quotes: dict[str, dict[str, Any]] | None = None,
+    bankroll: float | None = None,
 ) -> dict[str, Any]:
     """Run ``calculate_trade_allocation`` in-process against bankroll + realised P&L.
 
     ``quotes`` (``{"YES": quote, "NO": quote}`` from ``polymarket_api.executable_quote``) supplies
     the real asks (``q_yes_ask`` / ``q_no_ask``) and caps the order at the chosen side's
     ``depth_usd_within_2c``; without it the mid ``q`` is the YES ask and NO is ``1 - q``.
+    ``bankroll`` is computed from the ledger when not given.
     """
     try:
         days = int(float(market_data.get("days_to_resolution")))
     except (TypeError, ValueError):
         days = None  # the skill reports an input error
     event_id = market_data.get("event_id")
-    bankroll = BANKROLL_USD + stats.realised_pnl(list(ledger.iter_rows(vault)))
+    if bankroll is None:
+        bankroll = _bankroll(vault)
     liquidity = market_data.get("liquidity")
 
     def run(L: Any) -> dict[str, Any]:
@@ -345,70 +343,9 @@ def _persist_trade(
         )
 
 
-def _park_offer(
-    vault: ObsidianManager,
-    row: dict[str, Any],
-    q: float,
-    trade: dict[str, Any],
-    allocation: dict[str, Any],
-    size_usd: float,
-    bought: dict[str, Any],
+def _execute_market(
+    vault: ObsidianManager, row: dict[str, Any], from_research: bool, bankroll: float | None = None
 ) -> None:
-    """Approval mode: write a pending offer (outbox + intent + ledger ``offer_pending``) instead of trading."""
-    market_id = row["market_id"]
-    market_data = row.get("market_data") or {}
-    resume = {
-        "row": {
-            k: row.get(k)
-            for k in ("p_value", "p_low", "p_high", "evidence_source", "evidence_fallback", *_INDEP_KEYS)
-            if row.get(k) is not None
-        },
-        "market_fields": _ledger_market_fields(market_data),
-        "lam": allocation.get("lam"),
-        "min_edge": allocation.get("min_edge"),
-    }
-    offer = notify.emit_offer(vault, trade, market_data, mode="approval", resume=resume)
-    if offer is None:
-        log.warning("[PHASE 4] %s: offer could not be written; not parked, retried next tick", market_id)
-        return
-    vault.write_execution_intent(
-        market_id,
-        {"market_id": market_id, "started_at": time.time(), "pending_offer": offer["offer_id"]},
-    )
-    _ledger_safe(vault, market_id, "offer_pending", **_offer_row_fields(offer))
-    log.info("[PHASE 4] offer pending for %s (%s)", market_id, offer["offer_id"])
-
-
-def _offer_row_fields(offer: dict[str, Any], **override: Any) -> dict[str, Any]:
-    """Ledger fields of an offer (stated bet + research fields), for offer_* rows."""
-    resume = offer.get("resume") or {}
-    row = resume.get("row") or {}
-    fields: dict[str, Any] = {
-        "offer_id": offer["offer_id"],
-        "q": offer.get("q_entry"),
-        "p": offer.get("p"),
-        "p_low": offer.get("p_low"),
-        "p_high": offer.get("p_high"),
-        "side": offer.get("side"),
-        "price": offer.get("price"),
-        "ask": offer.get("ask"),
-        "depth_usd": offer.get("depth_usd"),
-        "shares": offer.get("shares"),
-        "size_usd": offer.get("allocation_usd"),
-        "edge": offer.get("edge"),
-        "expires_at": offer.get("expires_at"),
-        "evidence_source": row.get("evidence_source"),
-        "evidence_fallback": row.get("evidence_fallback"),
-        **{k: row[k] for k in _INDEP_KEYS if row.get(k) is not None},
-        "lam": resume.get("lam"),
-        "min_edge": resume.get("min_edge"),
-        **(resume.get("market_fields") or {}),
-    }
-    fields.update(override)
-    return fields
-
-
-def _execute_market(vault: ObsidianManager, row: dict[str, Any], from_research: bool) -> None:
     """Guards -> quotes -> sizing -> (trade skill) -> trade log + ledger for one market."""
     market_id = row["market_id"]
     market_data = row.get("market_data") or {}
@@ -431,7 +368,7 @@ def _execute_market(vault: ObsidianManager, row: dict[str, Any], from_research: 
 
     p_low, p_high = row.get("p_low"), row.get("p_high")
     allocation = compute_allocation(
-        vault, row["p_value"], q, market_data, p_low, p_high, quotes=quotes
+        vault, row["p_value"], q, market_data, p_low, p_high, quotes=quotes, bankroll=bankroll
     )
     if allocation.get("error"):
         log.warning(
@@ -447,6 +384,8 @@ def _execute_market(vault: ObsidianManager, row: dict[str, Any], from_research: 
     trade = _trade_record(vault, market_id, market_data, q, row, allocation, size_usd, below, bought)
 
     if not below and notify.approval_enabled():
+        from orchestrator.phases.p4_approval import _park_offer  # local: p4_approval imports this module
+
         _park_offer(vault, row, q, trade, allocation, size_usd, bought)
         return
     if not below and not _place_trade(vault, market_id, allocation, size_usd, trade):
@@ -454,157 +393,6 @@ def _execute_market(vault: ObsidianManager, row: dict[str, Any], from_research: 
     _persist_trade(vault, row, q, trade, allocation, size_usd, below, bought)
     if not below:
         notify.emit_offer(vault, trade, market_data, mode="informational")
-
-
-def _close_offer(vault: ObsidianManager, offer: dict[str, Any], stage: str, reason: str) -> None:
-    """Final non-execution of an offer: ledger row, blocking trade log (allocation 0), intent cleared."""
-    market_id = offer["market_id"]
-    _ledger_safe(vault, market_id, stage, reason=reason, **_offer_row_fields(offer))
-    try:
-        vault.write_trade_log(
-            market_id,
-            {
-                "market_id": market_id,
-                "allocation_usd": 0.0,
-                "score": offer.get("edge"),
-                # stale = edge gone: a fresh research refresh may re-offer. declined/expired: do not nag.
-                "below_edge_threshold": stage == "offer_stale",
-                "executed": False,
-                "p": offer.get("p"),
-                "p_low": offer.get("p_low"),
-                "p_high": offer.get("p_high"),
-                "q_entry": offer.get("q_entry"),
-                "side": offer.get("side"),
-                "directive_version": ledger.current_directive_version(vault),
-                "event_id": (offer.get("resume") or {}).get("market_fields", {}).get("event_id"),
-            },
-        )
-    except Exception:  # noqa: BLE001
-        log.exception("[PHASE 4] could not write closing trade log for %s", market_id)
-    vault.clear_execution_intent(market_id)
-
-
-def _approve_offer(vault: ObsidianManager, offer: dict[str, Any]) -> str:
-    """Re-quote + re-size on a yes vote. ``done`` | ``retry`` (infra problem: keep vote for next poll)."""
-    market_id = offer["market_id"]
-    resume = offer.get("resume") or {}
-    stored = resume.get("row") or {}
-    fresh = scraper.fetch_market_row(market_id)
-    if fresh is None:
-        log.warning("[INBOX] %s: could not hydrate market row; retry next poll", market_id)
-        return "retry"
-    market_data = _carry_filter_signals(fresh.market_data, vault.read_filter_log(market_id))
-    q = scraper.select_q(market_data)
-    quotes = _phase4_quotes(market_id)
-    if q is None or quotes is None or market_data_hydration_error(market_data):
-        log.warning("[INBOX] %s: fresh q/quote unavailable; retry next poll", market_id)
-        return "retry"
-    row = {
-        "market_id": market_id,
-        "p_value": stored.get("p_value", offer.get("p")),
-        "p_low": stored.get("p_low"),
-        "p_high": stored.get("p_high"),
-        **{k: v for k, v in stored.items() if k in ("evidence_source", "evidence_fallback", *_INDEP_KEYS)},
-        "market_data": market_data,
-    }
-    allocation = compute_allocation(
-        vault, row["p_value"], q, market_data, row["p_low"], row["p_high"], quotes=quotes
-    )
-    size_usd = float(allocation.get("allocation_usd") or 0.0)
-    edge = _as_float(allocation.get("edge"))
-    ok = (
-        not allocation.get("error")
-        and not allocation.get("below_edge_threshold")
-        and size_usd > 0
-        and edge is not None
-        and edge >= effective_min_edge()
-    )
-    if not ok:
-        log.info("[INBOX] %s: edge gone on re-quote (edge=%s); offer_stale", market_id, edge)
-        _close_offer(vault, {**offer, "fresh_edge": edge}, "offer_stale", "edge_below_min_on_requote")
-        return "done"
-    bought = quotes.get(allocation.get("side") or "") or {}
-    _ledger_safe(
-        vault, market_id, "offer_approved",
-        **_offer_row_fields(
-            offer, q=q, side=allocation.get("side"), price=allocation.get("price"), ask=bought.get("ask"),
-            depth_usd=bought.get("depth_usd_within_2c"), shares=allocation.get("shares"),
-            size_usd=size_usd, edge=edge,
-        ),
-    )
-    trade = _trade_record(vault, market_id, market_data, q, row, allocation, size_usd, False, bought)
-    if _place_trade(vault, market_id, allocation, size_usd, trade):
-        _persist_trade(vault, row, q, trade, allocation, size_usd, False, bought)
-    return "done"
-
-
-def process_inbox(vault: ObsidianManager, now: datetime | None = None) -> dict[str, int]:
-    """Apply votes from ``06_Concierge/inbox/vote-<offer_id>.json`` and expire stale pending offers.
-
-    yes before expiry: re-quote + re-size, execute only if the edge still clears
-    ``effective_min_edge()`` (else ``offer_stale``). no: ``offer_declined``. Past expiry:
-    ``offer_expired``. Processed votes/offers move to ``_done/``. Never raises per file.
-    """
-    now = now or datetime.now(tz=timezone.utc)
-    summary = {"approved": 0, "stale": 0, "declined": 0, "expired": 0, "ignored": 0, "retry": 0}
-    inbox, outbox = notify.inbox_dir(vault), notify.outbox_dir(vault)
-
-    def expired(offer: dict[str, Any]) -> bool:
-        exp = notify.parse_ts(offer.get("expires_at"))
-        return exp is not None and now > exp
-
-    for vote_path in sorted(inbox.glob("vote-*.json")):
-        if vote_path.stem.startswith("vote-" + notify.DIRECTIVE_ID_PREFIX):
-            continue  # Overseer directive vote: owned by p6_overseer.process_directive_votes
-        try:
-            vote = notify.read_json(vote_path) or {}
-            offer_id = str(vote.get("offer_id") or "")
-            choice = str(vote.get("vote") or "").strip().lower()
-            offer_file = outbox / f"offer-{offer_id}.json" if offer_id else None
-            offer = notify.read_json(offer_file) if offer_file and offer_file.exists() else None
-            if offer is None or offer.get("mode") != "approval" or choice not in ("yes", "no"):
-                log.warning("[INBOX] ignoring vote %s (unknown offer or bad vote)", vote_path.name)
-                summary["ignored"] += 1
-                notify.move_to_done(vote_path)
-                continue
-            market_id = offer["market_id"]
-            if not any(
-                r.get("stage") == "user_vote" and r.get("offer_id") == offer_id for r in ledger.iter_rows(vault)
-            ):  # a retried vote is ledgered once
-                _ledger_safe(vault, market_id, "user_vote", offer_id=offer_id, vote=choice)
-            with market_quarantine(vault, market_id, "phase4"):
-                if expired(offer):
-                    _close_offer(vault, offer, "offer_expired", "expired_before_vote")
-                    summary["expired"] += 1
-                elif choice == "no":
-                    _close_offer(vault, offer, "offer_declined", "user_vote_no")
-                    summary["declined"] += 1
-                else:
-                    outcome = _approve_offer(vault, offer)
-                    if outcome == "retry":
-                        summary["retry"] += 1
-                        continue  # keep vote + offer; next poll retries (or the offer expires)
-                    stale = any(
-                        r.get("offer_id") == offer_id and r.get("stage") == "offer_stale"
-                        for r in ledger.iter_rows(vault)
-                    )
-                    summary["stale" if stale else "approved"] += 1
-            notify.move_to_done(offer_file)
-            notify.move_to_done(vote_path)
-        except Exception:  # noqa: BLE001 - one bad vote must not block the rest
-            log.exception("[INBOX] failed processing %s", vote_path.name)
-
-    for offer_file in sorted(outbox.glob("offer-*.json")):  # unvoted offers past their expiry
-        try:
-            offer = notify.read_json(offer_file)
-            if offer and offer.get("mode") == "approval" and expired(offer):
-                with market_quarantine(vault, offer["market_id"], "phase4"):
-                    _close_offer(vault, offer, "offer_expired", "expired_no_vote")
-                summary["expired"] += 1
-                notify.move_to_done(offer_file)
-        except Exception:  # noqa: BLE001
-            log.exception("[INBOX] failed expiring %s", offer_file.name)
-    return summary
 
 
 def phase4_execution(
@@ -620,6 +408,8 @@ def phase4_execution(
     """
     log.info("[PHASE 4] Execution")
 
-    for row, from_research in _phase4_queue(vault, researched_markets):
+    queue = _phase4_queue(vault, researched_markets)
+    bankroll = _bankroll(vault) if queue else None  # once per tick: realised P&L only moves at resolution
+    for row, from_research in queue:
         with market_quarantine(vault, row["market_id"], "phase4"):
-            _execute_market(vault, row, from_research)
+            _execute_market(vault, row, from_research, bankroll)

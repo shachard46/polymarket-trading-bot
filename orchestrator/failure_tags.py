@@ -8,14 +8,13 @@ registry (`00_System/failure_tags.json`): {slug: {definition, count, first_seen,
 
 from __future__ import annotations
 
-import json
 import re
 import threading
 from datetime import datetime, timezone
 from typing import Any
 
 from config.trading_constants import FAILURE_TAG_MIN_COUNT
-from obsidian_utils import FAILURE_CLASSES, ObsidianManager, _atomic_write_text
+from obsidian_utils import FAILURE_CLASSES, ObsidianManager, read_json, write_json_atomic
 
 UNCLASSIFIED = "unclassified"
 TAG_PREFIX = "new:"
@@ -31,10 +30,7 @@ def _path(vault: ObsidianManager):
 
 def load_registry(vault: ObsidianManager) -> dict[str, dict[str, Any]]:
     """Registry as {slug: {definition, count, first_seen, last_seen}}; {} when missing/corrupt."""
-    try:
-        data = json.loads(_path(vault).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
+    data = read_json(_path(vault))
     if not isinstance(data, dict):
         return {}
     return {
@@ -95,7 +91,7 @@ def record_tag(vault: ObsidianManager, slug: str, definition: str | None) -> dic
         if not entry.get("definition") and definition:
             entry["definition"] = definition
         reg[slug] = entry
-        _atomic_write_text(_path(vault), json.dumps(reg, indent=2, sort_keys=True))
+        write_json_atomic(_path(vault), reg, sort_keys=True)
         return entry
 
 

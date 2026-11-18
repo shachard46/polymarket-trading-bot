@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import subprocess
 
 import pytest
@@ -50,9 +49,9 @@ def test_run_agent_uses_session_key_when_cli_supports_it(monkeypatch):
     )
 
     result = openclaw_cli.run_agent(
-        "polymarket-evaluator",
+        "polymarket-triage",
         "prompt",
-        session_key="agent:polymarket-evaluator:orch-0xabc",
+        session_key="agent:polymarket-triage:orch-0xabc",
         timeout=20,
     )
 
@@ -61,7 +60,7 @@ def test_run_agent_uses_session_key_when_cli_supports_it(monkeypatch):
         "/usr/bin/openclaw",
         "agent",
         "--agent",
-        "polymarket-evaluator",
+        "polymarket-triage",
         "--session-key",
         "orch-0xabc",
         "--message",
@@ -80,9 +79,9 @@ def test_run_agent_uses_session_id_without_agent_on_legacy_cli(monkeypatch):
     calls = _patch_openclaw_run(monkeypatch, help_text="--session-id <id>\n")
 
     result = openclaw_cli.run_agent(
-        "polymarket-evaluator",
+        "polymarket-triage",
         "prompt",
-        session_key="agent:polymarket-evaluator:orch-0xabc",
+        session_key="agent:polymarket-triage:orch-0xabc",
         timeout=20,
     )
 
@@ -91,7 +90,7 @@ def test_run_agent_uses_session_id_without_agent_on_legacy_cli(monkeypatch):
         "/usr/bin/openclaw",
         "agent",
         "--session-id",
-        "agent:polymarket-evaluator:orch-0xabc",
+        "agent:polymarket-triage:orch-0xabc",
         "--message",
         "prompt",
         "--json",
@@ -278,22 +277,19 @@ def test_extract_agent_text_prefers_parseable_payload_over_summary():
 
     assert text == full
 
+    # the last payload wins over earlier ones and over a long summary holding a draft
+    summary = "I reasoned about it. Draft: " + '{"status": "draft"}' + " " + "pad " * 500
+    text = openclaw_cli.extract_agent_text(
+        {
+            "summary": summary,
+            "payloads": [{"text": '{"status": "old"}'}, {"text": '{"status": "final"}'}],
+        }
+    )
+    assert text == '{"status": "final"}'
+
 
 def test_extract_agent_text_rejects_empty_payload():
     with pytest.raises(openclaw_cli.OpenClawCLIError, match="did not contain text"):
         openclaw_cli.extract_agent_text({"payloads": []})
 
 
-def test_live_openclaw_agent_smoke():
-    if os.environ.get("OPENCLAW_LIVE_SMOKE") != "1":
-        pytest.skip("set OPENCLAW_LIVE_SMOKE=1 to run against a local Gateway")
-
-    openclaw_cli.require_gateway()
-    result = openclaw_cli.run_agent(
-        "polymarket-evaluator",
-        "Reply with exactly: pong",
-        session_key="agent:polymarket-evaluator:orch-smoke",
-        timeout=30,
-    )
-
-    assert openclaw_cli.extract_agent_text(result).strip()

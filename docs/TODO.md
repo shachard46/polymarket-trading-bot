@@ -9,7 +9,8 @@
 - [ ] **Batch API for triage and shadow runs**: triage and shadow calls are not latency-critical; use the Anthropic Batch API in `direct` mode to cut cost.
 - [ ] **Pass `role=` to `_ledger_market_fields`**: `common._ledger_market_fields(market_data, role)` supports `model`, but no caller passes `role`, so ledger rows lack the model in direct mode.
 - [ ] **Retire the OpenClaw research path**: once the `direct` backend matches OpenClaw on the shadow comparison (`stats.md` runner-backend Brier), drop the `live` research path.
-- [ ] **Refactor `obsidian_utils.py`**: split into schemas (Pydantic payload models) and manager (vault I/O and the write gatekeeper).
-- [ ] **Refactor `stats.py`**: split into per-section modules (Brier, shadows, integrity, offers, P&L, lambda fit).
+- [x] **Refactor `obsidian_utils.py`**: split into schemas (Pydantic payload models) and manager (vault I/O and the write gatekeeper).
+- [x] **Refactor `stats.py`**: split into per-section modules (Brier, shadows, integrity, offers, P&L, lambda fit).
 - [ ] **Stop/promote rule per measure-only experiment**: for each shadow, independent-sample and triage-shadow check, write the sample size and the Brier or P&L result that promotes it to a filter or stops it.
-- [ ] **Dead-code audit**: remove the `per_trade` tax mode, the legacy `BANKROLL_USD` path and the `state.py` replay code if nothing reads them.
+- [x] **Dead-code audit**: `per_trade` tax mode removed; `BANKROLL_USD` kept as live (not legacy).
+- [ ] **Dead-code audit: `state.py` replay code**: still read by `orchestrator/replay.py` and `loop.py` auto-replay; remove only if those go.

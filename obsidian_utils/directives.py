@@ -1,0 +1,334 @@
+"""Directives versioning, seeding and migration: a mixin for ObsidianManager."""
+
+from __future__ import annotations
+
+import re
+import shutil
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from pydantic import ValidationError
+
+from config.trading_constants import (
+    F_MAX,
+    BOUNDS,
+    FILTERS,
+    PAPER_TRADE_MODE,
+)
+
+from .schemas import DirectivesPayload, VaultWriteError, _atomic_write_text, _dump_frontmatter
+
+_DIRECTIVES_FILENAME = "active_directives.md"
+
+
+class DirectivesMixin:
+    """Live directives file plus its ``directives_history/`` archive."""
+
+    _dirs: dict[str, Path]
+
+    # -- directives versioning ----------------------------------------------
+
+    def directives_history_dir(self) -> Path:
+        return self._dirs["system"] / "directives_history"
+
+    def latest_directives_version(self) -> int:
+        """Highest version number seen in the live file or the history archive."""
+        from orchestrator.directives import directive_version
+
+        best = directive_version(self.read_directives())
+        hist = self.directives_history_dir()
+        if hist.is_dir():
+            for path in hist.glob("v*.md"):
+                m = re.fullmatch(r"v(\d+)\.md", path.name)
+                if m:
+                    best = max(best, int(m.group(1)))
+        return best
+
+    def read_directives_version(self, version: int) -> str | None:
+        path = self.directives_history_dir() / f"v{int(version)}.md"
+        return path.read_text(encoding="utf-8") if path.exists() else None
+
+    def _install_directives(self, text: str, version: int) -> Path:
+        """Atomically replace the live file (``.bak`` of the old one) and archive ``v{version}.md``."""
+        dest = self._dirs["system"] / _DIRECTIVES_FILENAME
+        if dest.exists():
+            shutil.copy2(dest, dest.with_name(dest.name + ".bak"))
+        hist = self.directives_history_dir()
+        hist.mkdir(parents=True, exist_ok=True)
+        _atomic_write_text(hist / f"v{version}.md", text)
+        _atomic_write_text(dest, text)
+        return dest
+
+    def _next_directives_version(self) -> int:
+        return self.latest_directives_version() + 1
+
+    def write_directives(
+        self,
+        payload: dict,
+        *,
+        enforce_bounds: bool = True,
+        meta: dict[str, Any] | None = None,
+    ) -> Path:
+        """Validate an Overseer payload and install it as the next directives version.
+
+        The Hub owns the bookkeeping frontmatter: ``version`` (monotonic int, previous + 1),
+        ``knob_last_changed`` (knob -> version), ``last_overseer_*`` (carried over) and any
+        ``meta`` fields; whatever the Overseer put in those keys is discarded. The previous file is
+        copied to ``.bak`` and the new one archived to ``directives_history/v{N}.md``.
+
+        Raises
+        ------
+        VaultWriteError
+            If the payload fails ``DirectivesPayload`` validation, or (``enforce_bounds``) the
+            ``filters:`` change violates the guard-rails in ``config.trading_constants.BOUNDS``.
+            In both cases nothing is written.
+        """
+        from orchestrator.directives import (
+            DirectiveBoundsError,
+            changed_knobs,
+            validate_directive_change,
+        )
+        from orchestrator.research import split_yaml_frontmatter_markdown
+
+        try:
+            validated = DirectivesPayload.model_validate(payload)
+        except ValidationError as exc:
+            raise VaultWriteError("__system__", exc) from exc
+
+        old = self.read_directives()
+        new_version = self._next_directives_version()
+        new_md = validated.new_directives_markdown
+        try:
+            if enforce_bounds:
+                changed = validate_directive_change(old, new_md, new_version)
+            else:
+                changed = changed_knobs(old, new_md)
+        except DirectiveBoundsError as exc:
+            raise VaultWriteError("__system__", exc) from exc  # type: ignore[arg-type]
+
+        fm, body = split_yaml_frontmatter_markdown(new_md)
+        try:
+            old_fm = split_yaml_frontmatter_markdown(old)[0] if old.strip() else {}
+        except ValueError:
+            old_fm = {}
+        for key in ("restored_from", "restore_note", "migrated_from",
+                    "last_overseer_ledger_count", "last_overseer_at"):
+            fm.pop(key, None)
+        for key in ("last_overseer_ledger_count", "last_overseer_at"):
+            if key in old_fm:
+                fm[key] = old_fm[key]
+        klc = old_fm.get("knob_last_changed")
+        klc = dict(klc) if isinstance(klc, dict) else {}
+        for key in changed:
+            klc[key] = new_version
+        fm["version"] = new_version
+        fm["knob_last_changed"] = klc
+        fm.update(meta or {})
+        return self._install_directives(_dump_frontmatter(fm, body) + "\n", new_version)
+
+    def patch_directives_frontmatter(self, updates: dict[str, Any]) -> None:
+        """Merge ``updates`` into the live directives frontmatter (no version bump)."""
+        from orchestrator.research import split_yaml_frontmatter_markdown
+
+        dest = self._dirs["system"] / _DIRECTIVES_FILENAME
+        fm, body = split_yaml_frontmatter_markdown(dest.read_text(encoding="utf-8"))
+        fm.update(updates)
+        _atomic_write_text(dest, _dump_frontmatter(fm, body) + "\n")
+
+    def restore_directives(self, version: int, reason: str) -> int:
+        """Reinstall archived ``v{version}`` as a NEW version; return the new version number.
+
+        Bounds are not enforced (it is a known-good earlier document). The new frontmatter
+        records ``restored_from`` and ``restore_note``; knobs that differ from the replaced
+        document restart their cooldown.
+        """
+        text = self.read_directives_version(version)
+        if text is None:
+            raise FileNotFoundError(f"no archived directives v{version}")
+        self.write_directives(
+            {"new_directives_markdown": text, "rationale": reason},
+            enforce_bounds=False,
+            meta={"restored_from": int(version), "restore_note": reason},
+        )
+        return self.latest_directives_version()
+
+    def read_directives(self) -> str:
+        """Return the raw contents of ``active_directives.md``.
+
+        Returns
+        -------
+        str
+            Full file contents, or an empty string if the file does not exist.
+        """
+        directives_path = self._dirs["system"] / _DIRECTIVES_FILENAME
+        if not directives_path.exists():
+            return ""
+        return directives_path.read_text(encoding="utf-8")
+
+    def cold_start_protocol(self) -> bool:
+        """Write a seed ``active_directives.md`` if the file is missing or empty.
+
+        The seed file embeds the neutral defaults from
+        ``config/trading_constants.py`` so the Deep Researcher has a
+        functional baseline before the Overseer completes its first learning
+        loop.
+
+        Returns
+        -------
+        bool
+            ``True`` if the seed was written, ``False`` if a non-empty
+            directives file already exists.
+        """
+        directives_path = self._dirs["system"] / _DIRECTIVES_FILENAME
+        if directives_path.exists() and directives_path.stat().st_size > 0:
+            self._migrate_directives_version()
+            return False
+
+        seed_content = _build_seed_directives()
+        directives_path.parent.mkdir(parents=True, exist_ok=True)
+        self._install_directives(seed_content, 1)
+        return True
+
+    def _migrate_directives_version(self) -> None:
+        """Rewrite a legacy non-integer ``version`` (e.g. ``"0.1-seed"``) as integer 1."""
+        from orchestrator.research import split_yaml_frontmatter_markdown
+
+        text = self.read_directives()
+        try:
+            fm, body = split_yaml_frontmatter_markdown(text)
+        except ValueError:
+            return
+        raw = fm.get("version")
+        if isinstance(raw, int) and not isinstance(raw, bool):
+            return
+        fm["migrated_from"] = str(raw)
+        fm["version"] = 1
+        fm.setdefault("knob_last_changed", {})
+        self._install_directives(_dump_frontmatter(fm, body) + "\n", 1)
+
+
+# ---------------------------------------------------------------------------
+# Cold Start seed builder (module-level helper, not part of public API)
+# ---------------------------------------------------------------------------
+
+def _build_seed_directives() -> str:
+    """Return the full text of a seed ``active_directives.md``.
+
+    Embeds live values from ``trading_constants`` so the document is always
+    consistent with the rest of the configuration.
+    """
+    now_iso = datetime.now(tz=timezone.utc).isoformat()
+
+    # Build a YAML-safe representation of the FILTERS dict
+    filters_yaml_lines = "\n".join(
+        f"  {key}: {FILTERS[key]}" for key in BOUNDS
+    )
+
+    frontmatter_block = f"""\
+---
+version: 1
+knob_last_changed: {{}}
+seeded_at: "{now_iso}"
+overseer_updated: false
+---"""
+
+    body = f"""\
+# Active Directives for the Deep Researcher
+
+> **NOTE — COLD START SEED**
+> This file was auto-generated by the Cold Start Protocol because no prior
+> directives existed.  It will be overwritten the first time the Overseer
+> completes a learning loop.
+
+---
+
+## Research Protocol
+
+You are a fundamental analyst evaluating binary prediction markets on
+Polymarket.  For every market assigned to you, apply the following
+standard methodology before forming your probability estimate (`estimated_p`):
+
+1. **News Sentiment** — Search for recent news (last 7 days) regarding the
+   market subject.  Weight negative sentiment down, positive sentiment up,
+   but penalise thin coverage regardless of direction.
+
+2. **Upcoming Catalysts** — Identify scheduled events (earnings, elections,
+   regulatory decisions, economic releases) within the market's resolution
+   window.  Flag catalysts that could sharply shift the probability.
+
+3. **Liquidity & Market Health** — Check whether the market has sufficient
+   liquidity (the Hub gate already requires liquidity >= MIN_ORDER_USD / LIQ_FRAC).  Thin markets
+   carry higher spread risk; apply a conservatism discount to `estimated_p`
+   for markets below the threshold.
+
+4. **Base Rate Anchoring** — Start from a calibrated base rate for the
+   event class (e.g., incumbent re-election rates, historical merger
+   completion rates) before adjusting for specific evidence.
+
+5. **Thesis Balance** — You MUST produce both a Bull Thesis and a Bear
+   Thesis of comparable depth.  Asymmetric output (one section trivially
+   short) is a signal of anchoring bias.
+
+---
+
+## Filter Weightings (Neutral Defaults)
+
+The Hub's deterministic gate and research checks use the thresholds below
+(gate price band, days-to-resolution window, no-divergence width, sample
+disagreement, misread gap).  Do NOT override these in your analysis — they
+are applied by code, and only the Overseer may tune them (within bounds).
+
+```yaml
+filters:
+{filters_yaml_lines}
+```
+
+---
+
+## Risk Constraints
+
+The following constants are active for this session.  Respect them in your
+qualitative reasoning:
+
+| Parameter | Value | Meaning |
+|---|---|---|
+| `F_MAX` | `{F_MAX}` | Hard cap on fraction of bankroll per position |
+| `PAPER_TRADE_MODE` | `{PAPER_TRADE_MODE}` | Live API disabled — all trades are simulated |
+
+When `PAPER_TRADE_MODE` is `True`, you may be slightly more exploratory
+in borderline cases since no real capital is at risk.
+
+---
+
+## Output Requirements
+
+You MUST return your response in the exact format specified by the system:
+
+```
+---
+market_id: "<id>"
+estimated_p: <float between 0.0 and 1.0>
+error: null
+---
+
+## Bull Thesis
+
+<analysis>
+
+## Bear Thesis
+
+<analysis>
+
+## Post-Mortem
+```
+
+Leave the `## Post-Mortem` section empty.  The Orchestrator will populate
+it after the market resolves.
+
+---
+
+*This seed is active until the Overseer completes its first learning loop.*
+"""
+
+    return frontmatter_block + "\n\n" + body

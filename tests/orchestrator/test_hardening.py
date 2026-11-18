@@ -2,25 +2,27 @@
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 
 import pytest
+from pydantic import ValidationError
 
+from config.vault import VAULT_PATH_ENV, resolve_vault_base
 from obsidian_utils import ObsidianManager, VaultWriteError, _atomic_write_text
 from orchestrator import openclaw_cli
 from orchestrator.agent_outputs import parse_deep_researcher_json
-from orchestrator.directives import extract_filter_directives
 from orchestrator.parse import (
     AgentOutputParseError,
     coerce_deep_researcher_state_machine,
     parse_agent_json_or_yaml,
 )
 from orchestrator.research import split_yaml_frontmatter_markdown
-from orchestrator.scraper import select_q
-from orchestrator.schema_validation import AgentSchemaError, build_model, validate_payload
-from pydantic import ValidationError
+from orchestrator.schema_validation import (
+    AgentSchemaError,
+    build_model,
+    validate_payload,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -125,7 +127,7 @@ def _fake_cli(monkeypatch, runner):
     monkeypatch.setattr(openclaw_cli.time, "sleep", lambda s: None)
 
 
-def test_executioner_single_attempt(monkeypatch):
+def test_retry_false_single_attempt(monkeypatch):
     calls = []
 
     def run(cmd, **kw):
@@ -136,11 +138,7 @@ def test_executioner_single_attempt(monkeypatch):
 
     _fake_cli(monkeypatch, run)
     with pytest.raises(openclaw_cli.OpenClawCLIError):
-        openclaw_cli.run_agent("executioner", "m", session_key="k", timeout=5)
-    assert len(calls) == 1
-    calls.clear()
-    with pytest.raises(openclaw_cli.OpenClawCLIError):
-        openclaw_cli.run_agent("evaluator", "m", session_key="k", timeout=5, retry=False)
+        openclaw_cli.run_agent("triage", "m", session_key="k", timeout=5, retry=False)
     assert len(calls) == 1
 
 
@@ -150,7 +148,7 @@ def test_oserror_wrapped_and_help_timeout_not_cached(monkeypatch):
 
     _fake_cli(monkeypatch, run)
     with pytest.raises(openclaw_cli.OpenClawCLIError):
-        openclaw_cli.run_agent("evaluator", "m", session_key="k", timeout=5, retry=False)
+        openclaw_cli.run_agent("triage", "m", session_key="k", timeout=5, retry=False)
     ok, detail = openclaw_cli.gateway_reachable()
     assert ok is False and "Argument list too long" in detail
 
@@ -159,7 +157,7 @@ def test_oserror_wrapped_and_help_timeout_not_cached(monkeypatch):
 
     _fake_cli(monkeypatch, timeout_run)
     with pytest.raises(openclaw_cli.OpenClawCLIError, match="--help probe timed out"):
-        openclaw_cli.run_agent("evaluator", "m", session_key="k", timeout=5, retry=False)
+        openclaw_cli.run_agent("triage", "m", session_key="k", timeout=5, retry=False)
     assert openclaw_cli._SESSION_KEY_HELP_FLAG is None
 
 
@@ -170,18 +168,7 @@ def test_stdout_with_prefix_noise_recovered(monkeypatch):
         return subprocess.CompletedProcess(cmd, 0, stdout='warn: x\n{"a": 1}\n', stderr="")
 
     _fake_cli(monkeypatch, run)
-    assert openclaw_cli.run_agent("evaluator", "m", session_key="k", timeout=5) == {"a": 1}
-
-
-def test_extract_agent_text_prefers_last_payload_over_summary():
-    summary = "I reasoned about it. Draft: " + '{"status": "draft"}' + " " + "pad " * 500
-    out = openclaw_cli.extract_agent_text(
-        {
-            "summary": summary,
-            "payloads": [{"text": '{"status": "old"}'}, {"text": '{"status": "final"}'}],
-        }
-    )
-    assert json.loads(out) == {"status": "final"}
+    assert openclaw_cli.run_agent("triage", "m", session_key="k", timeout=5) == {"a": 1}
 
 
 def test_parse_prefers_embedded_json_over_yaml_prose():
@@ -210,22 +197,27 @@ def test_deep_researcher_error_and_unexpected_status():
     assert ok.error is None
 
 
-def test_directive_coercion():
-    md = (
-        "## Filter Weightings\n```yaml\nfilters:\n"
-        "  gate_min_q: '0.07'\n  min_days_to_resolution: -5\n"
-        "  research_max_q_gap: .inf\n  bogus: 1\n```\n"
-    )
-    from config.trading_constants import FILTERS
+def test_resolve_vault_base_uses_env(monkeypatch, tmp_path):
+    custom = tmp_path / "vault_workspace"
+    custom.mkdir()
+    monkeypatch.setenv(VAULT_PATH_ENV, str(custom))
 
-    out = extract_filter_directives(md)
-    assert out["gate_min_q"] == 0.07
-    assert out["min_days_to_resolution"] == FILTERS["min_days_to_resolution"]
-    assert out["research_max_q_gap"] == FILTERS["research_max_q_gap"]
+    assert resolve_vault_base() == custom.resolve()
 
 
-def test_select_q_order_and_range():
-    assert select_q({"yes_price": 0.3, "midpoint": 0.4}) == 0.3
-    assert select_q({"yes_price": 0.0, "last_trade_price": 1.0, "midpoint": 0.4}) == 0.4
-    assert select_q({"yes_price": float("nan"), "midpoint": True}) is None
-    assert select_q({}) is None
+def test_explicit_vault_base_overrides_env(monkeypatch, tmp_path):
+    explicit = tmp_path / "explicit"
+    explicit.mkdir()
+    monkeypatch.setenv(VAULT_PATH_ENV, str(tmp_path / "ignored"))
+
+    assert resolve_vault_base(explicit) == explicit.resolve()
+
+
+def test_obsidian_manager_uses_env_when_vault_base_omitted(monkeypatch, tmp_path):
+    custom = tmp_path / "vault_workspace"
+    custom.mkdir()
+    monkeypatch.setenv(VAULT_PATH_ENV, str(custom))
+
+    vault = ObsidianManager()
+    assert vault._base == custom.resolve()
+    assert vault._dirs["system"] == (custom / "Vault" / "00_System").resolve()

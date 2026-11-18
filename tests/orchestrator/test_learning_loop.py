@@ -17,7 +17,6 @@ from orchestrator.directives import (
     extract_filter_directives,
     validate_directive_change,
 )
-from orchestrator.scraper import MarketRow
 from tests.orchestrator.test_phase2_gate_triage import Triage, mk
 from tests.orchestrator.test_research_redesign import World, _seed
 

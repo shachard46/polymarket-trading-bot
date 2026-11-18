@@ -9,7 +9,6 @@ Env: ``CONCIERGE_APPROVAL`` (0/1, default 0), ``CONCIERGE_POLL_SEC`` (300),
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import time
@@ -17,7 +16,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from obsidian_utils import ObsidianManager
+from obsidian_utils import ObsidianManager, write_json_atomic
+from obsidian_utils import read_json as _read_json
 
 log = logging.getLogger(__name__)
 
@@ -54,10 +54,6 @@ def directive_ttl_sec() -> int:
 DIRECTIVE_ID_PREFIX = "directive-"
 
 
-def is_directive_id(value: Any) -> bool:
-    return str(value or "").startswith(DIRECTIVE_ID_PREFIX)
-
-
 def webhook_url() -> str | None:
     return os.environ.get("DISCORD_WEBHOOK_URL", "").strip() or None
 
@@ -92,18 +88,12 @@ def inbox_dir(vault: ObsidianManager) -> Path:
 
 
 def _write_json(path: Path, data: dict[str, Any]) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2, default=str, sort_keys=True), encoding="utf-8")
-    os.replace(tmp, path)
+    write_json_atomic(path, data, sort_keys=True, default=str)
     return path
 
 
 def read_json(path: Path) -> dict[str, Any] | None:
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
+    data = _read_json(path)
     return data if isinstance(data, dict) else None
 
 
@@ -257,11 +247,14 @@ def _offers_since(vault: ObsidianManager, cutoff: datetime) -> int:
     return n
 
 
-def build_digest(vault: ObsidianManager, now: datetime | None = None) -> dict[str, Any]:
+def build_digest(
+    vault: ObsidianManager, now: datetime | None = None, rows: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     from orchestrator import ledger, stats
 
     now = now or _utc_now()
-    rows = list(ledger.iter_rows(vault))
+    if rows is None:
+        rows = list(ledger.iter_rows(vault))
     s = stats.compute_stats(rows)
     day_ago, week_ago = now - timedelta(days=1), now - timedelta(days=7)
 
@@ -290,14 +283,16 @@ def build_digest(vault: ObsidianManager, now: datetime | None = None) -> dict[st
     }
 
 
-def emit_digest_if_due(vault: ObsidianManager, now: datetime | None = None) -> Path | None:
-    """Write ``digest-<UTC date>.json`` once per UTC day. Never raises."""
+def emit_digest_if_due(
+    vault: ObsidianManager, now: datetime | None = None, rows: list[dict[str, Any]] | None = None
+) -> Path | None:
+    """Write ``digest-<UTC date>.json`` once per UTC day (``rows``: an already-scanned ledger). Never raises."""
     try:
         now = now or _utc_now()
         path = digest_path(vault, now.strftime("%Y-%m-%d"))
         if path.exists():
             return None
-        digest = build_digest(vault, now)
+        digest = build_digest(vault, now, rows)
         _write_json(path, digest)
     except Exception:  # noqa: BLE001
         log.exception("digest failed")
@@ -311,7 +306,7 @@ def emit_digest_if_due(vault: ObsidianManager, now: datetime | None = None) -> P
 
 
 __all__ = [
-    "approval_enabled", "approve_directives_enabled", "directive_ttl_sec", "is_directive_id", "build_digest", "build_offer", "current_tick", "emit_digest_if_due", "emit_offer",
+    "approval_enabled", "approve_directives_enabled", "directive_ttl_sec", "build_digest", "build_offer", "current_tick", "emit_digest_if_due", "emit_offer",
     "inbox_dir", "move_to_done", "offer_message", "offer_path", "offer_ttl_sec", "outbox_dir",
     "poll_sec", "post_discord", "set_tick", "write_offer",
 ]

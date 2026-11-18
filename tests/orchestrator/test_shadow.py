@@ -4,17 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from obsidian_utils import ObsidianManager
 from config.trading_constants import SHADOW_MAX_PER_TICK, SHADOW_RATE
 from orchestrator import evidence, ledger, phases, stats
 from tests.orchestrator.test_research_redesign import World, _seed
-
-
-@pytest.fixture()
-def vault(tmp_path):
-    v = ObsidianManager(vault_base=tmp_path)
-    v.cold_start_protocol()
-    return v
 
 
 @pytest.fixture()

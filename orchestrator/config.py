@@ -51,7 +51,6 @@ OPENCLAW_AGENT_RETRY_BACKOFF_ENV = "OPENCLAW_AGENT_RETRY_BACKOFF"
 DEFAULT_OPENCLAW_AGENT_RETRY_BACKOFF = 2.0
 
 AUTO_REPLAY_ENV = "OPENCLAW_AUTO_REPLAY"
-AUTO_REPLAY_DLQ_ENV = "OPENCLAW_AUTO_REPLAY_DLQ"  # deprecated alias
 
 TOP_QUALITATIVE_MARKETS_ENV = "OPENCLAW_TOP_MARKETS"
 
@@ -153,8 +152,6 @@ def evidence_source() -> str:
     return mode
 
 
-EVIDENCE_SOURCE = evidence_source()  # import-time snapshot; phases call evidence_source()
-
 OVERSEER_MIN_NEW_RESOLVED_ENV = "OVERSEER_MIN_NEW_RESOLVED"
 DEFAULT_OVERSEER_MIN_NEW_RESOLVED = 30
 
@@ -237,7 +234,7 @@ def openclaw_agent_retry_backoff() -> float:
 
 def auto_replay() -> bool:
     """Return whether the orchestrator should clear inactive flags at startup."""
-    raw = os.environ.get(AUTO_REPLAY_ENV) or os.environ.get(AUTO_REPLAY_DLQ_ENV, "")
+    raw = os.environ.get(AUTO_REPLAY_ENV, "")
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
@@ -260,7 +257,6 @@ __all__ = [
     "OPENCLAW_AGENT_MAX_ATTEMPTS_ENV",
     "OPENCLAW_AGENT_RETRY_BACKOFF_ENV",
     "AUTO_REPLAY_ENV",
-    "AUTO_REPLAY_DLQ_ENV",
     "auto_replay",
     "openclaw_bin",
     "openclaw_agent_timeout",

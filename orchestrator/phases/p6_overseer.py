@@ -194,6 +194,7 @@ def phase6_macro_learning_loop(
         )
     except (ValueError, TypeError, AttributeError):
         pass  # malformed: let write_directives reject it
+    version = ledger.current_directive_version(vault)
     if not unchanged and notify.approve_directives_enabled():
         # Same guards as write_directives, but nothing is applied: the proposal waits for a vote.
         if _write_directive_proposal(vault, parsed, current, stats_md, n_resolved, now) is None:
@@ -206,11 +207,11 @@ def phase6_macro_learning_loop(
         except VaultWriteError as exc:
             log.error(
                 "Directives rejected: %s — keeping prior directives (v%d)",
-                exc.cause, ledger.current_directive_version(vault),
+                exc.cause, version,
             )
             return
     else:
-        log.info("[PHASE 6] Overseer proposed no change; keeping v%d", ledger.current_directive_version(vault))
+        log.info("[PHASE 6] Overseer proposed no change; keeping v%d", version)
     vault.patch_directives_frontmatter(
         {"last_overseer_ledger_count": n_resolved, "last_overseer_at": now.isoformat()}
     )
@@ -284,7 +285,7 @@ def process_directive_votes(vault: ObsidianManager, now: datetime | None = None)
 
     yes before expiry: re-validate against the CURRENT directives (rejected if the version moved) and
     apply through ``vault.write_directives``. no or expired: dropped. Offer votes (other id prefix)
-    are left for ``p4_execution.process_inbox``.
+    are left for ``p4_approval.process_inbox``.
     """
     now = now or datetime.now(timezone.utc)
     summary = {"applied": 0, "rejected": 0, "declined": 0, "expired": 0, "ignored": 0}

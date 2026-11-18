@@ -14,9 +14,9 @@ from orchestrator.config import (
     auto_replay,
     runner_mode,
 )
-from orchestrator import notify, runner as _runner
+from orchestrator import ledger, notify, runner as _runner
 from orchestrator.openclaw_cli import require_gateway
-from orchestrator.phases.p4_execution import process_inbox
+from orchestrator.phases.p4_approval import process_inbox
 from orchestrator.phases.p6_overseer import process_directive_votes
 from orchestrator.phases import (
     phase1_data_ingestion,
@@ -50,11 +50,16 @@ def run_pipeline_tick(vault: ObsidianManager) -> None:
     phase4_execution(vault, researched)
     phase5_resolution_and_post_mortem(vault)
     try:
-        write_stats(vault)
+        rows = list(ledger.iter_rows(vault))  # one ledger scan per tick, shared below
+    except Exception:  # noqa: BLE001 - fall back to each consumer scanning for itself
+        log.exception("ledger scan failed")
+        rows = None
+    try:
+        write_stats(vault, rows)
     except Exception:  # noqa: BLE001 - measurement must never break a tick
         log.exception("write_stats failed")
     try:
-        notify.emit_digest_if_due(vault)
+        notify.emit_digest_if_due(vault, rows=rows)
     except Exception:  # noqa: BLE001 - the digest must never break a tick
         log.exception("digest failed")
 

@@ -7,22 +7,14 @@ from typing import Any
 
 import pytest
 
-from obsidian_utils import ObsidianManager
 from orchestrator import ledger, phases, polymarket_api
-from orchestrator.phases import common
+from orchestrator.phases import common, p3_queue
 from orchestrator.scraper import MarketRow
 
 
 @pytest.fixture(autouse=True)
 def _no_holder_network(monkeypatch):
     monkeypatch.setattr(polymarket_api, "fetch_holder_concentration", lambda cid: None)
-
-
-@pytest.fixture()
-def vault(tmp_path):
-    v = ObsidianManager(vault_base=tmp_path)
-    v.cold_start_protocol()
-    return v
 
 
 def mk(mid: str, *, vol: float = 1_000.0, event_id: str | None = None, **over: Any) -> MarketRow:
@@ -293,3 +285,24 @@ def test_old_cache_without_field_stays_unknown_in_phase3(vault, monkeypatch):
     vault.patch_frontmatter("skip", "filters", {"triage": {"researchable": True, "category": "x", "reason": "r"}})
     _run_p3_p4(vault, monkeypatch, rows)
     assert _row_for(vault, "skip")["research_skip"]["manipulation_risk"] == "unknown"
+
+
+def test_build_phase3_queue_sorts_and_caps(monkeypatch, vault):
+    monkeypatch.setattr(p3_queue, "top_qualitative_markets", lambda: 2)
+
+    mult_by_id = {"low": 1.0, "high": 5.0, "mid": 3.0}
+    for mid, mult in mult_by_id.items():
+        vault.write_filter_log(
+            mid,
+            {
+                "market_id": mid,
+                "passed": True,
+                "trigger": "stub",
+                "confidence_multiplier": mult,
+                "details": "ok",
+                "error": None,
+            },
+        )
+
+    queue = phases.build_phase3_queue(vault)
+    assert [c.market_id for c in queue] == ["high", "mid"]

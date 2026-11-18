@@ -7,10 +7,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from config.trading_constants import BOUNDS, FILTERS
+from config.trading_constants import FILTERS
 from obsidian_utils import ObsidianManager
-from orchestrator import ledger, notify, phases
-from orchestrator.phases import p4_execution
+from orchestrator import notify, phases
+from orchestrator.phases import p4_approval
 from orchestrator.phases.p6_overseer import process_directive_votes
 from tests.orchestrator.test_learning_loop import add_resolutions, doc
 
@@ -118,7 +118,7 @@ def test_offer_and_directive_votes_do_not_collide(vault, monkeypatch):
     _vote(vault, "directive-v2", "yes")
     offer_vote = notify.inbox_dir(vault) / "vote-0xabc-T1.json"
     offer_vote.write_text(json.dumps({"offer_id": "0xabc-T1", "vote": "yes"}))
-    p4_execution.process_inbox(vault)
+    p4_approval.process_inbox(vault)
     assert (notify.inbox_dir(vault) / "vote-directive-v2.json").exists()  # untouched by offers
     assert not offer_vote.exists()  # offers processor handled (ignored: unknown offer)
     summary = process_directive_votes(vault)

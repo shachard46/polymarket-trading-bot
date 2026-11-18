@@ -5,9 +5,9 @@ from __future__ import annotations
 import pytest
 
 from config.trading_constants import TRIAGE_SHADOW_MAX_PER_TICK, TRIAGE_SHADOW_RATE
-from obsidian_utils import ObsidianManager
-from orchestrator import ledger, phases, polymarket_api, stats
+from orchestrator import phases, polymarket_api, stats
 from orchestrator.phases import p2_routing
+from tests.orchestrator.helpers import _rows
 from tests.orchestrator.test_phase2_gate_triage import Triage, mk
 from tests.orchestrator.test_research_redesign import World
 
@@ -15,13 +15,6 @@ from tests.orchestrator.test_research_redesign import World
 @pytest.fixture(autouse=True)
 def _no_holder_network(monkeypatch):
     monkeypatch.setattr(polymarket_api, "fetch_holder_concentration", lambda cid: None)
-
-
-@pytest.fixture()
-def vault(tmp_path):
-    v = ObsidianManager(vault_base=tmp_path)
-    v.cold_start_protocol()
-    return v
 
 
 @pytest.fixture()
@@ -43,10 +36,6 @@ def _retired(vault, mid, *, pending=True, risk="low", reason="coin flip"):
         "market_id": mid, "passed": False, "trigger": "triage_reject", "confidence_multiplier": 0.0,
         "details": "x", "error": None, "status": "retired", "triage": triage,
     })
-
-
-def _rows(vault, stage):
-    return [r for r in ledger.iter_rows(vault) if r["stage"] == stage]
 
 
 def test_selection_is_stable_and_near_rate():

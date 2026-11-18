@@ -212,17 +212,14 @@ def run_agent(
     *,
     session_key: str,
     timeout: int | None = None,
-    retry: bool | None = None,
+    retry: bool = True,
 ) -> dict[str, Any]:
     """Run an OpenClaw agent through the local Gateway and return CLI JSON.
 
-    ``retry=None`` retries read-only roles but never the ``executioner`` (a
-    retry could double-submit a trade); ``retry=False`` forces one attempt.
+    ``retry=False`` forces one attempt.
     """
     binary = _resolved_openclaw_bin()
     run_timeout = timeout or openclaw_agent_timeout()
-    if retry is None:
-        retry = agent_id != "executioner"
     max_attempts = openclaw_agent_max_attempts() if retry else 1
     backoff = openclaw_agent_retry_backoff()
 

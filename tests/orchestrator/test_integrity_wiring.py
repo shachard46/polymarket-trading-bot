@@ -6,17 +6,10 @@ import time
 
 import pytest
 
-from obsidian_utils import ObsidianManager
 from orchestrator import ledger, phases, polymarket_api, stats
 from orchestrator.phases import common
+from tests.orchestrator.helpers import _rows
 from tests.orchestrator.test_phase2_gate_triage import Triage, mk
-
-
-@pytest.fixture()
-def vault(tmp_path):
-    v = ObsidianManager(vault_base=tmp_path)
-    v.cold_start_protocol()
-    return v
 
 
 def _wash_trades():
@@ -25,10 +18,6 @@ def _wash_trades():
         {"proxy_wallet": "0xw", "side": "BUY", "size": 100.0, "price": 0.5, "timestamp": now - i * 3600}
         for i in range(12)
     ]
-
-
-def _rows(vault, stage):
-    return [r for r in ledger.iter_rows(vault) if r["stage"] == stage]
 
 
 def test_wallet_dominated_rejects_with_backoff_and_ledger(vault, monkeypatch):

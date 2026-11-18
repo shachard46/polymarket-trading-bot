@@ -12,6 +12,7 @@ from config.trading_constants import BELOW_EDGE_KEY
 from orchestrator import ledger
 from orchestrator.config import RUNNER_MODE_DIRECT, direct_model, runner_mode
 from orchestrator.state import vault_write_or_flag
+from orchestrator.util import to_float
 
 # One logger name for the whole package (the module used to be ``orchestrator.phases``).
 log = logging.getLogger("orchestrator.phases")
@@ -139,9 +140,6 @@ def _carry_filter_signals(
     return market_data
 
 
-_carry_manipulation_risk = _carry_filter_signals  # backward-compatible name
-
-
 def _ledger_safe(
     vault: ObsidianManager, market_id: str, stage: str, **fields: Any
 ) -> dict[str, Any] | None:
@@ -154,14 +152,7 @@ def _ledger_safe(
         return None
 
 
-def _as_float(value: Any) -> float | None:
-    if isinstance(value, bool) or value is None:
-        return None
-    try:
-        out = float(value)
-    except (TypeError, ValueError):
-        return None
-    return out if out == out else None
+_as_float = to_float
 
 
 _FILTER_FIELDS = tuple(FilterLogPayload.model_fields)
