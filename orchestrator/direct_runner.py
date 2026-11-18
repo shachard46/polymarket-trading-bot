@@ -7,6 +7,7 @@ Discord bot.
 
 from __future__ import annotations
 
+import contextvars
 from typing import Any
 
 from orchestrator.llm import routing
@@ -16,6 +17,26 @@ from orchestrator.llm.base import LLMError, LLMRequest, LLMResponse
 DirectRunnerError = LLMError
 
 _WEB_TOOLS = frozenset({"web_search", "web_fetch"})
+
+
+# Retrieved URLs (and model id) of the most recent direct call; each run_direct overwrites it, so after
+# format retries the accepted (last) call's citations are the ones that count.
+_last_call: contextvars.ContextVar[tuple[list[str] | None, str | None]] = contextvars.ContextVar(
+    "direct_last_call", default=(None, None)
+)
+
+
+def last_citations() -> list[str] | None:
+    """URLs the last :func:`run_direct` call's web tool retrieved (None = unknown / no such call)."""
+    return _last_call.get()[0]
+
+
+def last_model() -> str | None:
+    return _last_call.get()[1]
+
+
+def reset_last_call() -> None:
+    _last_call.set((None, None))
 
 
 def require_api_key() -> None:
@@ -31,11 +52,14 @@ def _web_for(spec: dict[str, Any]) -> bool:
 
 def run_direct(role: str, spec: dict[str, Any], payload: dict[str, Any]) -> str:
     """Run one agent call through the role's configured provider and return the response text."""
+    reset_last_call()
     with usage.market_scope(payload.get("market_id")):
-        return routing.llm_for(role).complete(
+        resp = routing.llm_for(role).complete(
             spec.get("system_prompt") or "", _live_prompt(role, spec, payload),
             json_mode=_json_mode(spec), web=_web_for(spec),
-        ).text
+        )
+    _last_call.set((getattr(resp, "citations", None), getattr(resp, "model", None)))
+    return resp.text
 
 
 def _json_mode(spec: dict[str, Any]) -> bool:
@@ -72,4 +96,4 @@ def complete(role: str, system_prompt: str, user_text: str) -> str:
     return routing.llm_for(role).complete(system_prompt, user_text).text
 
 
-__all__ = ["DirectRunnerError", "complete", "require_api_key", "run_direct", "run_many"]
+__all__ = ["DirectRunnerError", "complete", "last_citations", "last_model", "reset_last_call", "require_api_key", "run_direct", "run_many"]

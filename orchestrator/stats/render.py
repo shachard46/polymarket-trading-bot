@@ -26,11 +26,14 @@ from orchestrator.stats.groups import (
     signal_coverage_stats,
     triage_shadow_stats,
 )
-from orchestrator.stats.cost import cost_stats
+from orchestrator.stats.cost import cost_stats, web_filter_stats
 from orchestrator.stats.pnl import TAX, _group, _pnl_groups, offers_stats, pnl_summary
 
 
-def compute_stats(rows: list[dict[str, Any]], usage: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def compute_stats(
+    rows: list[dict[str, Any]], usage: list[dict[str, Any]] | None = None,
+    web_filter: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Every statistic over ``rows`` (ledger rows, scanned once by the caller) and LLM ``usage`` rows."""
     res = resolutions(rows)
     triples = scored_triples(rows)
@@ -74,6 +77,7 @@ def compute_stats(rows: list[dict[str, Any]], usage: list[dict[str, Any]] | None
     out["false_negative"] = false_negative_rate(rows)
     out["lambda"] = fit_lambda(rows)
     out["cost"] = cost_stats(rows, usage or [])
+    out["web_filter"] = web_filter_stats(web_filter or [])
     return out
 
 
@@ -263,6 +267,22 @@ def _render_cost(s: dict[str, Any]) -> list[str]:
     return L + [""]
 
 
+def _render_web_filter(s: dict[str, Any]) -> list[str]:
+    w = s.get("web_filter")
+    L = ["", "## Web evidence filter", ""]
+    if not w or not w["n_calls"]:
+        return L + ["No web evidence filter rows yet.", ""]
+    t = w["total"]
+    L.append(
+        f"Total: kept {t['kept']}, dropped (no url) {t['dropped_no_url']}, "
+        f"dropped (unretrieved url) {t['dropped_unretrieved']}; drop rate {_fmt(t['drop_rate'])}."
+    )
+    L += ["", "| model | kept | dropped no url | dropped unretrieved | drop rate |", "|---|---|---|---|---|"]
+    for m, v in w["by_model"].items():
+        L.append(f"| {m} | {v['kept']} | {v['dropped_no_url']} | {v['dropped_unretrieved']} | {_fmt(v['drop_rate'])} |")
+    return L + [""]
+
+
 def render_stats(s: dict[str, Any]) -> str:
     L = _render_model_vs_market(s)
     L += _render_brier_by(s, "evidence source", "evidence_source", "brier_by_evidence_source")
@@ -273,6 +293,7 @@ def render_stats(s: dict[str, Any]) -> str:
         _render_shadow, _render_signal_coverage, _render_triage_shadow, _render_indep,
         _render_gate_flags, _render_integrity, _render_offers, _render_calibration,
         _render_pnl, _render_counterfactual, _render_false_negative_and_lambda, _render_cost,
+        _render_web_filter,
     ):
         L += section(s)
     return "\n".join(L)
@@ -282,8 +303,8 @@ def write_stats(vault: ObsidianManager, rows: list[dict[str, Any]] | None = None
     """Render ``00_System/stats.md``; pass ``rows`` to reuse an already-scanned ledger."""
     if rows is None:
         rows = list(ledger.iter_rows(vault))
-    from orchestrator.llm.usage import iter_usage
+    from orchestrator.llm.usage import iter_usage, iter_web_filter
 
     path = vault._dirs["system"] / "stats.md"
     usage = iter_usage(vault._base)
-    path.write_text(render_stats(compute_stats(rows, usage)), encoding="utf-8")
+    path.write_text(render_stats(compute_stats(rows, usage, iter_web_filter(vault._base))), encoding="utf-8")

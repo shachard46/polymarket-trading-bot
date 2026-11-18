@@ -25,6 +25,24 @@ def _sum_by(usage: list[dict[str, Any]], field: str) -> dict[str, float]:
     return dict(sorted(out.items()))
 
 
+def web_filter_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Totals and drop rate of the web-evidence filter, overall and by model."""
+    by_model: dict[str, list[int]] = defaultdict(lambda: [0, 0, 0])
+    for r in rows:
+        m = by_model[str(r.get("model") or "unknown")]
+        m[0] += int(_num(r.get("kept")) or 0)
+        m[1] += int(_num(r.get("dropped_no_url")) or 0)
+        m[2] += int(_num(r.get("dropped_unretrieved")) or 0)
+
+    def pack(v: list[int]) -> dict[str, Any]:
+        total = sum(v)
+        return {"kept": v[0], "dropped_no_url": v[1], "dropped_unretrieved": v[2],
+                "drop_rate": (v[1] + v[2]) / total if total else None}
+
+    tot = [sum(v[i] for v in by_model.values()) for i in range(3)]
+    return {"n_calls": len(rows), "total": pack(tot), "by_model": {m: pack(v) for m, v in sorted(by_model.items())}}
+
+
 def cost_stats(rows: list[dict[str, Any]], usage: list[dict[str, Any]], now: datetime | None = None) -> dict[str, Any]:
     """Cost per day / role / model / market, Brier-per-dollar by model, unknown-price counts."""
     now = now or datetime.now(tz=timezone.utc)

@@ -100,6 +100,46 @@ def record(role: str, resp: LLMResponse, *, batch: bool = False) -> None:
         log.warning("llm usage record failed", exc_info=True)
 
 
+WEB_FILTER_FILE = "web_filter.jsonl"
+
+
+def record_web_filter(
+    model: str | None, kept: int, dropped_no_url: int, dropped_unretrieved: int,
+    *, market_id: str | None = None,
+) -> None:
+    """Append one web-evidence-filter row (own file, so llm_usage call counts stay untouched); never raises."""
+    try:
+        row = {
+            "ts": datetime.now(tz=timezone.utc).isoformat(),
+            "model": model or "unknown",
+            "market_id": market_id or current_market(),
+            "kept": kept,
+            "dropped_no_url": dropped_no_url,
+            "dropped_unretrieved": dropped_unretrieved,
+        }
+        path = usage_path().with_name(WEB_FILTER_FILE)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row) + "\n")
+    except Exception:  # noqa: BLE001 - accounting must never break a run
+        log.warning("web filter record failed", exc_info=True)
+
+
+def iter_web_filter(vault_base: str | Path | None = None) -> list[dict[str, Any]]:
+    path = usage_path(vault_base).with_name(WEB_FILTER_FILE)
+    if not path.exists():
+        return []
+    out = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            out.append(row)
+    return out
+
+
 def iter_usage(vault_base: str | Path | None = None) -> list[dict[str, Any]]:
     """All usage rows (bad lines skipped)."""
     path = usage_path(vault_base)

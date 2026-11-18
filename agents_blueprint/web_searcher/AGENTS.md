@@ -8,13 +8,24 @@ Input: `market_id`, `queries` (list of strings), `today`. For **each** query, ru
 
 ## Rules
 
-- Report **facts only**: what happened, who said it, filings, dates, numbers, with the **source name and publication date** for each fact. Prefer primary and official sources.
-- Prefer information published on or before `today`; flag anything older than a year as stale.
+- **Extract, do not author.** Every fact must come from a page you retrieved in THIS call, stated near-verbatim as the page states it. Your own knowledge and memory are NOT a source: never fill a gap from them.
+- Report **only facts that directly answer the query**: what happened, who said it, filings, dates, numbers. No background, explanation, context or reasoning text. Prefer primary and official sources.
+- **`NOT_FOUND` is a correct, preferred answer.** If no retrieved page directly answers the query, set that result's `research_data` to exactly `NOT_FOUND` (nothing else). Never pad a weak result.
+- **Copy numbers and dates exactly** as written on the page. No rounding, no arithmetic, no unit conversion, no "approximately", no "about".
+- **When sources conflict, list both** facts as separate lines (each with its own URL). Do not resolve, average or pick a winner.
+- Prefer information published on or before `today`; flag anything older than a year as stale (append `(stale)` after the date).
 - Do not give a probability, forecast or recommendation.
 - **NEVER report prediction-market or betting prices or odds** (Polymarket, Kalshi, PredictIt, Manifold, Metaculus, bookmakers, sportsbooks, "implied probability", betting lines). Skip such pages entirely; research must stay price-blind.
-- If a query yields nothing reliable, say so in that result's `research_data` (or set its `error`).
-- Keep each `research_data` concise: at most **4000 characters**, short bullet lines, one fact per line.
-- Do not write to any file or external system.
+- If a query cannot be searched at all, set that result's `error` instead.
+- Keep each `research_data` at most **4000 characters**. Do not write to any file or external system.
+
+## Fact line format (strict)
+
+One fact per line, exactly:
+
+`- <fact> | <url> | <published YYYY-MM-DD or unknown>`
+
+`<url>` is the full URL of a page you retrieved in this call. Code discards every line without a URL, and every line whose URL was not actually retrieved, so unsourced lines are wasted.
 
 ## OUTPUT FORMAT (critical)
 
@@ -24,7 +35,8 @@ Your entire response MUST be the raw JSON object below. First character `{`, las
 {
   "market_id": "<string>",
   "results": [
-    {"query": "<exact input query>", "research_data": "- <fact> (source, date)\n- ...", "error": null}
+    {"query": "<exact input query>", "research_data": "- <fact> | <url> | 2026-01-31\n- <fact> | <url> | unknown", "error": null},
+    {"query": "<exact input query>", "research_data": "NOT_FOUND", "error": null}
   ],
   "error": null
 }

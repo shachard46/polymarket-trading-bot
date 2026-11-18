@@ -11,6 +11,11 @@ Providers without a batch API (OpenRouter) ignore it. ``PMBOT_LLM_BATCH_POLL_SEC
 ``PMBOT_LLM_BATCH_MAX_WAIT_SEC`` (1200) bound the wait; on timeout the batch is cancelled and the
 unfinished items run synchronously. The flag is read from the YAML role entry even when an env override
 swaps the provider/model.
+
+Optional per-role `temperature` (float) and `reasoning` (bool; false disables thinking, unset = provider
+default) follow the same rule. OpenRouter sends `temperature` and `reasoning: {enabled: false}`; Gemini sends
+`generationConfig.temperature` and `thinkingConfig.thinkingLevel` (lowest supported level); Anthropic sends
+`temperature` only.
 """
 
 from __future__ import annotations
@@ -40,6 +45,8 @@ class ModelSpec(BaseModel):
     max_tokens: int | None = None
     web_max_uses: int | None = None
     batch: bool = False
+    temperature: float | None = None  # optional sampling temperature (all providers)
+    reasoning: bool | None = None  # False disables thinking (OpenRouter, Gemini); unset = provider default
 
 
 class ModelsConfig(BaseModel):
@@ -112,19 +119,24 @@ def spec_for(role: str) -> ModelSpec:
         "max_tokens": spec.max_tokens or cfg.max_tokens,
         "web_max_uses": spec.web_max_uses or cfg.web_max_uses,
         "batch": cfg.roles[role].batch if role in cfg.roles else False,
+        "temperature": cfg.roles[role].temperature if role in cfg.roles else None,
+        "reasoning": cfg.roles[role].reasoning if role in cfg.roles else None,
     })
 
 
 def llm_for(role: str) -> LLM:
     """One cached :class:`LLM` instance per distinct role spec."""
     spec = spec_for(role)
-    key = (role, spec.provider, spec.model, spec.max_tokens, spec.web_max_uses, spec.batch)
+    key = (role, spec.provider, spec.model, spec.max_tokens, spec.web_max_uses, spec.batch,
+           spec.temperature, spec.reasoning)
     if key not in _instances:
         llm = PROVIDERS[spec.provider](
             model=spec.model, max_tokens=spec.max_tokens, web_max_uses=spec.web_max_uses
         )
         llm.role = role
         llm.batch_enabled = spec.batch
+        llm.temperature = spec.temperature
+        llm.reasoning = spec.reasoning
         _instances[key] = llm
     return _instances[key]
 

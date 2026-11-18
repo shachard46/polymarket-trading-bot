@@ -36,6 +36,10 @@ class OpenRouterLLM(HttpLLM):
                 {"role": "user", "content": user},
             ],
         }
+        if self.temperature is not None:
+            body["temperature"] = self.temperature
+        if self.reasoning is False:  # documented: reasoning.enabled=false (effort "none" is rejected by some models)
+            body["reasoning"] = {"enabled": False}
         if json_mode:
             body["response_format"] = {"type": "json_object"}
         if web:
@@ -54,7 +58,8 @@ class OpenRouterLLM(HttpLLM):
             code = err.get("code")
             raise HttpStatusError(code if isinstance(code, int) else 502, str(err.get("message")))
         try:
-            content = data["choices"][0]["message"].get("content")
+            message = data["choices"][0]["message"]
+            content = message.get("content")
         except (KeyError, IndexError, TypeError, AttributeError) as exc:
             raise HttpStatusError(502, "response has no choices[0].message") from exc
         usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
@@ -62,4 +67,19 @@ class OpenRouterLLM(HttpLLM):
             content if isinstance(content, str) else "",
             self.provider_name, self.model,
             usage.get("prompt_tokens"), usage.get("completion_tokens"),
+            citations=_citations(message),
         )
+
+
+def _citations(message: dict[str, Any]) -> list[str] | None:
+    """URLs of the web plugin's ``url_citation`` annotations (None when the field is absent)."""
+    ann = message.get("annotations")
+    if not isinstance(ann, list):
+        return None
+    urls: list[str] = []
+    for a in ann:
+        if isinstance(a, dict) and a.get("type") == "url_citation":
+            url = (a.get("url_citation") or {}).get("url")
+            if isinstance(url, str) and url and url not in urls:
+                urls.append(url)
+    return urls

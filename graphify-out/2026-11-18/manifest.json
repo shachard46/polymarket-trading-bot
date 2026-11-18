@@ -30,8 +30,8 @@
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/orchestrator/config.py": {
-    "mtime": 1795014376.8091877,
-    "ast_hash": "80ee7d449f8200358a686d49f66a458a",
+    "mtime": 1795014602.0662649,
+    "ast_hash": "bbd61ff24dab0ed78179f77af4275892",
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/orchestrator/directives.py": {
@@ -65,8 +65,8 @@
     "semantic_hash": "c7a0ec2eb5a007eb20a775bbedc7766c"
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/orchestrator/runner.py": {
-    "mtime": 1795014376.8088002,
-    "ast_hash": "123837f4dca64713d14f18b2cc958f3c",
+    "mtime": 1795014642.3177204,
+    "ast_hash": "a5191fd41e86556d22304e08c13cd894",
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/orchestrator/schema_validation.py": {
@@ -210,13 +210,13 @@
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/docs/01_architecture.md": {
-    "mtime": 1795013867.175339,
-    "ast_hash": "dd138ccb076528bbc57f5c8b190bc5e1",
+    "mtime": 1795014867.2778301,
+    "ast_hash": "beb282f4464e0a33d495033b95a22e02",
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/docs/02_orchestrator_pipeline.md": {
-    "mtime": 1795014376.803964,
-    "ast_hash": "6de21002acd2231f34b8564cb9b1e799",
+    "mtime": 1795014867.251294,
+    "ast_hash": "8f5ef957104ebde3b48ab3ded8c07db8",
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/docs/03_strategy_math.md": {
@@ -365,8 +365,8 @@
     "semantic_hash": "3acbf8aa2796c05ccbfeee6442eb48d5"
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/CLAUDE.md": {
-    "mtime": 1795014376.790674,
-    "ast_hash": "1cc35e46ea2cfecff692c0a1515c3a09",
+    "mtime": 1795014867.129479,
+    "ast_hash": "7a897b8a13e4dfbdfc42544f5f3b572a",
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/agents_blueprint/triage/AGENTS.md": {
@@ -460,8 +460,8 @@
     "semantic_hash": "8e69b530cd69ca8b7c6925df628f2f06"
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/orchestrator/phases/p2_routing.py": {
-    "mtime": 1795014376.8201845,
-    "ast_hash": "a96ac01a19de1d497e96bcee2aafc40c",
+    "mtime": 1795014660.7939556,
+    "ast_hash": "8d7fd1bbf8add71322256209609c9932",
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/orchestrator/phases/p3_evidence.py": {
@@ -475,13 +475,13 @@
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/orchestrator/phases/p3_queue.py": {
-    "mtime": 1795014376.8224666,
-    "ast_hash": "a30ce006d00d668e064b71a14df23c69",
+    "mtime": 1795014660.9602652,
+    "ast_hash": "fdce276082ba06c76ff79e069dc9e10e",
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/orchestrator/phases/p3_quick.py": {
-    "mtime": 1795012026.9437795,
-    "ast_hash": "facc8b89ce669bf46b2ad286c247d685",
+    "mtime": 1795014660.8663185,
+    "ast_hash": "915374504729a9f098cfeda14043850c",
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/orchestrator/phases/p4_execution.py": {
@@ -545,8 +545,8 @@
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/docs/TODO.md": {
-    "mtime": 1795014386.321133,
-    "ast_hash": "a8a2cf9c3472964f27c24024001c9b76",
+    "mtime": 1795014867.2253761,
+    "ast_hash": "2d93b4e2df0f1ea9ceb8567d398a1e71",
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/orchestrator/market_integrity.py": {
@@ -580,8 +580,8 @@
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/orchestrator/direct_runner.py": {
-    "mtime": 1795013545.2157707,
-    "ast_hash": "6304c7c279e5f8669748b58ab02d443f",
+    "mtime": 1795014633.719518,
+    "ast_hash": "34eef07f68de1ad02f7973c57a667def",
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/orchestrator/notify.py": {
@@ -690,8 +690,8 @@
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/orchestrator/stats/render.py": {
-    "mtime": 1795013384.7896872,
-    "ast_hash": "6a5309aeb8c5bcf43fb7c2b81f1ffa35",
+    "mtime": 1795014554.2588694,
+    "ast_hash": "fc62171a70d88cff0228139b3b40110a",
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/orchestrator/util.py": {
@@ -715,28 +715,28 @@
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/orchestrator/llm/__init__.py": {
-    "mtime": 1795013368.6631556,
-    "ast_hash": "af7a0a0f7eb6bd46fe3e6230a7631b75",
+    "mtime": 1795014624.5195854,
+    "ast_hash": "b7f5f115800b4c59f1ecde8d3e1d9d12",
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/orchestrator/llm/anthropic_llm.py": {
-    "mtime": 1795013368.5394318,
-    "ast_hash": "de72069771cadeeb820c10b86252480a",
+    "mtime": 1795014624.241303,
+    "ast_hash": "1cce2e5d626e468d409b93a6ccd8c26c",
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/orchestrator/llm/base.py": {
-    "mtime": 1795014376.8192487,
-    "ast_hash": "b47c67dae4b42ab3a542259137724cb1",
+    "mtime": 1795014601.930761,
+    "ast_hash": "b829e38fa198671b2741d98de7051c42",
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/orchestrator/llm/gemini_llm.py": {
-    "mtime": 1795014386.2392437,
-    "ast_hash": "74f70096673c43f318afc34351175b6c",
+    "mtime": 1795014624.3552017,
+    "ast_hash": "61838714ba2718df7809bbd04fb0bab3",
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/orchestrator/llm/http_llm.py": {
-    "mtime": 1795014376.818776,
-    "ast_hash": "739573a15f7248478c3520672e27648d",
+    "mtime": 1795014624.273659,
+    "ast_hash": "2236403b1eff58d80e0aef7b56204b2a",
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/orchestrator/llm/openrouter_llm.py": {
@@ -750,8 +750,8 @@
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/orchestrator/llm/routing.py": {
-    "mtime": 1795013368.6326194,
-    "ast_hash": "11d3fd74b6a8ea9d514069e8d4883552",
+    "mtime": 1795014624.458372,
+    "ast_hash": "74e5931e42509101d52802bd53f1be01",
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/tests/orchestrator/test_discord_bot.py": {
@@ -760,8 +760,8 @@
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/tests/orchestrator/test_gemini_llm.py": {
-    "mtime": 1795014386.2886038,
-    "ast_hash": "6755c40bfb3818c292671be9835ba99c",
+    "mtime": 1795014438.619318,
+    "ast_hash": "71907a38c1bdf8f3f0357d616943eb2e",
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/tests/orchestrator/test_llm_providers.py": {
@@ -777,6 +777,56 @@
   "/Users/shachardavid/projects/polymarket-trading-bot/config/models.yaml": {
     "mtime": 1795013987.9055922,
     "ast_hash": "c49d709456c763fc440d0504d04abf49",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/deploy/backup.sh": {
+    "mtime": 1795014590.0126345,
+    "ast_hash": "7d63a58018d0fd59d2215eeec0472f6a",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/deploy/setup.sh": {
+    "mtime": 1795014589.9877129,
+    "ast_hash": "c9e3fe83d24f1a70950ed4230f017b1f",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/orchestrator/llm/usage.py": {
+    "mtime": 1795014553.8512602,
+    "ast_hash": "894965fa41a4c5f6009017cd00588a1c",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/orchestrator/stats/cost.py": {
+    "mtime": 1795014553.9096513,
+    "ast_hash": "d69c089e22ddbc71ee2dcf7c6ea76794",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/tests/conftest.py": {
+    "mtime": 1795014564.9355645,
+    "ast_hash": "60dcbbfa0e0a9fa3bcc59a07e72ad6c9",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/tests/orchestrator/test_llm_batch.py": {
+    "mtime": 1795014793.3896139,
+    "ast_hash": "3260f9ab6469f076be258112d581af99",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/tests/orchestrator/test_llm_usage.py": {
+    "mtime": 1795014564.9575155,
+    "ast_hash": "e50755d4cae60259998f14e9e2e64344",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/tests/test_deploy.py": {
+    "mtime": 1795014590.2236068,
+    "ast_hash": "a2e03509f50f92c1e553d006fcad548e",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/config/prices.yaml": {
+    "mtime": 1795014553.8821905,
+    "ast_hash": "b5de784f24b4f8924f60017d19c4298c",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/deploy/README.md": {
+    "mtime": 1795014590.1841195,
+    "ast_hash": "99713ead92782ae6b5a35144209de913",
     "semantic_hash": ""
   }
 }

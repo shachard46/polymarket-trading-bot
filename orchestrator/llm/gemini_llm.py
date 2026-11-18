@@ -27,6 +27,12 @@ class GeminiLLM(HttpLLM):
 
     def _body(self, system: str, user: str, json_mode: bool, web: bool) -> dict[str, Any]:
         gen_cfg: dict[str, Any] = {"maxOutputTokens": self.max_tokens}
+        if self.temperature is not None:
+            gen_cfg["temperature"] = self.temperature
+        if self.reasoning is False:
+            # Lowest thinking level the model supports ("minimal" is not supported on Gemini 4 models).
+            level = "low" if "gemini-4" in self.model else "minimal"
+            gen_cfg["thinkingConfig"] = {"thinkingLevel": level}
         if json_mode:
             gen_cfg["responseMimeType"] = "application/json"
         body: dict[str, Any] = {
@@ -161,4 +167,15 @@ class GeminiLLM(HttpLLM):
             model=self.model,
             input_tokens=inp,
             output_tokens=out,
+            citations=_grounding_urls(cand) if "groundingMetadata" in cand else None,
         )
+
+
+def _grounding_urls(cand: dict[str, Any]) -> list[str]:
+    chunks = (cand.get("groundingMetadata") or {}).get("groundingChunks") or []
+    urls: list[str] = []
+    for ch in chunks:
+        uri = (ch.get("web") or {}).get("uri") if isinstance(ch, dict) else None
+        if isinstance(uri, str) and uri and uri not in urls:
+            urls.append(uri)
+    return urls

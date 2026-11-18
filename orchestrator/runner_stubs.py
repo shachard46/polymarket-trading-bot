@@ -78,7 +78,7 @@ def _web_searcher_stub(payload: dict[str, Any]) -> dict[str, Any]:
         "results": [
             {
                 "query": q,
-                "research_data": f"stub web finding for: {q} (source: example.org, {today})",
+                "research_data": f"- stub web finding for: {q} | https://example.org/stub | {today or 'unknown'}",
                 "error": None,
             }
             for q in payload.get("queries") or []

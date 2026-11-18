@@ -36,6 +36,7 @@ class LLMResponse:
     model: str
     input_tokens: int | None = None
     output_tokens: int | None = None
+    citations: list[str] | None = None  # URLs the provider's web tool retrieved (None = unknown)
 
 
 @dataclass
@@ -78,6 +79,8 @@ class LLM(abc.ABC):
         self.model = model
         self.max_tokens = max_tokens
         self.web_max_uses = web_max_uses
+        self.temperature: float | None = None  # per-role (models.yaml); None = provider default
+        self.reasoning: bool | None = None  # False = disable thinking; None = provider default
         self.role: str | None = None  # set by routing.llm_for (usage attribution)
         self.batch_enabled = True  # routing sets this from the role's `batch` flag in models.yaml
 

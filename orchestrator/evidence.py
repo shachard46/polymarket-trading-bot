@@ -17,6 +17,7 @@ from config.trading_constants import INDEP_SAMPLE_RATE, SHADOW_RATE
 from orchestrator import config
 from orchestrator.aiq_bundle import fetch_research_bundle_cached, normalize_query
 from orchestrator.config import RESEARCH_DATA_MAX_CHARS
+from orchestrator.web_filter import filter_rows
 from orchestrator.parse import AgentOutputParseError, parse_agent_json_or_yaml
 from orchestrator.schema_validation import AgentSchemaError
 from orchestrator.state import InfraUnavailable
@@ -101,6 +102,9 @@ def fetch_web_rows(
     def fail(msg: str) -> list[dict[str, Any]]:
         return [{"query": q, "research_data": "", "error": msg} for q in queries]
 
+    from orchestrator import direct_runner  # noqa: PLC0415 - lazy: keeps provider SDKs out of stub mode
+
+    direct_runner.reset_last_call()  # a stale value from an earlier call must never be read
     try:
         raw = runner("web_searcher", {"market_id": market_id, "queries": list(queries), "today": today})
     except AgentSchemaError as exc:
@@ -134,6 +138,17 @@ def fetch_web_rows(
                     "error": str(err) if err else None,
                 }
             )
+    rows, counts = filter_rows(rows, direct_runner.last_citations())
+    model = direct_runner.last_model() or "stub"
+    log.info(
+        "[WEB-FILTER] %s model=%s kept=%d dropped_no_url=%d dropped_unretrieved=%d",
+        market_id, model, counts.kept, counts.dropped_no_url, counts.dropped_unretrieved,
+    )
+    from orchestrator.llm import usage  # noqa: PLC0415
+
+    usage.record_web_filter(
+        model, counts.kept, counts.dropped_no_url, counts.dropped_unretrieved, market_id=market_id
+    )
     return sanitize_rows(rows)
 
 

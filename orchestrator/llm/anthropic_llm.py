@@ -37,6 +37,28 @@ def _tokens(message: Any) -> tuple[int, int]:
     return (i if isinstance(i, int) else 0, o if isinstance(o, int) else 0)
 
 
+def _urls_of(messages: Sequence[Any]) -> list[str]:
+    """URLs from web_search_tool_result blocks and text-block citations across ``messages``."""
+    urls: list[str] = []
+
+    def add(u: Any) -> None:
+        if isinstance(u, str) and u and u not in urls:
+            urls.append(u)
+
+    for m in messages:
+        for b in getattr(m, "content", None) or []:
+            kind = getattr(b, "type", None)
+            content = getattr(b, "content", None)
+            if kind == "web_search_tool_result" and isinstance(content, list):
+                for r in content:
+                    add(getattr(r, "url", None))
+            elif kind == "web_fetch_tool_result":
+                add(getattr(content, "url", None))
+            for c in getattr(b, "citations", None) or []:
+                add(getattr(c, "url", None))
+    return urls
+
+
 class AnthropicLLM(LLM):
     provider_name = "anthropic"
     api_key_env = "ANTHROPIC_API_KEY"
@@ -63,14 +85,18 @@ class AnthropicLLM(LLM):
             "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
             "messages": [{"role": "user", "content": user}],
         }
+        if self.temperature is not None:
+            kwargs["temperature"] = self.temperature
         if web:
             kwargs["tools"] = self._tools()
         messages = kwargs["messages"]
         all_text: list[str] = []
         tin = tout = 0
         message: Any = None
+        seen: list[Any] = []
         for continuation in range(MAX_PAUSE_CONTINUATIONS + 1):
             message = client.messages.create(**kwargs)
+            seen.append(message)
             i, o = _tokens(message)
             tin, tout = tin + i, tout + o
             all_text.append(_text_of(message))
@@ -84,7 +110,10 @@ class AnthropicLLM(LLM):
             kwargs["messages"] = messages
         # Only the final message's text: narrative between searches would break JSON parsing.
         text = _text_of(message) or "".join(all_text)
-        return LLMResponse(text, self.provider_name, self.model, tin, tout)
+        return LLMResponse(
+            text, self.provider_name, self.model, tin, tout,
+            citations=_urls_of(seen) if web else None,
+        )
 
     # ---- Message Batches API (50% cost, async; results keyed by custom_id) ---------------------
 
@@ -99,6 +128,7 @@ class AnthropicLLM(LLM):
                     "max_tokens": self.max_tokens,
                     "system": [{"type": "text", "text": r.system, "cache_control": {"type": "ephemeral"}}],
                     "messages": [{"role": "user", "content": r.user}],
+                    **({"temperature": self.temperature} if self.temperature is not None else {}),
                 },
             }
             for i, r in enumerate(requests)

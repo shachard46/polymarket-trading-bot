@@ -42,7 +42,7 @@ def _setup(world, vault, selected=True, p=0.6):
         if role == "web_searcher":
             web_calls.append(payload)
             return {"results": [
-                {"query": q, "research_data": "news\nPolymarket odds 70%\nfact", "error": None}
+                {"query": q, "research_data": "- news | https://e.org/a | unknown\n- Polymarket odds 70% | https://e.org/b | unknown\n- fact | https://e.org/c | unknown", "error": None}
                 for q in payload["queries"]
             ]}
         if role == "deep_researcher" and payload.get("session_tag") == "indep":
