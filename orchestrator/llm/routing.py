@@ -3,6 +3,14 @@
 Precedence for a role: ``LLM_ROLE_<ROLE>=provider:model`` env, then the YAML ``roles`` entry, then
 ``LLM_DEFAULT=provider:model`` env, then the YAML ``default``. Unknown providers/roles and missing keys raise
 :class:`LLMError`.
+
+Optional per-role ``batch: true`` (default false) in the ``roles:`` entry of models.yaml sends latency-insensitive
+single-shot calls (triage, the triage-shadow quick estimate) through the provider's Batch API (Anthropic
+Message Batches, Gemini batchGenerateContent; ~50% cheaper, minutes of latency) via ``LLM.complete_many``.
+Providers without a batch API (OpenRouter) ignore it. ``PMBOT_LLM_BATCH_POLL_SEC`` (30) and
+``PMBOT_LLM_BATCH_MAX_WAIT_SEC`` (1200) bound the wait; on timeout the batch is cancelled and the
+unfinished items run synchronously. The flag is read from the YAML role entry even when an env override
+swaps the provider/model.
 """
 
 from __future__ import annotations
@@ -31,6 +39,7 @@ class ModelSpec(BaseModel):
     model: str
     max_tokens: int | None = None
     web_max_uses: int | None = None
+    batch: bool = False
 
 
 class ModelsConfig(BaseModel):
@@ -102,17 +111,21 @@ def spec_for(role: str) -> ModelSpec:
     return spec.model_copy(update={
         "max_tokens": spec.max_tokens or cfg.max_tokens,
         "web_max_uses": spec.web_max_uses or cfg.web_max_uses,
+        "batch": cfg.roles[role].batch if role in cfg.roles else False,
     })
 
 
 def llm_for(role: str) -> LLM:
     """One cached :class:`LLM` instance per distinct role spec."""
     spec = spec_for(role)
-    key = (role, spec.provider, spec.model, spec.max_tokens, spec.web_max_uses)
+    key = (role, spec.provider, spec.model, spec.max_tokens, spec.web_max_uses, spec.batch)
     if key not in _instances:
-        _instances[key] = PROVIDERS[spec.provider](
+        llm = PROVIDERS[spec.provider](
             model=spec.model, max_tokens=spec.max_tokens, web_max_uses=spec.web_max_uses
         )
+        llm.role = role
+        llm.batch_enabled = spec.batch
+        _instances[key] = llm
     return _instances[key]
 
 

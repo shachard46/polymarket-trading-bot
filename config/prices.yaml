@@ -1,0 +1,14 @@
+# LLM prices in USD per 1M tokens, per provider and model. The USER maintains this file.
+# No prices are shipped: a model missing here gets cost_usd null and stats say "price missing for <model>".
+# Keys under a provider must match the model id exactly as it appears in config/models.yaml.
+#
+# batch_discount multiplies the cost of batch calls (default 0.5).
+batch_discount: 0.5
+
+providers: {}
+#  anthropic:
+#    some-model-id: {input: 0.0, output: 0.0}
+#  gemini:
+#    another-model-id: {input: 0.0, output: 0.0}
+#  openrouter:
+#    vendor/model-id: {input: 0.0, output: 0.0}

@@ -32,13 +32,13 @@ from orchestrator.phases.common import (
     log,
 )
 from orchestrator.phases.p3_evidence import _bundle_has_entries
-from orchestrator.phases.p3_quick import _quick_stage, _triage_shadow_quick
+from orchestrator.phases.p3_quick import _quick_stage, _triage_shadow_payload, _triage_shadow_quick
 from orchestrator.phases.research_state import (
     _attempt_cooldown_active,
     _error_free_active_fm,
     _refresh_reason,
 )
-from orchestrator.runner import AgentRunner, spawn_agent
+from orchestrator.runner import AgentRunner, prefetch_runner, spawn_agent
 from orchestrator.scraper import market_data_pricing_error
 from orchestrator.state import InfraUnavailable, is_inactive, market_quarantine
 
@@ -135,24 +135,30 @@ def _run_triage_shadows(
     over_budget: Callable[[], bool],
 ) -> int:
     """Measure-only quick estimates for pending triage rejects (max per tick; no escalation/trade)."""
-    done = 0
+    # Pick this tick's shadows first so their quick estimates go out as one (batchable) call set.
+    picked: list[tuple[dict[str, Any], dict[str, Any]]] = []
     for record in _triage_shadow_pending(vault):
-        if done >= TRIAGE_SHADOW_MAX_PER_TICK or over_budget():
+        if len(picked) >= TRIAGE_SHADOW_MAX_PER_TICK or over_budget():
             break
-        market_id = record["market_id"]
-        row = scraper.fetch_market_row(market_id)
+        row = scraper.fetch_market_row(record["market_id"])
         if row is None or market_data_pricing_error(row.market_data):
             continue  # stays pending; retried next tick
         market_row = row.model_dump()
         _carry_filter_signals(market_row["market_data"], record)
+        picked.append((record, market_row))
+    shadow_runner = prefetch_runner(
+        runner, "deep_researcher",
+        [_triage_shadow_payload(mr, directives, today) for _rec, mr in picked],
+    )
+    for record, market_row in picked:
+        market_id = record["market_id"]
         with market_quarantine(vault, market_id, "phase3"):
-            _triage_shadow_quick(vault, runner, market_row, directives, today, record["triage"])
+            _triage_shadow_quick(vault, shadow_runner, market_row, directives, today, record["triage"])
             _write_filter_state(
                 vault, market_id, record,
                 triage={**record["triage"], "triage_shadow": "done"},
             )
-        done += 1
-    return done
+    return len(picked)
 
 
 @dataclass

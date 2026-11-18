@@ -1,0 +1,15 @@
+[Unit]
+Description=pmbot Vault backup
+
+[Service]
+Type=oneshot
+User=pmbot
+Group=pmbot
+WorkingDirectory=/opt/pmbot
+EnvironmentFile=/etc/pmbot/pmbot.env
+ExecStart=/opt/pmbot/deploy/backup.sh
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/pmbot /var/backups/pmbot

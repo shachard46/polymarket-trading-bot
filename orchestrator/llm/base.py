@@ -11,11 +11,13 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import Any, ClassVar, Sequence
 
 from orchestrator.config import (
     DEFAULT_DIRECT_MAX_TOKENS,
     DEFAULT_DIRECT_WEB_MAX_USES,
+    llm_batch_max_wait_sec,
+    llm_batch_poll_sec,
     llm_max_attempts,
     llm_retry_backoff,
 )
@@ -36,9 +38,36 @@ class LLMResponse:
     output_tokens: int | None = None
 
 
+@dataclass
+class LLMRequest:
+    """One single-shot call for :meth:`LLM.complete_many`."""
+
+    system: str
+    user: str
+    json_mode: bool = False
+    web: bool = False
+    market_id: str | None = None  # usage attribution (usage.market_scope)
+
+
+def _usage_record(role: str | None, resp: LLMResponse, batch: bool) -> None:
+    try:
+        from orchestrator.llm import usage  # noqa: PLC0415 - usage imports this module
+
+        usage.record(role or "", resp, batch=batch)
+    except Exception:  # noqa: BLE001 - accounting must never break a call
+        log.warning("llm usage record failed", exc_info=True)
+
+
+def _market_scope(market_id: str | None):
+    from orchestrator.llm import usage  # noqa: PLC0415
+
+    return usage.market_scope(market_id)
+
+
 class LLM(abc.ABC):
     provider_name: ClassVar[str]
     api_key_env: ClassVar[str]
+    supports_batch: ClassVar[bool] = False  # provider has an async batch API (see _batch_* hooks)
 
     def __init__(
         self,
@@ -49,6 +78,8 @@ class LLM(abc.ABC):
         self.model = model
         self.max_tokens = max_tokens
         self.web_max_uses = web_max_uses
+        self.role: str | None = None  # set by routing.llm_for (usage attribution)
+        self.batch_enabled = True  # routing sets this from the role's `batch` flag in models.yaml
 
     @classmethod
     def check_key(cls) -> None:
@@ -90,5 +121,90 @@ class LLM(abc.ABC):
                 time.sleep(delay)
                 continue
             log.info("[LLM] %s tokens in=%s out=%s", label, resp.input_tokens, resp.output_tokens)
+            _usage_record(self.role, resp, False)
             return resp
         raise LLMError(f"{label}: no attempts made")  # unreachable (attempts >= 1)
+
+    # ---- batch API (latency-insensitive single-shot calls) -------------------------------------
+    # Providers with `supports_batch` implement the four hooks; handles are opaque to the base.
+
+    def _batch_submit(self, requests: Sequence[LLMRequest]) -> Any:
+        raise NotImplementedError
+
+    def _batch_poll(self, handle: Any) -> str:
+        """``"pending"``, ``"done"`` (results ready) or ``"failed"`` (batch will never complete)."""
+        raise NotImplementedError
+
+    def _batch_fetch(self, handle: Any, count: int) -> list[LLMResponse | LLMError | None]:
+        """Per-request results in input order; ``None`` = no result (canceled/expired/missing)."""
+        raise NotImplementedError
+
+    def _batch_cancel(self, handle: Any) -> None:
+        raise NotImplementedError
+
+    def _complete_one(self, req: LLMRequest) -> LLMResponse | LLMError:
+        try:
+            with _market_scope(req.market_id):
+                return self.complete(req.system, req.user, json_mode=req.json_mode, web=req.web)
+        except LLMError as exc:
+            return exc
+
+    def complete_many(self, items: Sequence[LLMRequest]) -> list[LLMResponse | LLMError]:
+        """Run independent calls, batched when the provider supports it, else sequentially.
+
+        Results are in input order; a failed item is an :class:`LLMError` entry (never raised). Batch
+        failure or timeout (``PMBOT_LLM_BATCH_MAX_WAIT_SEC``) cancels the batch and runs the unfinished
+        items through the synchronous :meth:`complete`, so a tick never stalls beyond the max wait.
+        """
+        items = list(items)
+        results: list[LLMResponse | LLMError | None] = [None] * len(items)
+        # Web (server-tool, pause_turn) calls stay synchronous.
+        idx = [i for i, it in enumerate(items) if not it.web]
+        if self.supports_batch and self.batch_enabled and len(idx) >= 2:
+            self._run_batch(items, idx, results)
+        for i, it in enumerate(items):
+            if results[i] is None:
+                results[i] = self._complete_one(it)
+        return results  # type: ignore[return-value]
+
+    def _run_batch(
+        self, items: list[LLMRequest], idx: list[int], results: list[LLMResponse | LLMError | None]
+    ) -> None:
+        label = f"{self.provider_name}:{self.model}"
+        try:
+            handle = self._batch_submit([items[i] for i in idx])
+        except Exception as exc:  # noqa: BLE001 - fall back to sync
+            log.warning("[LLM] %s batch submit failed (%s); running synchronously", label, exc)
+            return
+        poll, max_wait = llm_batch_poll_sec(), llm_batch_max_wait_sec()
+        deadline = time.monotonic() + max_wait
+        state = "pending"
+        while True:
+            try:
+                state = self._batch_poll(handle)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("[LLM] %s batch poll failed (%s)", label, exc)
+                state = "failed"
+            if state != "pending" or time.monotonic() >= deadline:
+                break
+            time.sleep(min(poll, max(0.0, deadline - time.monotonic())))
+        if state != "done":
+            log.warning("[LLM] %s batch %s; cancelling, falling back to sync",
+                        label, "failed" if state == "failed" else f"timed out after {max_wait}s")
+            try:
+                self._batch_cancel(handle)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("[LLM] %s batch cancel failed: %s", label, exc)
+            return
+        try:
+            fetched = self._batch_fetch(handle, len(idx))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[LLM] %s batch fetch failed (%s); running synchronously", label, exc)
+            return
+        for pos, i in enumerate(idx):
+            res = fetched[pos] if pos < len(fetched) else None
+            if isinstance(res, LLMResponse):
+                log.info("[LLM] %s batch tokens in=%s out=%s", label, res.input_tokens, res.output_tokens)
+                with _market_scope(items[i].market_id):
+                    _usage_record(self.role, res, True)
+            results[i] = res  # LLMError kept as the item result; None falls back to sync

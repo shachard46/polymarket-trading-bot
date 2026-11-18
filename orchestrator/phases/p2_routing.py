@@ -32,7 +32,7 @@ from orchestrator.phases.p2_integrity import (  # noqa: F401  (re-exported; spli
     _record_signal_coverage,
 )
 from orchestrator.phases.research_state import _error_free_active_fm, _refresh_reason
-from orchestrator.runner import AgentRunner, spawn_agent
+from orchestrator.runner import AgentRunner, prefetch_runner, spawn_agent
 from orchestrator.scraper import MarketRow
 from orchestrator.state import market_quarantine
 
@@ -271,6 +271,8 @@ def _rank_and_triage(
     budget = gate_budget()
     researchable: list[_Researchable] = []
 
+    # Pass 1: gate rejects, holders, integrity; collect the markets that reach Triage.
+    pending: list[tuple[float, MarketRow, dict[str, Any] | None, dict[str, Any], dict[str, Any]]] = []
     for rank, (sc, market, prior) in enumerate(eligible):
         market_id = market.market_id
         md = market.market_data
@@ -308,8 +310,22 @@ def _rank_and_triage(
                     continue
                 base = {**base, **_integrity_state(md, prior)}
                 fields = _ledger_market_fields(md)
+            pending.append((sc, market, prior, base, fields))
+
+    # Triage calls for the whole tick go out together (one Batch API job when the role has `batch: true`);
+    # the per-market verdict handling below is unchanged and runs in the same order.
+    triage_runner = prefetch_runner(
+        runner, "triage", _triage_batch_payloads(pending, today, event_cache)
+    )
+
+    # Pass 2: verdict handling.
+    for sc, market, prior, base, fields in pending:
+        market_id = market.market_id
+        md = market.market_data
+        q = scraper.select_q(md)
+        with market_quarantine(vault, market_id, "phase2"):
             triage = _triage_verdict(
-                vault, runner, market, prior, fields["event_id"], today, now, event_cache
+                vault, triage_runner, market, prior, fields["event_id"], today, now, event_cache
             )
             if triage is None:
                 continue
@@ -338,6 +354,27 @@ def _rank_and_triage(
                 continue
             researchable.append((sc, market, prior, {**base, "triage": triage}))
     return researchable
+
+
+def _triage_batch_payloads(
+    pending: list[tuple[float, MarketRow, dict[str, Any] | None, dict[str, Any], dict[str, Any]]],
+    today: str,
+    event_cache: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Payloads of the fresh Triage calls ``_triage_verdict`` will make (no cached verdict, once per event)."""
+    payloads: list[dict[str, Any]] = []
+    seen_events: set[str] = set()
+    for _sc, market, prior, _base, fields in pending:
+        triage = (prior or {}).get("triage")
+        if isinstance(triage, dict) and "researchable" in triage:
+            continue
+        event_id = fields["event_id"]
+        if event_id:
+            if str(event_id) in event_cache or str(event_id) in seen_events:
+                continue
+            seen_events.add(str(event_id))
+        payloads.append(_triage_payload(market, today))
+    return payloads
 
 
 def _promote_researchable(

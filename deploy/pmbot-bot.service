@@ -1,0 +1,22 @@
+[Unit]
+Description=pmbot Discord concierge bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pmbot
+Group=pmbot
+WorkingDirectory=/opt/pmbot
+EnvironmentFile=/etc/pmbot/pmbot.env
+ExecStart=/opt/pmbot/.venv/bin/python -m orchestrator.discord_bot
+Restart=on-failure
+RestartSec=15
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/pmbot
+
+[Install]
+WantedBy=multi-user.target

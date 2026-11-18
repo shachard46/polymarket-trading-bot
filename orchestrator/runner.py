@@ -80,6 +80,73 @@ def spawn_agent(role: str, payload: dict[str, Any]) -> Any:
     return result
 
 
+def spawn_many(role: str, payloads: list[dict[str, Any]]) -> list[Any]:
+    """Spawn ``role`` once per payload (batched in live mode when the role is configured for it).
+
+    Returns one entry per payload, in order: the validated raw response, or the exception
+    :func:`spawn_agent` would have raised. Items that fail the provider call, parsing or
+    validation fall back to the normal one-by-one :func:`spawn_agent` path.
+    """
+    spec = agents_blueprint.AGENTS[role]
+    results: list[Any] = [None] * len(payloads)
+    live: list[int] = []
+    if runner_mode() == RUNNER_MODE_LIVE and len(payloads) >= 2:
+        for i, payload in enumerate(payloads):
+            try:
+                validate_payload(role, "input", spec.get("input_model"), payload)
+            except Exception as exc:  # noqa: BLE001 - same exception spawn_agent raises
+                results[i] = exc
+            else:
+                live.append(i)
+        from orchestrator.direct_runner import run_many  # lazy: provider SDKs load on demand
+
+        try:
+            raw = run_many(role, spec, [payloads[i] for i in live])
+        except Exception as exc:  # noqa: BLE001 - e.g. routing errors: handled per item below
+            raw = [exc] * len(live)
+        for i, res in zip(live, raw):
+            if not isinstance(res, Exception):
+                try:
+                    _validate_response(role, spec, res, payloads[i])
+                    results[i] = res
+                    continue
+                except Exception as exc:  # noqa: BLE001
+                    log.info("[RUNNER] batched %s item failed validation (%s); retrying singly", role, exc)
+            results[i] = _spawn_single(role, payloads[i])
+        return results
+    return [_spawn_single(role, p) for p in payloads]
+
+
+def _spawn_single(role: str, payload: dict[str, Any]) -> Any:
+    try:
+        return spawn_agent(role, payload)
+    except Exception as exc:  # noqa: BLE001 - returned to the caller, in order
+        return exc
+
+
+def prefetch_runner(runner: AgentRunner, role: str, payloads: list[dict[str, Any]]) -> AgentRunner:
+    """Runner that serves the first call per payload of ``role`` from one :func:`spawn_many`.
+
+    Only the default :func:`spawn_agent` runner is batched (a custom/injected runner is returned
+    unchanged); any other call (retries with a changed payload, other roles) goes to ``runner``.
+    """
+    if runner is not spawn_agent or len(payloads) < 2:
+        return runner
+    pending = list(zip(payloads, spawn_many(role, payloads)))
+
+    def run(r: str, payload: dict[str, Any]) -> Any:
+        if r == role:
+            for pos, (p, res) in enumerate(pending):
+                if p == payload:
+                    del pending[pos]
+                    if isinstance(res, Exception):
+                        raise res
+                    return res
+        return runner(r, payload)
+
+    return run
+
+
 def _validate_markdown(role: str, spec: dict[str, Any], result: Any, payload: dict[str, Any]) -> None:
     try:
         markdown = coerce_deep_researcher_markdown(result)
@@ -250,5 +317,7 @@ __all__ = [
     "AgentRunner",
     "STUB_RESPONSES",
     "_build_live_prompt",
+    "prefetch_runner",
     "spawn_agent",
+    "spawn_many",
 ]

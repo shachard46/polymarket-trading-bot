@@ -44,7 +44,18 @@ class HttpLLM(LLM, abc.ABC):
         return None
 
     def _post(self, url: str, headers: dict[str, str], body: dict[str, Any]) -> dict[str, Any]:
-        resp = requests.post(url, headers=headers, json=body, timeout=llm_timeout())
+        return self._request("POST", url, headers, body)
+
+    def _get(self, url: str, headers: dict[str, str]) -> dict[str, Any]:
+        return self._request("GET", url, headers, None)
+
+    def _request(
+        self, method: str, url: str, headers: dict[str, str], body: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        if method == "GET":
+            resp = requests.get(url, headers=headers, timeout=llm_timeout())
+        else:
+            resp = requests.post(url, headers=headers, json=body, timeout=llm_timeout())
         try:
             data = resp.json()
         except ValueError:

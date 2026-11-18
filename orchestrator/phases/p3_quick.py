@@ -88,6 +88,14 @@ def _quick_stage(
     return QuickResult("escalate", out.estimated_p, out.p_low, out.p_high)
 
 
+def _triage_shadow_payload(row: dict[str, Any], directives: str, today: str) -> dict[str, Any]:
+    """The price-blind quick-stage Deep Researcher payload of a triage shadow."""
+    return _dr_payload(
+        row, directives, [], mode="quick", today=today,
+        system_override=FORCED_SYNTHESIS_OVERRIDE, session_tag="quick",
+    )
+
+
 def _triage_shadow_quick(
     vault: ObsidianManager,
     runner: AgentRunner,
@@ -114,10 +122,7 @@ def _triage_shadow_quick(
     }
     if fields.get("category") is None:
         fields["category"] = triage.get("category")
-    dr_in = _dr_payload(
-        row, directives, [], mode="quick", today=today,
-        system_override=FORCED_SYNTHESIS_OVERRIDE, session_tag="quick",
-    )
+    dr_in = _triage_shadow_payload(row, directives, today)
     error: str | None = None
     out: Any = None
     try:

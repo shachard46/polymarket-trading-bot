@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any
+from typing import Any, Sequence
 
-from orchestrator.llm.base import LLM, LLMError, LLMResponse
+from orchestrator.llm.base import LLM, LLMError, LLMRequest, LLMResponse
 
 log = logging.getLogger(__name__)
 
@@ -40,6 +40,7 @@ def _tokens(message: Any) -> tuple[int, int]:
 class AnthropicLLM(LLM):
     provider_name = "anthropic"
     api_key_env = "ANTHROPIC_API_KEY"
+    supports_batch = True
 
     @classmethod
     def check_key(cls) -> None:
@@ -84,6 +85,57 @@ class AnthropicLLM(LLM):
         # Only the final message's text: narrative between searches would break JSON parsing.
         text = _text_of(message) or "".join(all_text)
         return LLMResponse(text, self.provider_name, self.model, tin, tout)
+
+    # ---- Message Batches API (50% cost, async; results keyed by custom_id) ---------------------
+
+    def _batch_submit(self, requests: Sequence[LLMRequest]) -> Any:
+        anthropic = _import_anthropic()
+        client = anthropic.Anthropic(max_retries=0)
+        reqs = [
+            {
+                "custom_id": f"r{i}",
+                "params": {
+                    "model": self.model,
+                    "max_tokens": self.max_tokens,
+                    "system": [{"type": "text", "text": r.system, "cache_control": {"type": "ephemeral"}}],
+                    "messages": [{"role": "user", "content": r.user}],
+                },
+            }
+            for i, r in enumerate(requests)
+        ]
+        batch = client.messages.batches.create(requests=reqs)
+        return {"client": client, "id": batch.id}
+
+    def _batch_poll(self, handle: Any) -> str:
+        batch = handle["client"].messages.batches.retrieve(handle["id"])
+        status = getattr(batch, "processing_status", None)
+        if status == "ended":
+            return "done"
+        return "pending"  # in_progress | canceling
+
+    def _batch_fetch(self, handle: Any, count: int) -> list[LLMResponse | LLMError | None]:
+        label = f"{self.provider_name}:{self.model}"
+        out: list[LLMResponse | LLMError | None] = [None] * count
+        for entry in handle["client"].messages.batches.results(handle["id"]):
+            cid = str(getattr(entry, "custom_id", ""))
+            if not (cid.startswith("r") and cid[1:].isdigit() and int(cid[1:]) < count):
+                continue
+            result = entry.result
+            kind = getattr(result, "type", None)
+            slot = int(cid[1:])
+            if kind == "succeeded":
+                message = result.message
+                tin, tout = _tokens(message)
+                out[slot] = LLMResponse(_text_of(message), self.provider_name, self.model, tin, tout)
+            elif kind == "errored":
+                err = getattr(getattr(result, "error", None), "error", None) or getattr(result, "error", None)
+                msg = getattr(err, "message", None) or str(err)
+                out[slot] = LLMError(f"{label} batch item failed: {msg}")
+            # canceled / expired: stay None -> synchronous fallback
+        return out
+
+    def _batch_cancel(self, handle: Any) -> None:
+        handle["client"].messages.batches.cancel(handle["id"])
 
     def _is_retryable(self, exc: Exception) -> bool:
         anthropic = _import_anthropic()

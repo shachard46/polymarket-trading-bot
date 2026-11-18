@@ -26,11 +26,12 @@ from orchestrator.stats.groups import (
     signal_coverage_stats,
     triage_shadow_stats,
 )
+from orchestrator.stats.cost import cost_stats
 from orchestrator.stats.pnl import TAX, _group, _pnl_groups, offers_stats, pnl_summary
 
 
-def compute_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Every statistic over ``rows`` (ledger rows, scanned once by the caller)."""
+def compute_stats(rows: list[dict[str, Any]], usage: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Every statistic over ``rows`` (ledger rows, scanned once by the caller) and LLM ``usage`` rows."""
     res = resolutions(rows)
     triples = scored_triples(rows)
     out: dict[str, Any] = {"n_resolved": len(res), "n_scored": len(triples)}
@@ -72,6 +73,7 @@ def compute_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
     out["counterfactual_after_tax"] = pnl_summary(rows, _COUNTERFACTUAL_STAGES, default_size=1.0)
     out["false_negative"] = false_negative_rate(rows)
     out["lambda"] = fit_lambda(rows)
+    out["cost"] = cost_stats(rows, usage or [])
     return out
 
 
@@ -239,6 +241,28 @@ def _render_false_negative_and_lambda(s: dict[str, Any]) -> list[str]:
     ]
 
 
+def _render_cost(s: dict[str, Any]) -> list[str]:
+    c = s.get("cost")
+    L = ["", "## LLM cost", ""]
+    if not c or not c["n_calls"]:
+        return L + ["No LLM usage rows yet.", ""]
+    L += [f"Today: **{c['today']:.4f} USD**; all time: {c['total']:.4f} USD over {c['n_calls']} calls.", "",
+          "| day | cost USD |", "|---|---|"]
+    L += [f"| {d} | {v:.4f} |" for d, v in c["per_day"].items()]
+    for title, key in (("role", "by_role"), ("model", "by_model")):
+        L += ["", f"### Cost by {title}", "", f"| {title} | cost USD |", "|---|---|"]
+        L += [f"| {k} | {v:.4f} |" for k, v in c[key].items()]
+    L += ["", "### Cost per researched market", "", "| market | cost USD |", "|---|---|"]
+    L += [f"| {k} | {v:.4f} |" for k, v in sorted(c["by_market"].items(), key=lambda kv: -kv[1])]
+    L += ["", "### Brier per dollar (by model)", "",
+          "| model | n scored | Brier(p) - Brier(q) | cost per scored market USD |", "|---|---|---|---|"]
+    for m, (n, diff, cpm) in c["brier_per_dollar"].items():
+        L.append(f"| {m} | {n} | {_fmt(diff)} | {_fmt(cpm)} |")
+    L += ["", f"Rows with unknown price: {c['n_unknown']}."]
+    L += [f"- price missing for {m}" for m in c["missing_models"]]
+    return L + [""]
+
+
 def render_stats(s: dict[str, Any]) -> str:
     L = _render_model_vs_market(s)
     L += _render_brier_by(s, "evidence source", "evidence_source", "brier_by_evidence_source")
@@ -248,7 +272,7 @@ def render_stats(s: dict[str, Any]) -> str:
     for section in (
         _render_shadow, _render_signal_coverage, _render_triage_shadow, _render_indep,
         _render_gate_flags, _render_integrity, _render_offers, _render_calibration,
-        _render_pnl, _render_counterfactual, _render_false_negative_and_lambda,
+        _render_pnl, _render_counterfactual, _render_false_negative_and_lambda, _render_cost,
     ):
         L += section(s)
     return "\n".join(L)
@@ -258,5 +282,8 @@ def write_stats(vault: ObsidianManager, rows: list[dict[str, Any]] | None = None
     """Render ``00_System/stats.md``; pass ``rows`` to reuse an already-scanned ledger."""
     if rows is None:
         rows = list(ledger.iter_rows(vault))
+    from orchestrator.llm.usage import iter_usage
+
     path = vault._dirs["system"] / "stats.md"
-    path.write_text(render_stats(compute_stats(rows)), encoding="utf-8")
+    usage = iter_usage(vault._base)
+    path.write_text(render_stats(compute_stats(rows, usage)), encoding="utf-8")

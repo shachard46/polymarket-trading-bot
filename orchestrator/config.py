@@ -35,6 +35,13 @@ DEFAULT_PMBOT_LLM_MAX_ATTEMPTS = 3
 PMBOT_LLM_RETRY_BACKOFF_ENV = "PMBOT_LLM_RETRY_BACKOFF"
 DEFAULT_PMBOT_LLM_RETRY_BACKOFF = 2.0
 
+# Batch API (models.yaml role `batch: true`): poll interval and the cap after which the batch is
+# cancelled and the unfinished items run synchronously.
+PMBOT_LLM_BATCH_POLL_SEC_ENV = "PMBOT_LLM_BATCH_POLL_SEC"
+DEFAULT_PMBOT_LLM_BATCH_POLL_SEC = 30.0
+PMBOT_LLM_BATCH_MAX_WAIT_SEC_ENV = "PMBOT_LLM_BATCH_MAX_WAIT_SEC"
+DEFAULT_PMBOT_LLM_BATCH_MAX_WAIT_SEC = 1200.0
+
 AUTO_REPLAY_ENV = "PMBOT_AUTO_REPLAY"
 
 TOP_QUALITATIVE_MARKETS_ENV = "PMBOT_TOP_MARKETS"
@@ -198,6 +205,26 @@ def llm_retry_backoff() -> float:
         return DEFAULT_PMBOT_LLM_RETRY_BACKOFF
 
 
+def _float_env(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return default
+
+
+def llm_batch_poll_sec() -> float:
+    """Seconds between batch status polls (default 30)."""
+    return _float_env(PMBOT_LLM_BATCH_POLL_SEC_ENV, DEFAULT_PMBOT_LLM_BATCH_POLL_SEC)
+
+
+def llm_batch_max_wait_sec() -> float:
+    """Max seconds to wait for a batch before cancelling and going synchronous (default 1200)."""
+    return _float_env(PMBOT_LLM_BATCH_MAX_WAIT_SEC_ENV, DEFAULT_PMBOT_LLM_BATCH_MAX_WAIT_SEC)
+
+
 def auto_replay() -> bool:
     """Return whether the orchestrator should clear inactive flags at startup."""
     raw = os.environ.get(AUTO_REPLAY_ENV, "")
@@ -223,6 +250,10 @@ __all__ = [
     "llm_timeout",
     "llm_max_attempts",
     "llm_retry_backoff",
+    "PMBOT_LLM_BATCH_POLL_SEC_ENV",
+    "PMBOT_LLM_BATCH_MAX_WAIT_SEC_ENV",
+    "llm_batch_poll_sec",
+    "llm_batch_max_wait_sec",
     "TOP_QUALITATIVE_MARKETS_ENV",
     "top_qualitative_markets",
     "GATE_BUDGET_ENV",

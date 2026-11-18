@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Sequence
 
-from orchestrator.llm.base import LLMError, LLMResponse
+from orchestrator.llm.base import LLMError, LLMRequest, LLMResponse
 from orchestrator.llm.http_llm import HttpLLM, HttpStatusError
 
 log = logging.getLogger(__name__)
@@ -16,6 +16,7 @@ GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 class GeminiLLM(HttpLLM):
     provider_name = "gemini"
     api_key_env = "GEMINI_API_KEY"
+    supports_batch = True
 
     def _url(self) -> str:
         model = self.model[len("models/"):] if self.model.startswith("models/") else self.model
@@ -36,6 +37,90 @@ class GeminiLLM(HttpLLM):
         if web:
             body["tools"] = [{"googleSearch": {}}]
         return body
+
+    # ---- batchGenerateContent (inline requests; async, discounted) ----------------------------
+
+    def _model_name(self) -> str:
+        return self.model[len("models/"):] if self.model.startswith("models/") else self.model
+
+    def _batch_submit(self, requests: Sequence[LLMRequest]) -> Any:
+        reqs = [
+            {
+                "request": self._body(r.system, r.user, r.json_mode, r.web),
+                "metadata": {"key": f"k{i}"},
+            }
+            for i, r in enumerate(requests)
+        ]
+        body = {
+            "batch": {
+                "display_name": f"pmbot-{self.role or 'llm'}-{len(reqs)}",
+                "input_config": {"requests": {"requests": reqs}},
+            }
+        }
+        url = f"{GEMINI_BASE_URL}/models/{self._model_name()}:batchGenerateContent"
+        data = self._post(url, self._headers(), body)
+        name = data.get("name") or (data.get("batch") or {}).get("name")
+        if not isinstance(name, str) or not name:
+            raise LLMError(f"gemini:{self.model}: batch create returned no name")
+        return {"name": name.lstrip("/"), "data": data}
+
+    @staticmethod
+    def _batch_state(data: dict[str, Any]) -> str:
+        state = data.get("state") or (data.get("metadata") or {}).get("state") or ""
+        return str(state).upper()
+
+    def _batch_get(self, handle: Any) -> dict[str, Any]:
+        data = self._get(f"{GEMINI_BASE_URL}/{handle['name']}", self._headers())
+        handle["data"] = data
+        return data
+
+    def _batch_poll(self, handle: Any) -> str:
+        data = self._batch_get(handle)
+        state = self._batch_state(data)
+        if state.endswith("SUCCEEDED"):
+            return "done"
+        if state.endswith(("FAILED", "CANCELLED", "EXPIRED")):
+            return "failed"
+        return "pending"
+
+    @staticmethod
+    def _inlined(data: dict[str, Any]) -> list[Any]:
+        """Inline responses from either documented shape (`dest.inlinedResponses` / `response.inlinedResponses`)."""
+        for holder in (data.get("dest"), data.get("response"), (data.get("metadata") or {}).get("output")):
+            if not isinstance(holder, dict):
+                continue
+            inl = holder.get("inlinedResponses")
+            if isinstance(inl, dict):  # {"inlinedResponses": [...]} nesting
+                inl = inl.get("inlinedResponses")
+            if isinstance(inl, list):
+                return inl
+        return []
+
+    def _batch_fetch(self, handle: Any, count: int) -> list[LLMResponse | LLMError | None]:
+        label = f"{self.provider_name}:{self.model}"
+        data = handle.get("data") or self._batch_get(handle)
+        entries = self._inlined(data)
+        out: list[LLMResponse | LLMError | None] = [None] * count
+        for pos, entry in enumerate(entries):
+            if not isinstance(entry, dict):
+                continue
+            key = (entry.get("metadata") or {}).get("key")
+            slot = int(key[1:]) if isinstance(key, str) and key[1:].isdigit() else pos
+            if not 0 <= slot < count:
+                continue
+            if entry.get("error"):
+                err = entry["error"]
+                msg = err.get("message") if isinstance(err, dict) else err
+                out[slot] = LLMError(f"{label} batch item failed: {msg}")
+            elif isinstance(entry.get("response"), dict):
+                try:
+                    out[slot] = self._parse(entry["response"])
+                except LLMError as exc:
+                    out[slot] = exc
+        return out
+
+    def _batch_cancel(self, handle: Any) -> None:
+        self._post(f"{GEMINI_BASE_URL}/{handle['name']}:cancel", self._headers(), {})
 
     def _fallback_body(self, body: dict[str, Any], err: HttpStatusError) -> dict[str, Any] | None:
         """JSON mode may be rejected together with a tool: retry once without JSON mode (400 only)."""
