@@ -196,7 +196,7 @@ def test_triage_agent_error_flags_inactive(vault):
 
 def test_holders_reject_backs_off_and_ledgers(vault, monkeypatch):
     monkeypatch.setattr(
-        polymarket_api, "fetch_holder_concentration", lambda cid: {"top1": 0.9, "top3": 0.99}
+        polymarket_api, "fetch_holder_concentration", lambda cid: {"top1": 0.9, "top3": 0.99, "basis": "supply"}
     )
     t = Triage()
     phases.phase2_quantitative_routing(vault, [mk("whale")], runner=t)

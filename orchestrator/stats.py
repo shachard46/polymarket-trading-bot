@@ -30,7 +30,10 @@ _NON_DECISION = (
     ledger.RESOLUTION_STAGE, ledger.POST_MORTEM_STAGE, SHADOW_STAGE,
     TRIAGE_SHADOW_STAGE, "shadow_failed", COVERAGE_STAGE,
 )
-_COVERAGE_SIGNALS = ("volume_24h", "day_price_change", "bid_ask", "holders")
+_COVERAGE_SIGNALS = (
+    "volume_24h", "day_price_change", "bid_ask", "holders", "price_history", "trades", "book",
+)
+_INTEG_REASONS = ("ramp_thin", "wallet_dominated", "rules_changed", "disputed_before")
 _GATE_FLAG_REASONS = ("suspicious_move", "concentrated", "wide_spread")
 
 
@@ -259,6 +262,51 @@ def gate_flag_stats(rows: list[dict[str, Any]]) -> dict[str, tuple[int, float | 
     return out
 
 
+def market_integrity_stats(rows: list[dict[str, Any]]) -> dict[str, dict[str, tuple[int, float | None]]]:
+    """Brier(q) on resolved markets by integ_score band, and by the integrity gate-reject reasons.
+
+    ``bands``: latest decision row's ``integ_score`` (>=0.8, 0.5-0.8, <0.5, unknown).
+    ``rejects``: latest ``gate_reject`` per market with one of the integrity reasons.
+    Each value is ``(n, Brier(q))``; q is the market's latest decision-row q.
+    """
+    res = resolutions(rows)
+    q_by: dict[str, float] = {}
+    score_by: dict[str, float | None] = {}
+    rej_by: dict[str, str] = {}
+    for r in rows:
+        st, m = r.get("stage"), r.get("market_id")
+        if st in _NON_DECISION or not m or m == "_tick" or m not in res:
+            continue
+        q = _num(r.get("q"))
+        if q is not None:
+            q_by[m] = q
+        sc = _num(r.get("integ_score"))
+        if sc is not None:
+            score_by[m] = sc
+        if st == "gate_reject":
+            if r.get("reason") in _INTEG_REASONS:
+                rej_by[m] = r["reason"]
+            else:
+                rej_by.pop(m, None)
+    bands: dict[str, list[str]] = {">=0.8": [], "0.5-0.8": [], "<0.5": [], "unknown": []}
+    for m in q_by:
+        sc = score_by.get(m)
+        key = "unknown" if sc is None else ">=0.8" if sc >= 0.8 else "0.5-0.8" if sc >= 0.5 else "<0.5"
+        bands[key].append(m)
+    rejects: dict[str, list[str]] = {k: [] for k in _INTEG_REASONS}
+    for m, reason in rej_by.items():
+        if m in q_by:
+            rejects[reason].append(m)
+
+    def score_group(groups: dict[str, list[str]]) -> dict[str, tuple[int, float | None]]:
+        return {
+            k: (len(ids), _brier_or_none([q_by[m] for m in ids], [res[m] for m in ids]))
+            for k, ids in groups.items()
+        }
+
+    return {"bands": score_group(bands), "rejects": score_group(rejects)}
+
+
 def failure_class_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
     """Count of the latest ``post_mortem`` row's ``failure_class`` per market."""
     latest: dict[str, str] = {}
@@ -439,6 +487,7 @@ def compute_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
     out["signal_coverage"] = signal_coverage_stats(rows)
     out["indep_sample"] = independent_sample_stats(rows)
     out["gate_flags"] = gate_flag_stats(rows)
+    out["market_integrity"] = market_integrity_stats(rows)
     out["calibration"] = calibration_table(triples)
     out["brier_by_evidence_source"] = brier_by_evidence_source(rows)
     traded = _pnl_groups(rows, res, ("traded",))
@@ -527,6 +576,14 @@ def render_stats(s: dict[str, Any]) -> str:
           "| group | n | Brier(q) |", "|---|---|---|"]
     for key, (n, bq) in s.get("gate_flags", {}).items():
         L.append(f"| {key} | {n} | {_fmt(bq)} |")
+    mi = s.get("market_integrity") or {"bands": {}, "rejects": {}}
+    L += ["", "### Market integrity", "",
+          "Brier(q) on resolved markets by integrity score band, and by integrity gate-reject reason.", "",
+          "| group | n | Brier(q) |", "|---|---|---|"]
+    for key, (n, bq) in mi["bands"].items():
+        L.append(f"| score {key} | {n} | {_fmt(bq)} |")
+    for key, (n, bq) in mi["rejects"].items():
+        L.append(f"| gate_reject {key} | {n} | {_fmt(bq)} |")
     L += ["", "## Calibration (p in 10% buckets)", "", "| bucket | n | mean p | hit rate |", "|---|---|---|---|"]
     L += [f"| {c['bucket']} | {c['n']} | {_fmt(c['mean_p'], 3)} | {_fmt(c['hit_rate'], 3)} |" for c in s["calibration"]]
     L += [
@@ -573,4 +630,4 @@ def write_stats(vault: ObsidianManager) -> None:
     path.write_text(render_stats(compute_stats(rows)), encoding="utf-8")
 
 
-__all__ = ["bet_pnl", "brier_by_evidence_source", "brier_by_directive_version", "brier_shadow", "triage_shadow_stats", "signal_coverage_stats", "independent_sample_stats", "gate_flag_stats", "failure_class_counts", "compute_stats", "fit_lambda", "pnl_summary", "realised_pnl", "render_stats", "tax_by_year", "write_stats"]
+__all__ = ["bet_pnl", "brier_by_evidence_source", "brier_by_directive_version", "brier_shadow", "triage_shadow_stats", "signal_coverage_stats", "independent_sample_stats", "gate_flag_stats", "market_integrity_stats", "failure_class_counts", "compute_stats", "fit_lambda", "pnl_summary", "realised_pnl", "render_stats", "tax_by_year", "write_stats"]

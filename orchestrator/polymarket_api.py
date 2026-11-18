@@ -34,6 +34,7 @@ import requests
 from config.trading_constants import (
     LIQ_FRAC,
     MANIP,
+    INTEGRITY,
     MAX_DAYS_TO_RESOLUTION,
     MIN_DAYS_TO_RESOLUTION,
     MIN_ORDER_USD,
@@ -296,6 +297,11 @@ def market_row_from_gamma(raw: dict[str, Any], now: datetime | None = None) -> d
         "resolution_source": raw.get("resolutionSource") or (events[0].get("resolutionSource") if events else None) or None,
         "yes_token_id": tokens[yes_i],
         "no_token_id": tokens[no_i],
+        "created_at": raw.get("createdAt"),
+        "uma_resolution_statuses": raw.get("umaResolutionStatuses"),
+        "custom_liveness": raw.get("customLiveness"),
+        "resolution_mechanism": raw.get("resolutionMechanism"),
+        "rewards_min_size": raw.get("rewardsMinSize"),
         "closed": bool(raw.get("closed")),
         "active": bool(raw.get("active", True)),
         "accepting_orders": raw.get("acceptingOrders") is not False and raw.get("enableOrderBook") is not False,
@@ -367,6 +373,93 @@ def fetch_holder_concentration(condition_id: str) -> dict[str, Any] | None:
             top3 = max(top3, sum(amounts[:3]) / denom)
         return {"top1": round(top1, 6), "top3": round(top3, 6), "basis": "supply" if supply is not None else "top_n"}
     except Exception:  # noqa: BLE001 - advisory signal; never block the pipeline
+        return None
+
+
+def fetch_price_history(token_id: str) -> list[tuple[int, float]] | None:
+    """Daily price history of a CLOB token as ``[(t, p)]``; `None` on any error or unexpected shape."""
+    try:
+        payload = _get_json(
+            f"{clob_base_url()}/prices-history",
+            {"market": token_id, "interval": "1m", "fidelity": 1440},
+            cache=False,
+            timeout=INTEGRITY["timeout_sec"],
+        )
+        history = payload.get("history") if isinstance(payload, dict) else None
+        if not isinstance(history, list):
+            return None
+        out: list[tuple[int, float]] = []
+        for point in history:
+            t, p = _num(point.get("t")), _num(point.get("p"))
+            if t is None or p is None:
+                return None
+            out.append((int(t), p))
+        return out
+    except Exception:  # noqa: BLE001 - advisory signal; never block the pipeline
+        return None
+
+
+def fetch_trades(condition_id: str) -> list[dict[str, Any]] | None:
+    """Recent trades of a market from the Data API; `None` on any error or unexpected shape.
+
+    Each dict keeps ``proxy_wallet``, ``side``, ``size``, ``price``, ``timestamp`` and ``outcome_index`` (numbers as numbers).
+    Accepts a bare list or ``{"data": [...]}``.
+    """
+    try:
+        payload = _get_json(
+            f"{data_base_url()}/trades",
+            {"condition": condition_id, "limit": INTEGRITY["trades_limit"]},
+            cache=False,
+            timeout=INTEGRITY["timeout_sec"],
+        )
+        entries = payload.get("data") if isinstance(payload, dict) else payload
+        if not isinstance(entries, list):
+            return None
+        out: list[dict[str, Any]] = []
+        for e in entries:
+            if not isinstance(e, dict):
+                return None
+            size, price, ts, idx = (_num(e.get(k)) for k in ("size", "price", "timestamp", "outcome_index"))
+            wallet, side = e.get("proxy_wallet"), e.get("side")
+            if size is None or price is None or ts is None or not isinstance(wallet, str) or not isinstance(side, str):
+                return None
+            out.append(
+                {
+                    "proxy_wallet": wallet,
+                    "side": side,
+                    "size": size,
+                    "price": price,
+                    "timestamp": int(ts),
+                    "outcome_index": int(idx) if idx is not None else None,
+                }
+            )
+        return out
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def fetch_book(token_id: str) -> dict[str, list[tuple[float, float]]] | None:
+    """CLOB order book as ``{"bids": [(p, s)], "asks": [(p, s)]}``, best level first; `None` on any error."""
+    try:
+        payload = _get_json(
+            f"{clob_base_url()}/book", {"token_id": token_id}, cache=False, timeout=INTEGRITY["timeout_sec"]
+        )
+        if not isinstance(payload, dict):
+            return None
+        sides: dict[str, list[tuple[float, float]]] = {}
+        for name in ("bids", "asks"):
+            levels = payload.get(name)
+            if not isinstance(levels, list):
+                return None
+            parsed = []
+            for lv in levels:
+                p, s = _num(lv.get("price")), _num(lv.get("size"))
+                if p is None or s is None:
+                    return None
+                parsed.append((p, s))
+            sides[name] = sorted(parsed, key=lambda x: x[0], reverse=(name == "bids"))
+        return sides
+    except Exception:  # noqa: BLE001
         return None
 
 

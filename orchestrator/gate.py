@@ -18,6 +18,7 @@ from typing import Any, Mapping
 from config.trading_constants import (
     FILTERS,
     LIQ_FRAC,
+    INTEGRITY,
     MANIP,
     MIN_ORDER_USD,
 )
@@ -71,7 +72,12 @@ def eligibility(
     (liquidity < MIN_ORDER_USD / LIQ_FRAC or missing), ``suspicious_move`` (|day_price_change| >=
     MANIP threshold on thin 24h volume vs liquidity), ``concentrated`` (``holder_top1``/``holder_top3``
     share above MANIP thresholds), ``wide_spread`` (yes_ask - yes_bid > MANIP max). Each of the last
-    three is skipped when its signal is missing.
+    three is skipped when its signal is missing. Then the integrity rejects, read from ``integ_*``
+    fields in the market data (see ``orchestrator.market_integrity``; INTEGRITY constants):
+    ``ramp_thin`` (30d ramp >= 0.25 on 30d volume < max(5000, liquidity)), ``wallet_dominated``
+    (top-1 wallet share >= 0.60 with >= 10 trades, or <= 4 wallets with ramp >= 0.15),
+    ``rules_changed`` (description hash differs from first seen), ``disputed_before`` (>= 1 UMA
+    dispute). A missing integ_* field never rejects.
 
     ``knobs`` is the directives-derived threshold mapping (see
     ``orchestrator.directives.extract_filter_directives``); missing keys fall back to the constants.
@@ -108,11 +114,44 @@ def eligibility(
     supply = md.get("holder_basis") == "supply"
     t1 = MANIP["concentrated_top1_supply" if supply else "concentrated_top1_share"]
     t3 = MANIP["concentrated_top3_supply" if supply else "concentrated_top3_share"]
-    if (top1 is not None and top1 >= t1) or (top3 is not None and top3 >= t3):
+    # Only the supply basis can reject; top_n overstates concentration, so it is record-only.
+    if supply and ((top1 is not None and top1 >= t1) or (top3 is not None and top3 >= t3)):
         return False, "concentrated"
     bid, ask = _num(md.get("yes_bid")), _num(md.get("yes_ask"))
     if bid is not None and ask is not None and ask - bid > MANIP["wide_spread_max"]:
         return False, "wide_spread"
+    return _integrity_reject(md, liq)
+
+
+def _integrity_reject(md: Mapping[str, Any], liq: float) -> tuple[bool, str]:
+    ramp = _num(md.get("integ_ramp_30d"))
+    vol30 = _num(md.get("integ_vol_30d_usd"))
+    if (
+        ramp is not None
+        and vol30 is not None
+        and ramp >= INTEGRITY["ramp_thin_min_move"]
+        and vol30 < max(INTEGRITY["ramp_thin_min_vol_usd"], liq)
+    ):
+        return False, "ramp_thin"
+    top1, n_tr = _num(md.get("integ_top1_wallet_share")), _num(md.get("integ_n_trades_30d"))
+    n_w = _num(md.get("integ_n_wallets_30d"))
+    if (
+        top1 is not None
+        and n_tr is not None
+        and top1 >= INTEGRITY["wallet_dom_top1_share"]
+        and n_tr >= INTEGRITY["wallet_dom_min_trades"]
+    ) or (
+        n_w is not None
+        and ramp is not None
+        and n_w <= INTEGRITY["few_wallets_max"]
+        and ramp >= INTEGRITY["few_wallets_min_move"]
+    ):
+        return False, "wallet_dominated"
+    if md.get("integ_rules_changed") is True:
+        return False, "rules_changed"
+    disputes = _num(md.get("integ_n_disputes"))
+    if disputes is not None and disputes >= INTEGRITY["disputes_reject_min"]:
+        return False, "disputed_before"
     return True, "ok"
 
 

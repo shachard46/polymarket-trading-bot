@@ -116,6 +116,10 @@ class FilterLogPayload(BaseModel):
     # and a pending refresh trigger set by Phase 2 ("price_move").
     research_state: Optional[dict[str, Any]] = None
     refresh_reason: Optional[str] = None
+    # Market integrity: first description hash ever seen (set once, never overwritten) and the
+    # latest score/flags/key numeric features.
+    description_first_hash: Optional[str] = None
+    integrity: Optional[dict[str, Any]] = None
 
 
 class ResearchFrontmatter(BaseModel):

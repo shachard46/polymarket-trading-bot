@@ -90,6 +90,8 @@ def _ledger_market_fields(market_data: dict[str, Any] | None) -> dict[str, Any]:
         "holder_basis": md.get("holder_basis"),
         "bid_ask_spread": _market_spread(md),
         "manipulation_risk": md.get("manipulation_risk") or "unknown",
+        "integ_score": md.get("integ_score"),
+        "integ_flags": md.get("integ_flags"),
     }
 
 
@@ -103,13 +105,28 @@ def _filter_manipulation_risk(filter_record: dict[str, Any] | None) -> str:
     return risk if risk in _MANIP_LEVELS else "unknown"
 
 
-def _carry_manipulation_risk(
+def _filter_integrity_fields(filter_record: dict[str, Any] | None) -> dict[str, Any]:
+    """``integ_score``/``integ_flags`` from a filter record's integrity dict (None when absent)."""
+    integ = (filter_record or {}).get("integrity")
+    integ = integ if isinstance(integ, dict) else {}
+    return {"integ_score": integ.get("score"), "integ_flags": integ.get("flags")}
+
+
+def _carry_filter_signals(
     market_data: dict[str, Any], filter_record: dict[str, Any] | None
 ) -> dict[str, Any]:
-    """Copy the filter record's triage verdict into ``market_data`` (in place) for ledger rows."""
+    """Copy the filter record's triage verdict and integrity score/flags into ``market_data`` (in place)."""
     if market_data.get("manipulation_risk") not in _MANIP_LEVELS:
         market_data["manipulation_risk"] = _filter_manipulation_risk(filter_record)
+    integ = (filter_record or {}).get("integrity")
+    if isinstance(integ, dict):
+        for key in ("score", "flags"):
+            if market_data.get(f"integ_{key}") is None and integ.get(key) is not None:
+                market_data[f"integ_{key}"] = integ[key]
     return market_data
+
+
+_carry_manipulation_risk = _carry_filter_signals  # backward-compatible name
 
 
 def _ledger_safe(
@@ -145,6 +162,7 @@ def _write_filter_state(
 ) -> bool:
     """Merge ``updates`` over the prior filter record and persist (keeps backoff/triage state)."""
     base = {k: v for k, v in (prior or {}).items() if k in _FILTER_FIELDS}
+    first_hash = base.get("description_first_hash") or updates.get("description_first_hash")
     payload = {
         "market_id": market_id,
         "passed": False,
@@ -154,6 +172,7 @@ def _write_filter_state(
         "error": None,
         **base,
         **updates,
+        "description_first_hash": first_hash,  # set once, never overwritten
     }
     return vault_write_or_flag(
         vault=vault,

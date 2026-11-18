@@ -69,6 +69,13 @@ _MARKET_DATA_FIELDS: tuple[str, ...] = (
     "resolution_source",
     "yes_token_id",
     "no_token_id",
+    # market-integrity inputs (Hub-side only; never sent to price-blind agents)
+    "created_at",
+    "uma_resolution_statuses",
+    "custom_liveness",
+    "resolution_mechanism",
+    "rewards_min_size",
+    "description",
 )
 
 

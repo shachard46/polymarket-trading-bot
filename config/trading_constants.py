@@ -66,6 +66,34 @@ SIGNAL_COVERAGE_ALERT_FRAC = 0.5
 # has been proposed at least this many times.
 FAILURE_TAG_MIN_COUNT = 3
 
+# Market integrity (Phase 2, deterministic, record-first): features over 1d/7d/30d from CLOB price
+# history, data-api v2 trades and the CLOB book, only for markets inside the gate budget. Hard
+# rejects only for extreme cases; everything else is ledgered with a 0-1 integrity score.
+# Fixed constants, NOT Overseer knobs. Missing data never rejects.
+INTEGRITY = {
+    # fetch
+    'history_days': 30,
+    'trades_limit': 1000,
+    'timeout_sec': 5.0,
+    # hard rejects
+    'ramp_thin_min_move': 0.25,            # |p_now - p_30d| at/above this ...
+    'ramp_thin_min_vol_usd': 5000.0,       # ... with 30d volume below max(this, liquidity) -> ramp_thin
+    'wallet_dom_top1_share': 0.60,         # top-1 wallet share of 30d volume at/above this ...
+    'wallet_dom_min_trades': 10,           # ... with at least this many 30d trades -> wallet_dominated
+    'few_wallets_max': 4,                  # n_wallets_30d <= this ...
+    'few_wallets_min_move': 0.15,          # ... with ramp_30d >= this -> wallet_dominated
+    'disputes_reject_min': 1,              # n 'disputed' in umaResolutionStatuses -> disputed_before
+    # soft-flag alarm levels (flag = clip(value / alarm, 0, 1); score = 1 - mean(flags))
+    'alarm_ramp_30d': 0.30,
+    'alarm_top1_share': 0.60,
+    'alarm_two_sided_share': 0.50,
+    'alarm_days_since_trade': 7.0,
+    'alarm_vol_spike': 5.0,
+    'alarm_liq_to_depth': 10.0,
+    'alarm_ask_wall_share': 0.80,
+    'young_age_days': 7.0,                 # flag = clip(1 - age_days / this, 0, 1)
+}
+
 # Filter Thresholds
 FILTERS = {
     "arbitrage_max_combined_ask": 0.98,

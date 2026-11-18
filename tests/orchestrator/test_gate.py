@@ -23,6 +23,24 @@ def row(**over):
     return base
 
 
+def test_integrity_rejects_and_missing_passes():
+    assert gate.eligibility(row(integ_ramp_30d=0.3, integ_vol_30d_usd=1000)) == (False, "ramp_thin")
+    assert gate.eligibility(row(integ_ramp_30d=0.3, integ_vol_30d_usd=30_000)) == (True, "ok")
+    assert gate.eligibility(row(integ_ramp_30d=0.2)) == (True, "ok")  # volume missing
+    assert gate.eligibility(row(integ_top1_wallet_share=0.7, integ_n_trades_30d=12)) == (False, "wallet_dominated")
+    assert gate.eligibility(row(integ_top1_wallet_share=0.7, integ_n_trades_30d=5)) == (True, "ok")
+    assert gate.eligibility(row(integ_n_wallets_30d=3, integ_ramp_30d=0.16, integ_vol_30d_usd=99_999)) == (
+        False,
+        "wallet_dominated",
+    )
+    assert gate.eligibility(row(integ_n_wallets_30d=3)) == (True, "ok")
+    assert gate.eligibility(row(integ_rules_changed=True)) == (False, "rules_changed")
+    assert gate.eligibility(row(integ_rules_changed=False)) == (True, "ok")
+    assert gate.eligibility(row(integ_n_disputes=1)) == (False, "disputed_before")
+    assert gate.eligibility(row(integ_n_disputes=0)) == (True, "ok")
+    assert gate.eligibility({"market_data": row(integ_n_disputes=2)}) == (False, "disputed_before")
+
+
 def test_eligible_market_ok():
     assert gate.eligibility(row()) == (True, "ok")
     assert gate.eligibility({"market_data": row()}) == (True, "ok")
@@ -118,10 +136,13 @@ def test_suspicious_move_rejected_on_thin_volume():
     assert gate.eligibility(row(day_price_change=0.05, volume_24h=1_000.0)) == (True, "ok")
 
 
-def test_concentrated_rejected():
-    assert gate.eligibility(row(holder_top1=0.6, holder_top3=0.7)) == (False, "concentrated")
-    assert gate.eligibility(row(holder_top1=0.2, holder_top3=0.8)) == (False, "concentrated")
-    assert gate.eligibility({"market_data": row(holder_top1=0.2, holder_top3=0.5)}) == (True, "ok")
+def test_concentrated_rejected_only_on_supply_basis():
+    assert gate.eligibility(row(holder_top1=0.6, holder_top3=0.7, holder_basis="supply")) == (False, "concentrated")
+    assert gate.eligibility(row(holder_top1=0.2, holder_top3=0.8, holder_basis="supply")) == (False, "concentrated")
+    assert gate.eligibility(row(holder_top1=0.2, holder_top3=0.4, holder_basis="supply")) == (True, "ok")
+    # top_n basis overstates concentration: record-only, never rejects
+    assert gate.eligibility(row(holder_top1=0.9, holder_top3=0.99, holder_basis="top_n")) == (True, "ok")
+    assert gate.eligibility(row(holder_top1=0.9, holder_top3=0.99)) == (True, "ok")
 
 
 def test_wide_spread_rejected():

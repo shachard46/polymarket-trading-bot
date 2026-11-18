@@ -29,6 +29,19 @@ real_executable_quote = api.executable_quote
 real_fetch_holder_concentration = api.fetch_holder_concentration
 
 
+real_fetch_price_history = api.fetch_price_history
+real_fetch_trades = api.fetch_trades
+real_fetch_book = api.fetch_book
+
+
+@pytest.fixture(autouse=True)
+def _real_integrity_fetchers(monkeypatch):
+    """conftest stubs the integrity fetchers; this module tests the real ones."""
+    monkeypatch.setattr(api, "fetch_price_history", real_fetch_price_history)
+    monkeypatch.setattr(api, "fetch_trades", real_fetch_trades)
+    monkeypatch.setattr(api, "fetch_book", real_fetch_book)
+
+
 @pytest.fixture(autouse=True)
 def _real_holders(monkeypatch):
     """conftest stubs holder fetching; this module tests the real one over a fake session."""
@@ -453,3 +466,69 @@ def test_keyset_real_page_signals_survive_list_candidates_and_scraper_snapshot()
     snap = scraper._market_snapshot_from_scraper_row(full)
     assert snap["volume_24h"] == full["volume_24h"] and snap["day_price_change"] == full["day_price_change"]
     assert "day_price_change" not in scraper._market_snapshot_from_scraper_row(sparse)
+
+
+# --- integrity fetchers ----------------------------------------------------
+
+LIQ_CID = "0xfe28d93c0729d1e099a0359caaf1277e4e6560034c2e3900d65921515f467282"
+LIQ_TOKEN = "30917853047681848974124763406524368436482316036542704956055886396093348090575"
+
+
+def test_fetch_price_history_parses_pairs_and_is_uncached():
+    sess = install(lambda url, p: load("prices_history.json"))
+    out = api.fetch_price_history(LIQ_TOKEN)
+    assert out and all(isinstance(t, int) and isinstance(p, float) for t, p in out)
+    assert out[0] == (1794441622, 0.135)
+    url, params = sess.calls[0]
+    assert url.endswith("/prices-history")
+    assert params == {"market": LIQ_TOKEN, "interval": "1m", "fidelity": 1440}
+    api.fetch_price_history(LIQ_TOKEN)
+    assert len(sess.calls) == 2  # cache=False: fresh each call
+
+
+def test_fetch_trades_keeps_numeric_fields():
+    sess = install(lambda url, p: load("data_trades.json"))
+    out = api.fetch_trades(LIQ_CID)
+    url, params = sess.calls[0]
+    assert url.endswith("/v2/trades")
+    assert params == {"condition": LIQ_CID, "limit": api.INTEGRITY["trades_limit"]}
+    assert len(out) == 12
+    t = out[0]
+    assert set(t) == {"proxy_wallet", "side", "size", "price", "timestamp", "outcome_index"}
+    assert t["proxy_wallet"].startswith("0x") and t["side"] in ("BUY", "SELL")
+    assert isinstance(t["size"], float) and isinstance(t["price"], float)
+    assert isinstance(t["timestamp"], int) and t["outcome_index"] in (0, 1)
+
+
+def test_fetch_trades_accepts_bare_list():
+    install(lambda url, p: load("data_trades.json")["data"])
+    assert len(api.fetch_trades(LIQ_CID)) == 12
+
+
+def test_fetch_book_floats_sorted_best_first():
+    sess = install(lambda url, p: load("clob_book_liquid.json"))
+    out = api.fetch_book(LIQ_TOKEN)
+    assert sess.calls[0][0].endswith("/book") and sess.calls[0][1] == {"token_id": LIQ_TOKEN}
+    assert out["bids"][0] == (0.117, 100.0)
+    assert out["bids"] == sorted(out["bids"], reverse=True)
+    assert out["asks"] == sorted(out["asks"])
+    assert all(isinstance(p, float) and isinstance(s, float) for p, s in out["bids"] + out["asks"])
+
+
+@pytest.mark.parametrize("fn,arg", [(api.fetch_price_history, "t"), (api.fetch_trades, "c"), (api.fetch_book, "t")])
+@pytest.mark.parametrize(
+    "payload",
+    [FakeResponse(404, {}), FakeResponse(200, ValueError), "junk", {"history": "x", "data": "x", "bids": 1}, None],
+)
+def test_integrity_fetchers_none_on_error_or_bad_shape(fn, arg, payload):
+    install(lambda url, p: payload)
+    assert fn(arg) is None
+
+
+def test_integrity_fetchers_none_on_malformed_rows():
+    install(lambda url, p: {"history": [{"t": 1, "p": "x"}]})
+    assert api.fetch_price_history("t") is None
+    install(lambda url, p: {"data": [{"size": 1}]})
+    assert api.fetch_trades("c") is None
+    install(lambda url, p: {"bids": [{"price": "0.1"}], "asks": []})
+    assert api.fetch_book("t") is None

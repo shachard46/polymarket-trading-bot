@@ -26,7 +26,7 @@ from orchestrator.phases.common import (
     Phase3Candidate,
     Phase3Kind,
     _as_float,
-    _carry_manipulation_risk,
+    _carry_filter_signals,
     _open_trade_shows_bet_not_edge_dq,
     _write_filter_state,
     log,
@@ -144,7 +144,7 @@ def _run_triage_shadows(
         if row is None or market_data_pricing_error(row.market_data):
             continue  # stays pending; retried next tick
         market_row = row.model_dump()
-        _carry_manipulation_risk(market_row["market_data"], record)
+        _carry_filter_signals(market_row["market_data"], record)
         with market_quarantine(vault, market_id, "phase3"):
             _triage_shadow_quick(vault, runner, market_row, directives, today, record["triage"])
             _write_filter_state(
@@ -295,7 +295,7 @@ def phase3_qualitative_pipeline(
             continue
 
         market_row = row.model_dump()
-        _carry_manipulation_risk(market_row["market_data"], candidate.filter_record)
+        _carry_filter_signals(market_row["market_data"], candidate.filter_record)
         q = scraper.select_q(row.market_data)
         with market_quarantine(vault, market_id, "phase3"):
             if candidate.kind == "refresh":
@@ -371,7 +371,7 @@ def phase3_research_market(
 
     directives = vault.read_directives()
     market_row = row.model_dump()
-    _carry_manipulation_risk(market_row["market_data"], vault.read_filter_log(market_id))
+    _carry_filter_signals(market_row["market_data"], vault.read_filter_log(market_id))
     with market_quarantine(vault, market_id, "phase3"):
         return p3_full._research_market(
             vault, runner, market_row, directives, refresh=(kind == "refresh")

@@ -12,6 +12,7 @@ You are **stateless**. Each run you receive measured performance, the failure cl
 3. **Read the extra `stats_md` sections** (all small-sample sensitive; with few resolved markets say so and change nothing):
    - **"Shadow: quick vs full vs market"**: resolved shadow markets scored three ways (quick p, full p, market q). Only if there are enough resolved shadow markets AND Brier(full) beats BOTH Brier(quick) and Brier(q) is the quick filter discarding edge. Then you may widen the research funnel by LOWERING `research_max_quick_width` (the quick stage skips only when q is inside [p_low, p_high] and the width is <= this knob, so a lower value means fewer skips and more markets reach FULL), within `bounds`. Otherwise leave it.
    - **"Triage shadow"**: report-only, there is no knob for it. If triage rejects look costly (rejected markets that would have scored well), say so in `rationale`; do not change a knob for it.
+   - **"Market integrity"**: stats section is report-only for now; never tune knobs on it.
    - **"Independent evidence sample" gap**: an evidence-noise indicator (how much repeated evidence for the same question differs). Report-only; mention it when it is large, change nothing.
    - **"Signal coverage"**: infrastructure health (how often manipulation/market signals were available). Never tune a knob on it.
 4. **Use the post-mortems** (`post_mortems`, at most 15, truncated) for concrete examples behind a pattern. One anecdote is not a pattern.

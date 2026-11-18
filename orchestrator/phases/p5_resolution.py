@@ -8,7 +8,13 @@ from typing import Any
 from obsidian_utils import ObsidianManager, VaultWriteError
 from orchestrator import failure_tags, ledger, scraper, stats
 from orchestrator.phases.agent_call import run_structured_agent
-from orchestrator.phases.common import _as_float, _filter_manipulation_risk, _ledger_safe, log
+from orchestrator.phases.common import (
+    _as_float,
+    _filter_integrity_fields,
+    _filter_manipulation_risk,
+    _ledger_safe,
+    log,
+)
 from orchestrator.runner import AgentRunner, spawn_agent
 from orchestrator.state import flag_inactive, is_inactive, market_quarantine
 
@@ -45,9 +51,11 @@ def _resolve_ledger_markets(vault: ObsidianManager) -> None:
             outcome_yes = ledger.outcome_yes_from_resolution(resolution)
             if outcome_yes is None:
                 continue
+            filt = vault.read_filter_log(market_id)
             ledger.record_resolution(
                 vault, market_id, outcome_yes, (resolution or {}).get("raw_outcome"), None,
-                manipulation_risk=_filter_manipulation_risk(vault.read_filter_log(market_id)),
+                manipulation_risk=_filter_manipulation_risk(filt),
+                **_filter_integrity_fields(filt),
             )
         except Exception:  # noqa: BLE001 - one bad market must not stop the sweep
             log.exception("[PHASE 5] ledger resolution failed for %s", market_id)
@@ -189,6 +197,7 @@ def _resolve_market(
         p=payload["p"], side=payload["side"], price=payload["price"],
         size_usd=payload["size_usd"], category=payload["category"],
         manipulation_risk=payload["manipulation_risk"],
+        **_filter_integrity_fields(vault.read_filter_log(market_id)),
     )
     try:
         vault.archive_trade(market_id)

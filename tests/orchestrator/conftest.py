@@ -46,6 +46,14 @@ def _no_holder_network(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_integrity_network(monkeypatch):
+    """No test hits the network for price history / trades / book; tests that need them override."""
+    monkeypatch.setattr(polymarket_api, "fetch_price_history", lambda *a, **k: None)
+    monkeypatch.setattr(polymarket_api, "fetch_trades", lambda *a, **k: None)
+    monkeypatch.setattr(polymarket_api, "fetch_book", lambda *a, **k: None)
+
+
+@pytest.fixture(autouse=True)
 def _aiq_evidence_by_default(monkeypatch):
     """Existing phase tests exercise the A-IQ path; evidence tests override the env."""
     monkeypatch.setenv("OPENCLAW_EVIDENCE_SOURCE", "aiq")
