@@ -205,6 +205,8 @@ def _triage_stub(payload: dict[str, Any]) -> dict[str, Any]:
         "researchable": True,
         "category": "stub",
         "reason": "stub: researchable",
+        "manipulation_risk": "low",
+        "manipulation_reason": "stub",
         "error": None,
     }
 

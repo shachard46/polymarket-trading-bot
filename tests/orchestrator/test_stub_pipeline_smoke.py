@@ -4,7 +4,7 @@ from __future__ import annotations
 
 
 from obsidian_utils import ObsidianManager
-from orchestrator import ledger, loop, phases, scraper
+from orchestrator import ledger, loop, phases, polymarket_api, scraper
 from orchestrator.phases import p3_evidence
 from orchestrator.scraper import MarketRow
 
@@ -33,6 +33,7 @@ def test_two_stub_ticks(tmp_path, monkeypatch):
     monkeypatch.setattr(scraper, "fetch_target_markets", lambda knobs=None: list(rows.values()))
     monkeypatch.setattr(scraper, "fetch_market_row", lambda mid: rows.get(mid))
     monkeypatch.setattr(scraper, "fetch_resolution", lambda mid: None)
+    monkeypatch.setattr(polymarket_api, "fetch_holder_concentration", lambda cid: None)
     monkeypatch.setattr(
         p3_evidence,
         "fetch_research_bundle",

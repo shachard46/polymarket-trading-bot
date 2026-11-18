@@ -26,7 +26,14 @@ from orchestrator.parse import (
     run_agent_with_format_retries,
 )
 from orchestrator.phases.agent_call import check_complete, invoke_deep_researcher
-from orchestrator.phases.common import _as_float, _dr_payload, _text_fields, log
+from orchestrator.phases.common import (
+    _as_float,
+    _dr_payload,
+    _ledger_market_fields,
+    _ledger_safe,
+    _text_fields,
+    log,
+)
 from orchestrator.phases.p3_evidence import (
     _bundle_has_entries,
     _ensure_as_of,
@@ -292,8 +299,13 @@ def _research_market(
     refresh: bool = False,
     shared_bundle: list[dict[str, Any]] | None = None,
     shared_meta: dict[str, Any] | None = None,
+    shadow: bool = False,
+    quick: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """FULL stage for one market: Briefer -> A-IQ -> Deep Researcher x3 -> Hub decision.
+
+    ``shadow`` (measure only, a quick no_divergence skip): runs the same research but writes no
+    report and leaves ``research_state`` untouched; one ``shadow_research`` ledger row, returns None.
 
     Returns the Phase 4 row (``p_value``/``p_low``/``p_high``/``market_data``) when active
     research was written, ``None`` after a ledgered skip or an inactive flag.
@@ -319,6 +331,21 @@ def _research_market(
         "evidence_source": ev_source, "evidence_fallback": ev_fallback,
     }
     knobs = extract_filter_directives(directives)
+    if shadow:
+        would_skip = None
+        if agg["spread"] > knobs["research_max_sample_spread"]:
+            would_skip = "sample_disagreement"
+        elif q is not None and abs(agg["p"] - q) > knobs["research_max_q_gap"]:
+            would_skip = "probable_misread"
+        quick = quick or {}
+        _ledger_safe(
+            vault, market_id, "shadow_research",
+            shadow=True, would_skip=would_skip,
+            quick_p=quick.get("p"), quick_p_low=quick.get("p_low"), quick_p_high=quick.get("p_high"),
+            **values, **_ledger_market_fields(md),
+        )
+        log.info("[PHASE 3] shadow_research for %s (would_skip=%s)", market_id, would_skip)
+        return None
     if agg["spread"] > knobs["research_max_sample_spread"]:
         _skip_research(vault, row, "full", "sample_disagreement", **values)
         return None

@@ -151,6 +151,8 @@ def test_phase2_writes_filter_for_phase3_scan(monkeypatch, vault):
             "market_id": payload["market_id"],
             "researchable": True,
             "category": "politics",
+            "manipulation_risk": "low",
+            "manipulation_reason": "none",
             "reason": "public evidence",
             "error": None,
         }

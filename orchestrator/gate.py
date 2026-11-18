@@ -18,6 +18,7 @@ from typing import Any, Mapping
 from config.trading_constants import (
     FILTERS,
     LIQ_FRAC,
+    MANIP,
     MIN_ORDER_USD,
 )
 from orchestrator.scraper import select_q
@@ -67,7 +68,10 @@ def eligibility(
     Codes: ``closed``, ``no_price``, ``price_extreme`` (q outside
     [``gate_min_q``, ``gate_max_q``], default [0.05, 0.95]), ``no_end_date``, ``too_soon``
     (< ``min_days_to_resolution``), ``too_far`` (> ``max_days_to_resolution``), ``illiquid``
-    (liquidity < MIN_ORDER_USD / LIQ_FRAC or missing).
+    (liquidity < MIN_ORDER_USD / LIQ_FRAC or missing), ``suspicious_move`` (|day_price_change| >=
+    MANIP threshold on thin 24h volume vs liquidity), ``concentrated`` (``holder_top1``/``holder_top3``
+    share above MANIP thresholds), ``wide_spread`` (yes_ask - yes_bid > MANIP max). Each of the last
+    three is skipped when its signal is missing.
 
     ``knobs`` is the directives-derived threshold mapping (see
     ``orchestrator.directives.extract_filter_directives``); missing keys fall back to the constants.
@@ -92,6 +96,22 @@ def eligibility(
     liq = _num(md.get("liquidity"))
     if liq is None or liq < MIN_LIQUIDITY_USD:
         return False, "illiquid"
+    chg, vol24 = _num(md.get("day_price_change")), _num(md.get("volume_24h"))
+    if (
+        chg is not None
+        and vol24 is not None
+        and abs(chg) >= MANIP["suspicious_move_min_abs_change"]
+        and vol24 < MANIP["suspicious_move_max_vol24_frac"] * liq
+    ):
+        return False, "suspicious_move"
+    top1, top3 = _num(md.get("holder_top1")), _num(md.get("holder_top3"))
+    if (top1 is not None and top1 >= MANIP["concentrated_top1_share"]) or (
+        top3 is not None and top3 >= MANIP["concentrated_top3_share"]
+    ):
+        return False, "concentrated"
+    bid, ask = _num(md.get("yes_bid")), _num(md.get("yes_ask"))
+    if bid is not None and ask is not None and ask - bid > MANIP["wide_spread_max"]:
+        return False, "wide_spread"
     return True, "ok"
 
 

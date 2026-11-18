@@ -110,3 +110,26 @@ def test_arbitrage_detection():
     assert gate.arbitrage_combined(row(yes_price=0.5, no_price=0.5)) is None
     assert gate.arbitrage_combined(row(yes_price=0.0, no_price=0.5)) is None
     assert gate.arbitrage_combined(row(yes_price=None)) is None
+
+
+def test_suspicious_move_rejected_on_thin_volume():
+    assert gate.eligibility(row(day_price_change=-0.2, volume_24h=1_000.0)) == (False, "suspicious_move")
+    assert gate.eligibility(row(day_price_change=0.2, volume_24h=50_000.0)) == (True, "ok")
+    assert gate.eligibility(row(day_price_change=0.05, volume_24h=1_000.0)) == (True, "ok")
+
+
+def test_concentrated_rejected():
+    assert gate.eligibility(row(holder_top1=0.6, holder_top3=0.7)) == (False, "concentrated")
+    assert gate.eligibility(row(holder_top1=0.2, holder_top3=0.8)) == (False, "concentrated")
+    assert gate.eligibility({"market_data": row(holder_top1=0.2, holder_top3=0.5)}) == (True, "ok")
+
+
+def test_wide_spread_rejected():
+    assert gate.eligibility(row(yes_bid=0.30, yes_ask=0.45)) == (False, "wide_spread")
+    assert gate.eligibility(row(yes_bid=0.39, yes_ask=0.41)) == (True, "ok")
+
+
+def test_missing_manipulation_signals_pass():
+    assert gate.eligibility(row(yes_ask=0.9)) == (True, "ok")
+    assert gate.eligibility(row(day_price_change=0.5)) == (True, "ok")
+    assert gate.eligibility(row(volume_24h=0.0)) == (True, "ok")

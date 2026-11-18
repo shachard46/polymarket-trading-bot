@@ -40,6 +40,12 @@ def _stub_clob_quotes(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_holder_network(monkeypatch):
+    """No test hits the network for holder concentration; tests that need it override."""
+    monkeypatch.setattr(polymarket_api, "fetch_holder_concentration", lambda *a, **k: None)
+
+
+@pytest.fixture(autouse=True)
 def _aiq_evidence_by_default(monkeypatch):
     """Existing phase tests exercise the A-IQ path; evidence tests override the env."""
     monkeypatch.setenv("OPENCLAW_EVIDENCE_SOURCE", "aiq")

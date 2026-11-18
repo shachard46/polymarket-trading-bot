@@ -8,7 +8,7 @@ Each role's [`agents_blueprint/<role>/agent.yaml`](../agents_blueprint/) declare
 
 Phase 2's gate is deterministic code (`orchestrator/gate.py`, see `02_orchestrator_pipeline.md`); the only LLM step in Phase 2 is Triage. The former Evaluator and Re-Evaluator agents are removed.
 
-- **System Prompt:** Decide whether public-information research by an LLM with web search could plausibly estimate the probability better than a liquid market. **No** for sports game lines/props, short-horizon crypto/asset price thresholds, pure chance, markets resolved by private or unknowable information, and markets whose answer is just a live data feed. **Yes** for politics/policy/legal/regulatory/corporate/scientific events with public evidence and clear resolution rules. The agent is never given the price.
+- **System Prompt:** Decide whether public-information research by an LLM with web search could plausibly estimate the probability better than a liquid market. **No** for sports game lines/props, short-horizon crypto/asset price thresholds, pure chance, markets resolved by private or unknowable information, and markets whose answer is just a live data feed. **Yes** for politics/policy/legal/regulatory/corporate/scientific events with public evidence and clear resolution rules. The agent is never given the price. It also rates manipulation risk (see below).
 - **Input Schema:** `{"market_id": "string", "title": "string", "description": "string", "resolution_source": "string | null", "category": "string | null", "end_date": "string | null", "today": "string"}`
 - **Output Schema:**
 
@@ -18,10 +18,13 @@ Phase 2's gate is deterministic code (`orchestrator/gate.py`, see `02_orchestrat
   "researchable": boolean,
   "category": "string",
   "reason": "string",
+  "manipulation_risk": "low | medium | high",
+  "manipulation_reason": "string",
   "error": "string | null"
 }
 ```
 
+- **Manipulation risk:** price-blind, text-only rating. `high` = vague/subjective source, a single small or obscure oracle/account, or an outcome one actor can directly cause or control; `medium` = some rule ambiguity or a concentrated-but-official source; `low` = clear rules and an authoritative independent source. The schema keeps it a plain string; the Hub validates the value.
 - **Caching:** the Hub stores the verdict in the market's `01_Filters/` frontmatter (`triage:`) forever and reuses it for every market with the same `event_id`. `researchable: false` retires the market.
 
 ## 2. The Surgical Query Planner (briefer)

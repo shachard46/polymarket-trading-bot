@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 from typing import Any, Callable
 
+from config.trading_constants import SHADOW_RATE
 from orchestrator import config
 from orchestrator.aiq_bundle import fetch_research_bundle_cached, normalize_query
 from orchestrator.config import RESEARCH_DATA_MAX_CHARS
@@ -41,6 +42,15 @@ def ab_arm(market_id: str) -> str:
     """Stable A/B arm for a market: parity of sha256(market_id) (even -> aiq, odd -> web)."""
     digest = hashlib.sha256(str(market_id).encode("utf-8")).digest()
     return AIQ if digest[-1] % 2 == 0 else WEB
+
+
+def is_shadow(market_id: str) -> bool:
+    """Stable ~SHADOW_RATE selection of quick no_divergence skips for the shadow FULL run.
+
+    Uses a salted hash prefix, so it is independent of the :func:`ab_arm` parity byte.
+    """
+    digest = hashlib.sha256(("shadow:" + str(market_id)).encode("utf-8")).hexdigest()
+    return int(digest[:8], 16) / 2**32 < SHADOW_RATE
 
 
 def intended_source(market_id: str) -> str:
@@ -136,6 +146,7 @@ __all__ = [
     "AIQ",
     "WEB",
     "ab_arm",
+    "is_shadow",
     "fetch_web_bundle",
     "fetch_web_rows",
     "intended_source",

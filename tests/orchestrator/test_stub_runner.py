@@ -145,6 +145,7 @@ def test_live_runner_invokes_openclaw_cli(monkeypatch):
                 {
                     "text": (
                         '{"market_id":"0xabc","researchable":false,"category":"sports",'
+                        '"manipulation_risk":"low","manipulation_reason":"none",'
                         '"reason":"live fake","error":null}'
                     )
                 }
@@ -175,7 +176,8 @@ def test_live_runner_sanitizes_session_key(monkeypatch):
                 {
                     "text": (
                         '{"market_id":"market with spaces","researchable":false,'
-                        '"category":"sports","reason":"live fake","error":null}'
+                        '"category":"sports","manipulation_risk":"low","manipulation_reason":"none",'
+                        '"reason":"live fake","error":null}'
                     )
                 }
             ]

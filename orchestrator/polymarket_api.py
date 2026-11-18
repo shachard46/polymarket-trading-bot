@@ -33,6 +33,7 @@ import requests
 
 from config.trading_constants import (
     LIQ_FRAC,
+    MANIP,
     MAX_DAYS_TO_RESOLUTION,
     MIN_DAYS_TO_RESOLUTION,
     MIN_ORDER_USD,
@@ -42,6 +43,7 @@ log = logging.getLogger(__name__)
 
 DEFAULT_GAMMA_BASE_URL = "https://gamma-api.polymarket.com"
 DEFAULT_CLOB_BASE_URL = "https://clob.polymarket.com"
+DEFAULT_DATA_BASE_URL = "https://data-api.polymarket.com/v2"  # v1 was retired; v2 takes condition_id
 DEFAULT_TIMEOUT_SEC = 15.0
 MAX_ATTEMPTS = 4
 BACKOFF_BASE_SEC = 0.5
@@ -73,6 +75,10 @@ _cache_lock = threading.Lock()
 
 def gamma_base_url() -> str:
     return os.environ.get("GAMMA_BASE_URL", DEFAULT_GAMMA_BASE_URL).rstrip("/")
+
+
+def data_base_url() -> str:
+    return os.environ.get("DATA_API_BASE_URL", DEFAULT_DATA_BASE_URL).rstrip("/")
 
 
 def clob_base_url() -> str:
@@ -121,7 +127,7 @@ def _retry_delay(attempt: int, response: Any | None) -> float:
     return min(BACKOFF_BASE_SEC * 2**attempt, BACKOFF_CAP_SEC)
 
 
-def _get_json(url: str, params: dict[str, Any] | None = None, *, cache: bool = True) -> Any:
+def _get_json(url: str, params: dict[str, Any] | None = None, *, cache: bool = True, timeout: float | None = None) -> Any:
     """GET ``url`` and return parsed JSON; retry 429/5xx/transport errors with backoff.
 
     Raises :class:`PolymarketAPIError` once retries are exhausted or on a non-retryable 4xx.
@@ -137,7 +143,7 @@ def _get_json(url: str, params: dict[str, Any] | None = None, *, cache: bool = T
     for attempt in range(MAX_ATTEMPTS):
         response = None
         try:
-            response = _get_session().get(url, params=params, timeout=_timeout_sec())
+            response = _get_session().get(url, params=params, timeout=timeout or _timeout_sec())
         except requests.RequestException as exc:
             last_error = f"{type(exc).__name__}: {exc}"
         else:
@@ -281,6 +287,8 @@ def market_row_from_gamma(raw: dict[str, Any], now: datetime | None = None) -> d
         "spread": spread,
         "liquidity": _num(raw.get("liquidityNum")) if raw.get("liquidityNum") is not None else _num(raw.get("liquidity")),
         "volume": _num(raw.get("volumeNum")) if raw.get("volumeNum") is not None else _num(raw.get("volume")),
+        "volume_24h": _num(raw.get("volume24hr")),
+        "day_price_change": _num(raw.get("oneDayPriceChange")),
         "end_date": end.isoformat() if end else (str(end_raw) if end_raw else None),
         "days_to_resolution": _days_to_resolution(end, now) if end else None,
         "category": raw.get("category") or (events[0].get("category") if events else None),
@@ -293,6 +301,42 @@ def market_row_from_gamma(raw: dict[str, Any], now: datetime | None = None) -> d
         "accepting_orders": raw.get("acceptingOrders") is not False and raw.get("enableOrderBook") is not False,
     }
     return {k: v for k, v in row.items() if v is not None}
+
+
+def fetch_holder_concentration(condition_id: str) -> dict[str, float] | None:
+    """Top-holder share per side from the Data API ``/holders``; the worst side wins.
+
+    Returns ``{"top1", "top3"}`` (share of the top-N holders' total) or `None` on any error,
+    unexpected shape or zero total. Accepts a bare list or ``{"data": [...]}`` of per-token entries.
+    """
+    try:
+        payload = _get_json(
+            f"{data_base_url()}/holders",
+            {"condition_id": condition_id, "limit": MANIP["holders_limit"]},
+            timeout=MANIP["holders_timeout_sec"],
+        )
+        entries = payload.get("data") if isinstance(payload, dict) else payload
+        if not isinstance(entries, list):
+            return None
+        top1 = top3 = 0.0
+        seen = False
+        for entry in entries:
+            holders = entry.get("holders") if isinstance(entry, dict) else None
+            if not isinstance(holders, list):
+                return None
+            amounts = sorted(
+                (a for a in (_num(h.get("amount")) for h in holders if isinstance(h, dict)) if a is not None and a > 0),
+                reverse=True,
+            )
+            total = sum(amounts)
+            if total <= 0:
+                continue
+            seen = True
+            top1 = max(top1, amounts[0] / total)
+            top3 = max(top3, sum(amounts[:3]) / total)
+        return {"top1": round(top1, 6), "top3": round(top3, 6)} if seen else None
+    except Exception:  # noqa: BLE001 - advisory signal; never block the pipeline
+        return None
 
 
 # ---------------------------------------------------------------------------

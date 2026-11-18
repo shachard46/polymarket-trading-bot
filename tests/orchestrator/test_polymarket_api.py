@@ -26,6 +26,13 @@ NOW = datetime(2026, 10, 22, 13, 0, tzinfo=timezone.utc)
 
 # The module-level fakes in conftest replace executable_quote for phase tests; keep the real one.
 real_executable_quote = api.executable_quote
+real_fetch_holder_concentration = api.fetch_holder_concentration
+
+
+@pytest.fixture(autouse=True)
+def _real_holders(monkeypatch):
+    """conftest stubs holder fetching; this module tests the real one over a fake session."""
+    monkeypatch.setattr(api, "fetch_holder_concentration", real_fetch_holder_concentration)
 
 
 def load(name: str) -> Any:
@@ -191,6 +198,8 @@ def test_list_candidates_respects_limit_and_directive_knobs():
 
 
 def test_scraper_fetch_target_markets_wraps_rows_and_swallows_api_errors(monkeypatch):
+    real_list = api.list_candidates  # fixture end dates are fixed: pin "now" so the window is stable
+    monkeypatch.setattr(api, "list_candidates", lambda limit, knobs=None, **kw: real_list(limit, knobs, now=NOW))
     install(lambda url, p: load("keyset_page.json"))
     rows = scraper.fetch_target_markets()
     assert [r.market_id for r in rows] == [CID]
@@ -361,3 +370,45 @@ def test_fetch_market_still_queries_open_first():
     sess = install(lambda url, p: [gamma_market()])
     api.fetch_market(CID)
     assert "closed" not in sess.calls[0][1]
+
+
+def test_row_carries_volume_24h_and_day_price_change():
+    row = api.market_row_from_gamma(load("market_binary_open.json"), NOW)
+    assert row["volume_24h"] == pytest.approx(584939.550041)
+    assert row["day_price_change"] == pytest.approx(0.01)
+    m = copy.deepcopy(load("market_binary_open.json"))
+    m.pop("volume24hr")
+    m.pop("oneDayPriceChange")
+    row = api.market_row_from_gamma(m, NOW)
+    assert "volume_24h" not in row and "day_price_change" not in row
+
+
+def _holders(amounts_by_side):
+    return {"data": [{"token_id": str(i), "holders": [{"amount": a} for a in amts]} for i, amts in enumerate(amounts_by_side)]}
+
+
+def test_fetch_holder_concentration_parses_worst_side(monkeypatch):
+    seen = {}
+
+    def fake(url, params=None, **kw):
+        seen.update(url=url, params=params, kw=kw)
+        return _holders([[50, 30, 10, 10], [10, 10, 10, 10, 10, 10, 10, 10, 10, 10]])
+
+    monkeypatch.setattr(api, "_get_json", fake)
+    out = api.fetch_holder_concentration(CID)
+    assert out == {"top1": pytest.approx(0.5), "top3": pytest.approx(0.9)}
+    assert seen["url"].endswith("/holders") and seen["params"]["condition_id"] == CID
+    assert seen["kw"]["timeout"] == api.MANIP["holders_timeout_sec"]
+    monkeypatch.setattr(api, "_get_json", lambda *a, **k: _holders([[5, 5]])["data"])  # bare list
+    assert api.fetch_holder_concentration(CID)["top1"] == pytest.approx(0.5)
+
+
+def test_fetch_holder_concentration_failures_return_none(monkeypatch):
+    def boom(*a, **k):
+        raise api.PolymarketAPIError("down")
+
+    monkeypatch.setattr(api, "_get_json", boom)
+    assert api.fetch_holder_concentration(CID) is None
+    for payload in ({"error": "x"}, "junk", [{"holders": "nope"}], _holders([[0, 0]]), _holders([])):
+        monkeypatch.setattr(api, "_get_json", lambda *a, _p=payload, **k: _p)
+        assert api.fetch_holder_concentration(CID) is None

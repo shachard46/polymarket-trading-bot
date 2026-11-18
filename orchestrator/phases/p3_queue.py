@@ -10,7 +10,8 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from obsidian_utils import ObsidianManager
-from orchestrator import gate, scraper
+from config.trading_constants import SHADOW_MAX_PER_TICK
+from orchestrator import evidence, gate, scraper
 from orchestrator.config import (
     full_research_budget,
     quick_research_budget,
@@ -113,6 +114,8 @@ class _Job:
 
     candidate: Phase3Candidate
     row: dict[str, Any]
+    shadow: bool = False  # measure-only FULL run of a quick no_divergence skip
+    quick: dict[str, Any] | None = None  # quick p/p_low/p_high, shadow jobs only
 
     @property
     def market_id(self) -> str:
@@ -164,9 +167,11 @@ def _run_full_stage(
             result = None
             try:
                 with market_quarantine(vault, job.market_id, "phase3"):
+                    extra = {"shadow": True, "quick": job.quick} if job.shadow else {}
                     result = p3_full._research_market(
                         vault, runner, job.row, directives,
                         refresh=job.refresh, shared_bundle=shared, shared_meta=shared_meta,
+                        **extra,
                     )
             except InfraUnavailable:
                 abort.set()
@@ -176,7 +181,7 @@ def _run_full_stage(
                 if _bundle_has_entries(leader_bundle):
                     shared = leader_bundle
                     shared_meta = vault.read_research_bundle_meta(job.market_id)
-            if result is not None:
+            if result is not None and not job.shadow:
                 out.append(result)
         return out
 
@@ -221,6 +226,7 @@ def phase3_qualitative_pipeline(
     today = today_date()
     quick_left = quick_research_budget()
     to_full: list[_Job] = []
+    shadow_jobs: list[_Job] = []
 
     for candidate in queue:
         market_id = candidate.market_id
@@ -263,8 +269,18 @@ def phase3_qualitative_pipeline(
             if quick_left <= 0:
                 continue
             quick_left -= 1
-            if _quick_stage(vault, runner, market_row, directives, today) == "escalate":
+            quick = _quick_stage(vault, runner, market_row, directives, today)
+            if quick.outcome == "escalate":
                 to_full.append(_Job(candidate, market_row))
+            elif (
+                quick.outcome == "skip"
+                and len(shadow_jobs) < SHADOW_MAX_PER_TICK
+                and evidence.is_shadow(market_id)
+            ):
+                shadow_jobs.append(_Job(
+                    candidate, market_row, shadow=True,
+                    quick={"p": quick.p, "p_low": quick.p_low, "p_high": quick.p_high},
+                ))
 
     selected = to_full[: full_research_budget()]
     if len(to_full) > len(selected):
@@ -272,7 +288,11 @@ def phase3_qualitative_pipeline(
             "[PHASE 3] FULL budget: %d escalated, %d deferred to the next tick",
             len(to_full), len(to_full) - len(selected),
         )
-    researched = _run_full_stage(vault, runner, directives, selected, over_budget)
+    if shadow_jobs:
+        log.info("[PHASE 3] shadow FULL runs: %d (measure only, appended after real escalations)", len(shadow_jobs))
+    researched = _run_full_stage(
+        vault, runner, directives, selected + shadow_jobs, over_budget
+    )
     log.info("[PHASE 3] researched count=%d", len(researched))
     return researched
 

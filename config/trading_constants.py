@@ -35,6 +35,23 @@ RESEARCH_REFRESH_PRICE_MOVE = 0.08  # q moved this much since research -> re-res
 RESEARCH_MIN_TTL_HOURS = 48.0       # refresh TTL = max(48h, days_to_resolution * 24h / 10)
 AIQ_CACHE_TTL_SEC = 24 * 3600       # A-IQ query cache lifetime
 
+# Gate manipulation signals (Phase 2, deterministic). Fixed constants, NOT Overseer knobs (not in BOUNDS).
+# A missing signal skips its check; it never rejects.
+MANIP = {
+    "suspicious_move_min_abs_change": 0.15,   # |oneDayPriceChange| at/above this ...
+    "suspicious_move_max_vol24_frac": 0.5,    # ... with volume24hr < this * liquidity -> suspicious_move
+    "concentrated_top1_share": 0.50,          # top-1 holder share of the top-N total (per side) -> concentrated
+    "concentrated_top3_share": 0.75,          # top-3 holder share of the top-N total (per side) -> concentrated
+    "wide_spread_max": 0.08,                  # yes_ask - yes_bid above this -> wide_spread
+    "holders_limit": 20,                      # data-api /holders top-N
+    "holders_timeout_sec": 5.0,
+}
+
+# Quick-stage shadow test (Phase 3, measure only): a stable ~10% of quick no_divergence skips run
+# the FULL stage anyway; results are ledgered (stage shadow_research) and never traded.
+SHADOW_RATE = 0.10
+SHADOW_MAX_PER_TICK = 2
+
 # Filter Thresholds
 FILTERS = {
     "arbitrage_max_combined_ask": 0.98,

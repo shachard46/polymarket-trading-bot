@@ -70,12 +70,25 @@ def _trade_log_shows_edge_disqualification(data: dict[str, Any]) -> bool:
         return False
 
 
+def _market_spread(md: dict[str, Any]) -> float | None:
+    bid, ask = md.get("yes_bid"), md.get("yes_ask")
+    if isinstance(bid, (int, float)) and isinstance(ask, (int, float)):
+        return round(float(ask) - float(bid), 6)
+    return None
+
+
 def _ledger_market_fields(market_data: dict[str, Any] | None) -> dict[str, Any]:
     md = market_data or {}
     return {
         "category": md.get("category"),
         "end_date": md.get("end_date"),
         "event_id": md.get("event_id"),
+        "volume_24h": md.get("volume_24h"),
+        "day_price_change": md.get("day_price_change"),
+        "holder_top1": md.get("holder_top1"),
+        "holder_top3": md.get("holder_top3"),
+        "bid_ask_spread": _market_spread(md),
+        "manipulation_risk": md.get("manipulation_risk") or "unknown",
     }
 
 

@@ -106,6 +106,17 @@ def test_triage_payload_is_price_blind():
     assert "yes_price" not in payload and "q" not in payload
 
 
+def test_triage_stub_output_validates_against_schema():
+    Model = build_model("TriageOut", AGENTS["triage"]["output_schema"])
+    out = STUB_RESPONSES["triage"]({"market_id": "x"})
+    Model.model_validate(out)
+    assert out["manipulation_risk"] == "low"
+    assert out["manipulation_reason"] == "stub"
+    with pytest.raises(AgentSchemaError):
+        bad = {k: v for k, v in out.items() if k != "manipulation_risk"}
+        validate_payload("triage", "output", Model, bad)
+
+
 def test_spawn_agent_overseer_accepts_valid_payload():
     out = spawn_agent(
         "overseer",

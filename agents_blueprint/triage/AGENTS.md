@@ -20,10 +20,20 @@ Politics, policy, legal, regulatory, corporate, and scientific events where **pu
 
 When in doubt between a weak YES and a NO, prefer NO only if the answer is a coin flip or a feed; prefer YES if a careful reader of public documents could update meaningfully.
 
+## Manipulation risk
+
+Separately from `researchable`, rate how easily the resolution could be manipulated, from the question text alone (still price-blind):
+
+- `high`: resolution depends on a vague or subjective source, a single small or obscure oracle or account, or an outcome one actor can directly cause or control (e.g. "Will X tweet Y", self-reported metrics).
+- `medium`: some ambiguity in the rules, or a concentrated-but-official source.
+- `low`: clear rules and an authoritative, independent source.
+
 ## Output
 
 - `category`: a short lowercase label, e.g. `politics`, `legal`, `regulatory`, `corporate`, `science`, `sports`, `crypto`, `entertainment`, `other`.
 - `reason`: one sentence naming the deciding factor.
+- `manipulation_risk`: exactly one of `low`, `medium`, `high`.
+- `manipulation_reason`: one sentence naming the deciding factor for the manipulation risk.
 
 EXECUTION FLOW: single turn. Read `title`, `description`, `resolution_source`, `category`, `end_date`, `today`; emit the JSON below.
 
@@ -40,6 +50,8 @@ OUTPUT SCHEMA:
   "researchable": true,
   "category": "<string>",
   "reason": "<one sentence>",
+  "manipulation_risk": "low",
+  "manipulation_reason": "<one sentence>",
   "error": null
 }
 ```

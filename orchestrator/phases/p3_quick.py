@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 from pydantic import ValidationError
 
@@ -17,6 +17,13 @@ from orchestrator.phases.common import _dr_payload
 from orchestrator.phases.research_state import _record_attempt, _skip_research
 from orchestrator.runner import AgentRunner
 from orchestrator.state import flag_inactive
+
+
+class QuickResult(NamedTuple):
+    outcome: Literal["escalate", "skip", "failed"]
+    p: float | None = None
+    p_low: float | None = None
+    p_high: float | None = None
 
 
 def quick_decision(
@@ -39,8 +46,11 @@ def _quick_stage(
     row: dict[str, Any],
     directives: str,
     today: str,
-) -> Literal["escalate", "skip", "failed"]:
-    """One price-blind Deep Researcher call with no A-IQ bundle, then the Hub decision."""
+) -> QuickResult:
+    """One price-blind Deep Researcher call with no A-IQ bundle, then the Hub decision.
+
+    Returns the outcome plus the quick p/p_low/p_high (None when it failed before an estimate).
+    """
     market_id = row["market_id"]
     md = row.get("market_data") or {}
     q = scraper.select_q(md)
@@ -55,15 +65,15 @@ def _quick_stage(
             vault, market_id, "phase3",
             f"deep researcher quick-stage output validation failed: {exc}", dr_in,
         )
-        return "failed"
+        return QuickResult("failed")
     if isinstance(out, DeepResearcherNeedsMore):
         flag_inactive(
             vault, market_id, "phase3",
             "deep researcher disobeyed quick-stage override", out.model_dump(),
         )
-        return "failed"
+        return QuickResult("failed")
     if check_complete(vault, market_id, out) is None:
-        return "failed"
+        return QuickResult("failed")
 
     values = {
         "q": q, "p": out.estimated_p, "p_low": out.p_low, "p_high": out.p_high,
@@ -72,6 +82,6 @@ def _quick_stage(
     knobs = extract_filter_directives(directives)
     if quick_decision(out.p_low, out.p_high, q, knobs["research_max_quick_width"]) == "no_divergence":
         _skip_research(vault, row, "quick", "no_divergence", **values)
-        return "skip"
+        return QuickResult("skip", out.estimated_p, out.p_low, out.p_high)
     _record_attempt(vault, row, "quick", "escalate", **values)
-    return "escalate"
+    return QuickResult("escalate", out.estimated_p, out.p_low, out.p_high)

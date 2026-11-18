@@ -17,4 +17,6 @@ output_schema:
   researchable: boolean
   category: string
   reason: string
+  manipulation_risk: string  # low | medium | high (validated by Hub code)
+  manipulation_reason: string
   error: "string | null"

@@ -22,6 +22,7 @@ _EPS = 1e-6
 MIN_FIT_N = 50
 _SKIP_STAGES = ("gate_reject", "triage_reject", "research_skip")
 _COUNTERFACTUAL_STAGES = ("below_edge", "research_skip")
+SHADOW_STAGE = "shadow_research"  # measure-only rows; never part of the main Brier / P&L
 
 
 def _num(value: Any) -> float | None:
@@ -47,7 +48,7 @@ def _latest_by_market(rows: Iterable[dict[str, Any]], stages: Iterable[str] | No
     out: dict[str, dict[str, Any]] = {}
     for r in rows:
         st = r.get("stage")
-        if st in (ledger.RESOLUTION_STAGE, ledger.POST_MORTEM_STAGE) or not r.get("market_id"):
+        if st in (ledger.RESOLUTION_STAGE, ledger.POST_MORTEM_STAGE, SHADOW_STAGE) or not r.get("market_id"):
             continue
         if wanted is None or st in wanted:
             out[r["market_id"]] = r
@@ -59,7 +60,7 @@ def scored_triples(rows: list[dict[str, Any]]) -> list[tuple[float, float, int]]
     res = resolutions(rows)
     latest: dict[str, dict[str, Any]] = {}
     for r in rows:
-        if r.get("stage") in (ledger.RESOLUTION_STAGE, ledger.POST_MORTEM_STAGE):
+        if r.get("stage") in (ledger.RESOLUTION_STAGE, ledger.POST_MORTEM_STAGE, SHADOW_STAGE):
             continue
         if r.get("market_id") not in res:
             continue
@@ -72,7 +73,7 @@ def _latest_scored(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     res = resolutions(rows)
     out: dict[str, dict[str, Any]] = {}
     for r in rows:
-        if r.get("stage") in (ledger.RESOLUTION_STAGE, ledger.POST_MORTEM_STAGE):
+        if r.get("stage") in (ledger.RESOLUTION_STAGE, ledger.POST_MORTEM_STAGE, SHADOW_STAGE):
             continue
         if r.get("market_id") in res and _num(r.get("p")) is not None and _num(r.get("q")) is not None:
             out[r["market_id"]] = r
@@ -114,6 +115,26 @@ def brier_by_evidence_source(rows: list[dict[str, Any]]) -> dict[str, tuple[int,
         bp = brier([p for p, _, _ in t], ys)
         out[src] = (len(t), bp, bp - brier([q for _, q, _ in t], ys))
     return out
+
+
+def brier_shadow(
+    rows: list[dict[str, Any]],
+) -> tuple[int, float | None, float | None, float | None]:
+    """``(n, Brier(quick p), Brier(full p), Brier(q))`` over resolved shadow markets.
+
+    Uses each market's latest ``shadow_research`` row having quick_p, p and q (Brier is ``None`` if n = 0).
+    """
+    res = resolutions(rows)
+    latest: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        if r.get("stage") == SHADOW_STAGE and r.get("market_id") in res:
+            if all(_num(r.get(k)) is not None for k in ("quick_p", "p", "q")):
+                latest[r["market_id"]] = r
+    if not latest:
+        return 0, None, None, None
+    ys = [res[m] for m in latest]
+    cols = [[_num(r[k]) for r in latest.values()] for k in ("quick_p", "p", "q")]
+    return (len(ys), *(brier(c, ys) for c in cols))
 
 
 def failure_class_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
@@ -291,6 +312,7 @@ def compute_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
             brier_diff=brier(ps, ys) - brier(qs, ys),
             brier_diff_ci=bootstrap_diff_ci(triples),
         )
+    out["brier_shadow"] = brier_shadow(rows)
     out["calibration"] = calibration_table(triples)
     out["brier_by_evidence_source"] = brier_by_evidence_source(rows)
     traded = _pnl_groups(rows, res, ("traded",))
@@ -349,6 +371,13 @@ def render_stats(s: dict[str, Any]) -> str:
         f"| {k} | {n} | {_fmt(bp)} | {_fmt(d)} |"
         for k, (n, bp, d) in s.get("brier_by_evidence_source", {}).items()
     ]
+    n_sh, b_quick, b_full, b_mkt = s.get("brier_shadow", (0, None, None, None))
+    L += [
+        "", "### Shadow: quick vs full vs market", "",
+        f"Resolved shadow markets (quick no_divergence skips run through FULL anyway): {n_sh}.",
+        "", "| quick p | full p | market q |", "|---|---|---|",
+        f"| {_fmt(b_quick)} | {_fmt(b_full)} | {_fmt(b_mkt)} |",
+    ]
     L += ["", "## Calibration (p in 10% buckets)", "", "| bucket | n | mean p | hit rate |", "|---|---|---|---|"]
     L += [f"| {c['bucket']} | {c['n']} | {_fmt(c['mean_p'], 3)} | {_fmt(c['hit_rate'], 3)} |" for c in s["calibration"]]
     L += [
@@ -395,4 +424,4 @@ def write_stats(vault: ObsidianManager) -> None:
     path.write_text(render_stats(compute_stats(rows)), encoding="utf-8")
 
 
-__all__ = ["bet_pnl", "brier_by_evidence_source", "brier_by_directive_version", "failure_class_counts", "compute_stats", "fit_lambda", "pnl_summary", "realised_pnl", "render_stats", "tax_by_year", "write_stats"]
+__all__ = ["bet_pnl", "brier_by_evidence_source", "brier_by_directive_version", "brier_shadow", "failure_class_counts", "compute_stats", "fit_lambda", "pnl_summary", "realised_pnl", "render_stats", "tax_by_year", "write_stats"]

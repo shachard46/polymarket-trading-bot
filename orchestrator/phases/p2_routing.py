@@ -6,10 +6,10 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from obsidian_utils import ObsidianManager
-from orchestrator import gate, ledger, scraper
+from orchestrator import gate, ledger, polymarket_api, scraper
 from orchestrator.config import gate_budget, triage_budget
 from orchestrator.directives import extract_filter_directives
-from orchestrator.phases.agent_call import run_structured_or_flag
+from orchestrator.phases.agent_call import flag_inactive, run_structured_or_flag
 from orchestrator.phases.common import (
     _ledger_market_fields,
     _ledger_safe,
@@ -24,6 +24,7 @@ from orchestrator.state import market_quarantine
 
 _Eligible = tuple[float, MarketRow, dict[str, Any] | None]
 _Researchable = tuple[float, MarketRow, dict[str, Any] | None, dict[str, Any]]
+_MANIP_LEVELS = ("low", "medium", "high")
 
 
 def _event_triage_cache(vault: ObsidianManager) -> dict[str, dict[str, Any]]:
@@ -63,6 +64,34 @@ def _make_ledger_once(
         }
 
     return ledger_once
+
+
+def _reject_gate(
+    vault: ObsidianManager,
+    market: MarketRow,
+    prior: dict[str, Any] | None,
+    reason: str,
+    now: datetime,
+    ledger_once: Callable[..., None],
+) -> None:
+    """Back off + persist + ledger a gate rejection."""
+    market_id = market.market_id
+    q = scraper.select_q(market.market_data)
+    fields = _ledger_market_fields(market.market_data)
+    fail = gate.register_failure(prior, q, now)
+    _write_filter_state(
+        vault,
+        market_id,
+        prior,
+        passed=False,
+        trigger=reason,
+        confidence_multiplier=0.0,
+        score=None,
+        details=f"gate_reject: {reason}",
+        event_id=fields["event_id"],
+        **fail,
+    )
+    ledger_once(market_id, "gate_reject", reason=reason, q=q, **fields)
 
 
 def _gate_market(
@@ -114,20 +143,7 @@ def _gate_market(
 
     ok, reason = gate.eligibility(md, knobs)
     if not ok:
-        fail = gate.register_failure(prior, q, now)
-        _write_filter_state(
-            vault,
-            market_id,
-            prior,
-            passed=False,
-            trigger=reason,
-            confidence_multiplier=0.0,
-            score=None,
-            details=f"gate_reject: {reason}",
-            event_id=fields["event_id"],
-            **fail,
-        )
-        ledger_once(market_id, "gate_reject", reason=reason, q=q, **fields)
+        _reject_gate(vault, market, prior, reason, now, ledger_once)
         return None
 
     return (gate.score(md, knobs), market, prior)
@@ -174,6 +190,8 @@ def _triage_verdict(
     if not (isinstance(triage, dict) and "researchable" in triage):
         triage = event_cache.get(str(event_id)) if event_id else None
     if triage is not None:
+        if triage.get("manipulation_risk") not in _MANIP_LEVELS:
+            triage = {**triage, "manipulation_risk": "unknown"}
         return triage
     parsed = run_structured_or_flag(
         vault, market_id, "phase2", runner, "triage", _triage_payload(market, today),
@@ -184,10 +202,23 @@ def _triage_verdict(
     )
     if parsed is None:
         return None
+    risk = parsed.get("manipulation_risk")
+    if risk not in _MANIP_LEVELS:
+        err = f"triage manipulation_risk invalid: {risk!r}"
+        flag_inactive(
+            vault, market_id, "phase2", err,
+            {
+                **(prior or {}), "market_id": market_id, "passed": False,
+                "confidence_multiplier": 0.0, "details": err,
+            },
+        )
+        return None
     triage = {
         "researchable": bool(parsed.get("researchable")),
         "category": parsed.get("category"),
         "reason": parsed.get("reason"),
+        "manipulation_risk": risk,
+        "manipulation_reason": parsed.get("manipulation_reason"),
         "triaged_at": now.isoformat(),
     }
     if event_id:
@@ -202,6 +233,8 @@ def _rank_and_triage(
     today: str,
     now: datetime,
     event_cache: dict[str, dict[str, Any]],
+    knobs: dict[str, Any] | None = None,
+    ledger_once: Callable[..., None] | None = None,
 ) -> list[_Researchable]:
     """Stage 2: rank by gate score, cut at the gate budget, Triage the rest."""
     eligible.sort(key=lambda item: (-item[0], item[1].market_id))
@@ -227,20 +260,34 @@ def _rank_and_triage(
             continue
 
         with market_quarantine(vault, market_id, "phase2"):
+            if knobs is not None and ledger_once is not None:
+                holders = polymarket_api.fetch_holder_concentration(market_id)
+                if holders is not None:
+                    md["holder_top1"] = holders.get("top1")
+                    md["holder_top3"] = holders.get("top3")
+                    ok, reason = gate.eligibility(md, knobs)
+                    if not ok:
+                        _reject_gate(vault, market, prior, reason, now, ledger_once)
+                        continue
             triage = _triage_verdict(
                 vault, runner, market, prior, fields["event_id"], today, now, event_cache
             )
             if triage is None:
                 continue
-            if not triage.get("researchable"):
+            md["manipulation_risk"] = triage.get("manipulation_risk") or "unknown"
+            fields = _ledger_market_fields(md)
+            high = triage.get("manipulation_risk") == "high"
+            if high or not triage.get("researchable"):
+                reason = "manipulation_risk" if high else triage.get("reason")
                 _write_filter_state(
                     vault, market_id, prior, passed=False, trigger="triage_reject",
-                    details=f"triage_reject: {triage.get('reason')}",
+                    details=f"triage_reject: {reason}",
                     status=gate.STATUS_RETIRED, triage=triage, **base,
                 )
                 _ledger_safe(
                     vault, market_id, "triage_reject",
-                    reason=triage.get("reason"), q=q,
+                    reason=reason, q=q,
+                    **({"manipulation_reason": triage.get("manipulation_reason")} if high else {}),
                     **{**fields, "category": triage.get("category") or fields["category"]},
                 )
                 continue
@@ -289,7 +336,9 @@ def phase2_quantitative_routing(
     ledger_once = _make_ledger_once(vault, last_decision)
 
     eligible = _eligible_markets(vault, target_markets, knobs, now, ledger_once)
-    researchable = _rank_and_triage(vault, runner, eligible, today, now, event_cache)
+    researchable = _rank_and_triage(
+        vault, runner, eligible, today, now, event_cache, knobs, ledger_once
+    )
     _promote_researchable(vault, researchable)
 
     log.info(

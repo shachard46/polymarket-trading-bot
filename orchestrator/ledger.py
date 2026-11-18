@@ -25,6 +25,7 @@ STAGES = frozenset(
         "gate_reject",
         "triage_reject",
         "research_skip",
+        "shadow_research",
         "below_edge",
         "traded",
         "arb_opportunity",

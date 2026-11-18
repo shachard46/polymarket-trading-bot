@@ -8,8 +8,14 @@ from typing import Any
 import pytest
 
 from obsidian_utils import ObsidianManager
-from orchestrator import ledger, phases
+from orchestrator import ledger, phases, polymarket_api
+from orchestrator.phases import common
 from orchestrator.scraper import MarketRow
+
+
+@pytest.fixture(autouse=True)
+def _no_holder_network(monkeypatch):
+    monkeypatch.setattr(polymarket_api, "fetch_holder_concentration", lambda cid: None)
 
 
 @pytest.fixture()
@@ -35,9 +41,10 @@ def mk(mid: str, *, vol: float = 1_000.0, event_id: str | None = None, **over: A
 
 
 class Triage:
-    def __init__(self, verdicts: dict[str, bool] | None = None):
+    def __init__(self, verdicts: dict[str, bool] | None = None, risk: Any = "low"):
         self.calls: list[dict[str, Any]] = []
         self.verdicts = verdicts or {}
+        self.risk = risk
 
     def __call__(self, role: str, payload: dict[str, Any]) -> dict[str, Any]:
         assert role == "triage"
@@ -47,6 +54,8 @@ class Triage:
             "researchable": self.verdicts.get(payload["market_id"], True),
             "category": "politics",
             "reason": "r",
+            "manipulation_risk": self.risk,
+            "manipulation_reason": "mr",
             "error": None,
         }
 
@@ -183,3 +192,59 @@ def test_triage_agent_error_flags_inactive(vault):
     assert vault.is_market_inactive("a")
 
 
+
+
+def test_holders_reject_backs_off_and_ledgers(vault, monkeypatch):
+    monkeypatch.setattr(
+        polymarket_api, "fetch_holder_concentration", lambda cid: {"top1": 0.9, "top3": 0.99}
+    )
+    t = Triage()
+    phases.phase2_quantitative_routing(vault, [mk("whale")], runner=t)
+    rec = vault.read_filter_log("whale")
+    assert rec["trigger"] == "concentrated" and rec["fail_count"] == 1 and rec["next_check_at"]
+    assert stages(vault, "whale") == ["gate_reject"]
+    assert t.calls == []
+
+
+def test_holders_none_does_not_reject(vault):
+    t = Triage()
+    phases.phase2_quantitative_routing(vault, [mk("a")], runner=t)
+    assert vault.read_filter_log("a")["passed"] is True and len(t.calls) == 1
+
+
+def test_high_manipulation_risk_retires(vault):
+    t = Triage(risk="high")
+    phases.phase2_quantitative_routing(vault, [mk("m")], runner=t)
+    rec = vault.read_filter_log("m")
+    assert rec["status"] == "retired" and rec["passed"] is False
+    rows = [r for r in ledger.iter_rows(vault) if r["market_id"] == "m"]
+    assert [r["stage"] for r in rows] == ["triage_reject"]
+    assert rows[0]["reason"] == "manipulation_risk" and rows[0]["manipulation_reason"] == "mr"
+    assert rows[0]["manipulation_risk"] == "high"
+
+
+def test_medium_manipulation_risk_passes_and_is_carried(vault):
+    phases.phase2_quantitative_routing(vault, [mk("m")], runner=Triage(risk="medium"))
+    rec = vault.read_filter_log("m")
+    assert rec["passed"] is True and rec["triage"]["manipulation_risk"] == "medium"
+    md = {"manipulation_risk": rec["triage"]["manipulation_risk"]}
+    assert common._ledger_market_fields(md)["manipulation_risk"] == "medium"
+    assert common._ledger_market_fields({})["manipulation_risk"] == "unknown"
+
+
+def test_old_cache_without_field_is_unknown_no_agent_call(vault):
+    phases.phase2_quantitative_routing(vault, [mk("a")], runner=Triage())
+    vault.patch_frontmatter("a", "filters", {"triage": {"researchable": True, "category": "x", "reason": "r"}})
+    vault.patch_frontmatter(
+        "a", "filters",
+        {"next_check_at": (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()},
+    )
+    t = Triage()
+    phases.phase2_quantitative_routing(vault, [mk("a")], runner=t)
+    assert t.calls == []
+    assert vault.read_filter_log("a")["passed"] is True
+
+
+def test_bad_manipulation_enum_flags_inactive(vault):
+    phases.phase2_quantitative_routing(vault, [mk("a")], runner=Triage(risk="extreme"))
+    assert vault.is_market_inactive("a")
