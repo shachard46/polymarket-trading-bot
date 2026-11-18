@@ -8,7 +8,7 @@ from typing import Any
 from obsidian_utils import ObsidianManager, VaultWriteError
 from orchestrator import ledger, scraper, stats
 from orchestrator.phases.agent_call import run_structured_agent
-from orchestrator.phases.common import _as_float, _ledger_safe, log
+from orchestrator.phases.common import _as_float, _filter_manipulation_risk, _ledger_safe, log
 from orchestrator.runner import AgentRunner, spawn_agent
 from orchestrator.state import flag_inactive, is_inactive, market_quarantine
 
@@ -46,7 +46,8 @@ def _resolve_ledger_markets(vault: ObsidianManager) -> None:
             if outcome_yes is None:
                 continue
             ledger.record_resolution(
-                vault, market_id, outcome_yes, (resolution or {}).get("raw_outcome"), None
+                vault, market_id, outcome_yes, (resolution or {}).get("raw_outcome"), None,
+                manipulation_risk=_filter_manipulation_risk(vault.read_filter_log(market_id)),
             )
         except Exception:  # noqa: BLE001 - one bad market must not stop the sweep
             log.exception("[PHASE 5] ledger resolution failed for %s", market_id)
@@ -120,6 +121,7 @@ def _post_mortem_payload(
         "outcome_yes": outcome_yes,
         "realised_pnl_usd": pnl,
         "category": first(triage.get("category"), filt.get("category")),
+        "manipulation_risk": _filter_manipulation_risk(filt),
         "gate_score": _as_float(first(filt.get("score"), filt.get("confidence_multiplier"))),
         "research_confidence": research.get("confidence"),
         "resolution_checklist": checklist if isinstance(checklist, list) else None,
@@ -174,6 +176,7 @@ def _resolve_market(
         pnl_usd=payload["realised_pnl_usd"],
         p=payload["p"], side=payload["side"], price=payload["price"],
         size_usd=payload["size_usd"], category=payload["category"],
+        manipulation_risk=payload["manipulation_risk"],
     )
     try:
         vault.archive_trade(market_id)

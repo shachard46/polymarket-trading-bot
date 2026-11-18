@@ -248,3 +248,48 @@ def test_old_cache_without_field_is_unknown_no_agent_call(vault):
 def test_bad_manipulation_enum_flags_inactive(vault):
     phases.phase2_quantitative_routing(vault, [mk("a")], runner=Triage(risk="extreme"))
     assert vault.is_market_inactive("a")
+
+
+def _run_p3_p4(vault, monkeypatch, rows):
+    # Phase 2 mutates its MarketRow objects; real Phase 3 re-fetches fresh rows, so mirror that.
+    rows = {k: mk(k, **{x: v.market_data[x] for x in ("yes_price", "no_price")}) for k, v in rows.items()}
+    from orchestrator import scraper
+    from orchestrator.phases import p3_evidence
+
+    monkeypatch.setenv("OPENCLAW_ORCHESTRATOR_MODE", "stub")
+    monkeypatch.setattr(scraper, "fetch_market_row", lambda mid: rows.get(mid))
+    monkeypatch.setattr(scraper, "fetch_resolution", lambda mid: None)
+    monkeypatch.setattr(
+        p3_evidence, "fetch_research_bundle",
+        lambda qs: [{"query": q, "research_data": "stub data", "error": None} for q in qs],
+    )
+    researched = phases.phase3_qualitative_pipeline(vault)
+    phases.phase4_execution(vault, researched)
+
+
+def _row_for(vault, mid):
+    return {r["stage"]: r for r in ledger.iter_rows(vault) if r["market_id"] == mid}
+
+
+def test_medium_risk_reaches_phase3_and_phase4_ledger_rows(vault, monkeypatch):
+    rows = {"skip": mk("skip", yes_price=0.55, no_price=0.45), "buy": mk("buy", yes_price=0.26, no_price=0.74)}
+    phases.phase2_quantitative_routing(vault, list(rows.values()), runner=Triage(risk="medium"))
+    _run_p3_p4(vault, monkeypatch, rows)
+    assert _row_for(vault, "skip")["research_skip"]["manipulation_risk"] == "medium"
+    by = _row_for(vault, "buy")
+    assert by["traded"]["manipulation_risk"] == "medium"
+
+
+def test_phase4_traded_row_carries_risk_single_market(vault, monkeypatch):
+    rows = {"buy": mk("buy", yes_price=0.26, no_price=0.74)}
+    phases.phase2_quantitative_routing(vault, list(rows.values()), runner=Triage(risk="medium"))
+    _run_p3_p4(vault, monkeypatch, rows)
+    assert _row_for(vault, "buy")["traded"]["manipulation_risk"] == "medium"
+
+
+def test_old_cache_without_field_stays_unknown_in_phase3(vault, monkeypatch):
+    rows = {"skip": mk("skip", yes_price=0.55, no_price=0.45)}
+    phases.phase2_quantitative_routing(vault, list(rows.values()), runner=Triage(risk="medium"))
+    vault.patch_frontmatter("skip", "filters", {"triage": {"researchable": True, "category": "x", "reason": "r"}})
+    _run_p3_p4(vault, monkeypatch, rows)
+    assert _row_for(vault, "skip")["research_skip"]["manipulation_risk"] == "unknown"

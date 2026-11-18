@@ -85,6 +85,7 @@ def record_resolution(
     outcome_yes: int,
     raw_outcome: Any = None,
     q_close: float | None = None,
+    **extra: Any,
 ) -> dict[str, Any]:
     return record(
         vault,
@@ -93,6 +94,7 @@ def record_resolution(
         outcome_yes=int(outcome_yes),
         raw_outcome=raw_outcome,
         q_close=q_close,
+        **extra,
     )
 
 

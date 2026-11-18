@@ -92,6 +92,25 @@ def _ledger_market_fields(market_data: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+_MANIP_LEVELS = frozenset({"low", "medium", "high"})
+
+
+def _filter_manipulation_risk(filter_record: dict[str, Any] | None) -> str:
+    """Cached triage verdict's ``manipulation_risk`` from a filter record; ``unknown`` if absent."""
+    triage = (filter_record or {}).get("triage")
+    risk = triage.get("manipulation_risk") if isinstance(triage, dict) else None
+    return risk if risk in _MANIP_LEVELS else "unknown"
+
+
+def _carry_manipulation_risk(
+    market_data: dict[str, Any], filter_record: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Copy the filter record's triage verdict into ``market_data`` (in place) for ledger rows."""
+    if market_data.get("manipulation_risk") not in _MANIP_LEVELS:
+        market_data["manipulation_risk"] = _filter_manipulation_risk(filter_record)
+    return market_data
+
+
 def _ledger_safe(
     vault: ObsidianManager, market_id: str, stage: str, **fields: Any
 ) -> dict[str, Any] | None:

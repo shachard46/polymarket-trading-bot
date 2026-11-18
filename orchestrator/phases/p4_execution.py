@@ -14,6 +14,7 @@ from orchestrator import ledger, polymarket_api, scraper, stats
 from orchestrator.config import PAPER_TRADE_MODE
 from orchestrator.phases.common import (
     _as_float,
+    _carry_manipulation_risk,
     _ledger_market_fields,
     _ledger_safe,
     _trade_log_shows_edge_disqualification,
@@ -188,7 +189,9 @@ def _phase4_queue(
                     "p_high": _as_float(fm.get("p_high")),
                     "evidence_source": fm.get("evidence_source"),
                     "evidence_fallback": fm.get("evidence_fallback"),
-                    "market_data": fresh.market_data,
+                    "market_data": _carry_manipulation_risk(
+                        fresh.market_data, vault.read_filter_log(market_id)
+                    ),
                 },
                 False,
             )

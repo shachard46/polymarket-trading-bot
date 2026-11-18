@@ -19,6 +19,7 @@ input_schema:
   outcome_yes: "int | null"
   realised_pnl_usd: "float | null"
   category: "string | null"
+  manipulation_risk: "string | null"
   gate_score: "float | null"
   research_confidence: "string | null"
   resolution_checklist: "list | null"
