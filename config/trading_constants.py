@@ -42,6 +42,8 @@ MANIP = {
     "suspicious_move_max_vol24_frac": 0.5,    # ... with volume24hr < this * liquidity -> suspicious_move
     "concentrated_top1_share": 0.50,          # top-1 holder share of the top-N total (per side) -> concentrated
     "concentrated_top3_share": 0.75,          # top-3 holder share of the top-N total (per side) -> concentrated
+    "concentrated_top1_supply": 0.25,         # same, basis = share of outstanding shares (data-api /v2/oi)
+    "concentrated_top3_supply": 0.50,
     "wide_spread_max": 0.08,                  # yes_ask - yes_bid above this -> wide_spread
     "holders_limit": 20,                      # data-api /holders top-N
     "holders_timeout_sec": 5.0,
@@ -51,6 +53,18 @@ MANIP = {
 # the FULL stage anyway; results are ledgered (stage shadow_research) and never traded.
 SHADOW_RATE = 0.10
 SHADOW_MAX_PER_TICK = 2
+# Triage shadow: a stable ~10% of triage rejects get a measure-only quick-stage estimate (ledger
+# stage triage_shadow) so we can score what permanent triage rejects cost us.
+TRIAGE_SHADOW_RATE = 0.10
+TRIAGE_SHADOW_MAX_PER_TICK = 2
+# Independent-evidence sample: a stable ~1/5 of FULL markets get one EXTRA measure-only sample on a
+# bundle from the other evidence source (not part of the median), to measure evidence noise.
+INDEP_SAMPLE_RATE = 0.20
+# Signal coverage: log an error when more than this share of gated markets lack a signal.
+SIGNAL_COVERAGE_ALERT_FRAC = 0.5
+# Open failure tags: a post-mortem 'new:<slug>' tag is shown to the Overseer as a class once it
+# has been proposed at least this many times.
+FAILURE_TAG_MIN_COUNT = 3
 
 # Filter Thresholds
 FILTERS = {

@@ -1,0 +1,66 @@
+{
+  "markets": [
+    {
+      "id": "3215008",
+      "question": "Will the Fed increase interest rates by 25 bps after the December 2026 meeting?",
+      "conditionId": "0x8a4196617dcb703e49d9bb36d3847bf6a75fd364dbd19f8d408ac944bf1a03d8",
+      "slug": "will-the-fed-increase-interest-rates-by-25-bps-after-the-december-2026-meeting-20260729232808636",
+      "endDate": "2026-12-09T23:59:00Z",
+      "liquidity": "749524.9318",
+      "outcomes": "[\"Yes\", \"No\"]",
+      "outcomePrices": "[\"0.935\", \"0.065\"]",
+      "volume": "9536922.266588",
+      "active": true,
+      "closed": false,
+      "volumeNum": 9536922.266588,
+      "liquidityNum": 749524.9318,
+      "volume24hr": 385256.098013,
+      "clobTokenIds": "[\"111662129652828266889360374468657435151479595863413519836161861837506140152890\", \"94483965432909797688470702512207472940215538148754820061518518664128018848687\"]",
+      "acceptingOrders": true,
+      "enableOrderBook": true,
+      "oneDayPriceChange": 0.02,
+      "oneWeekPriceChange": 0.08,
+      "lastTradePrice": 0.94,
+      "bestBid": 0.93,
+      "bestAsk": 0.94,
+      "spread": 0.01,
+      "events": [
+        {
+          "id": "770450",
+          "title": "Fed Decision in December?"
+        }
+      ]
+    },
+    {
+      "id": "3215007",
+      "question": "Will there be no change in Fed interest rates after the December 2026 meeting?",
+      "conditionId": "0x723822eb2b143cee54c0bd7c1efba322b21f0051984c266df8879c394f1011c0",
+      "slug": "will-there-be-no-change-in-fed-interest-rates-after-the-december-2026-meeting-20260729232808635",
+      "endDate": "2026-12-09T23:59:00Z",
+      "liquidity": "589713.08305",
+      "outcomes": "[\"Yes\", \"No\"]",
+      "outcomePrices": "[\"0.0305\", \"0.9695\"]",
+      "volume": "9264225.042455997",
+      "active": true,
+      "closed": false,
+      "volumeNum": 9264225.042455997,
+      "liquidityNum": 589713.08305,
+      "volume24hr": 487262.02189999993,
+      "clobTokenIds": "[\"42865728742506860386768556888821101266630139112044622335353850919229585308601\", \"8077351031134730167836761678618167504307708651130165095377248922919635337796\"]",
+      "acceptingOrders": true,
+      "enableOrderBook": true,
+      "oneWeekPriceChange": -0.0085,
+      "lastTradePrice": 0.03,
+      "bestBid": 0.03,
+      "bestAsk": 0.031,
+      "spread": 0.001,
+      "events": [
+        {
+          "id": "770450",
+          "title": "Fed Decision in December?"
+        }
+      ]
+    }
+  ],
+  "next_cursor": null
+}

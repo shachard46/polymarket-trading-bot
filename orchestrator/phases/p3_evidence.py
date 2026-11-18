@@ -32,6 +32,29 @@ def _aiq_cache_path(vault: ObsidianManager) -> Path:
     return vault._dirs["active"] / "aiq_cache.json"
 
 
+def fetch_other_source_bundle(
+    vault: ObsidianManager,
+    market_id: str,
+    queries: list[str],
+    used_source: str,
+    runner: AgentRunner = spawn_agent,
+    today: str | None = None,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Fetch ``queries`` from the evidence source OTHER than ``used_source`` (aiq <-> web).
+
+    Returns ``(source, rows)``; nothing is persisted. Web rows come sanitized (price-blind).
+    """
+    cleaned = [str(q).strip() for q in queries if str(q).strip()]
+    if used_source == evidence.AIQ:
+        return evidence.WEB, evidence.fetch_web_bundle(
+            runner, vault, market_id, cleaned, today or today_date()
+        )
+    rows = fetch_research_bundle_cached(
+        cleaned, _aiq_cache_path(vault), fetch=fetch_research_bundle
+    )
+    return evidence.AIQ, rows
+
+
 def _fetch_and_persist_bundle(
     vault: ObsidianManager,
     market_id: str,

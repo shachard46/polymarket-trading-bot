@@ -105,9 +105,10 @@ def eligibility(
     ):
         return False, "suspicious_move"
     top1, top3 = _num(md.get("holder_top1")), _num(md.get("holder_top3"))
-    if (top1 is not None and top1 >= MANIP["concentrated_top1_share"]) or (
-        top3 is not None and top3 >= MANIP["concentrated_top3_share"]
-    ):
+    supply = md.get("holder_basis") == "supply"
+    t1 = MANIP["concentrated_top1_supply" if supply else "concentrated_top1_share"]
+    t3 = MANIP["concentrated_top3_supply" if supply else "concentrated_top3_share"]
+    if (top1 is not None and top1 >= t1) or (top3 is not None and top3 >= t3):
         return False, "concentrated"
     bid, ask = _num(md.get("yes_bid")), _num(md.get("yes_ask"))
     if bid is not None and ask is not None and ask - bid > MANIP["wide_spread_max"]:

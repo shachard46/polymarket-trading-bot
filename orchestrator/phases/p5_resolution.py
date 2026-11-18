@@ -6,7 +6,7 @@ import os
 from typing import Any
 
 from obsidian_utils import ObsidianManager, VaultWriteError
-from orchestrator import ledger, scraper, stats
+from orchestrator import failure_tags, ledger, scraper, stats
 from orchestrator.phases.agent_call import run_structured_agent
 from orchestrator.phases.common import _as_float, _filter_manipulation_risk, _ledger_safe, log
 from orchestrator.runner import AgentRunner, spawn_agent
@@ -153,13 +153,20 @@ def _resolve_market(
             log.warning("Post-mortem file already exists for %s; re-running analyst", market_id)
 
     payload = _post_mortem_payload(vault, market_id, resolution)
+    registry = failure_tags.load_registry(vault)
+    payload.update(failure_tags.post_mortem_tag_context(registry))
     parsed, reason = run_structured_agent(runner, "post_mortem_analyst", payload)
     if reason:
         _post_mortem_failed(vault, market_id, reason, parsed or payload)
         return
 
+    fclass, tag_slug, tag_def = failure_tags.normalize_failure_class(
+        parsed.get("failure_class"), parsed.get("failure_tag_definition"), registry
+    )
+    to_append = {k: v for k, v in parsed.items() if k != "failure_tag_definition"}
+    to_append["failure_class"] = fclass
     try:
-        vault.append_post_mortem(market_id, parsed)
+        vault.append_post_mortem(market_id, to_append)
     except VaultWriteError as exc:
         _post_mortem_failed(
             vault,
@@ -169,9 +176,14 @@ def _resolve_market(
         )
         return
 
+    if tag_slug:
+        try:
+            failure_tags.record_tag(vault, tag_slug, tag_def)
+        except Exception:  # noqa: BLE001 - registry is advisory; never block the post-mortem
+            log.exception("[PHASE 5] failure tag registry write failed for %s", market_id)
     _ledger_safe(
         vault, market_id, ledger.POST_MORTEM_STAGE,
-        failure_class=(parsed.get("failure_class") or "unclassified"),
+        failure_class=fclass,
         outcome_yes=payload["outcome_yes"],
         pnl_usd=payload["realised_pnl_usd"],
         p=payload["p"], side=payload["side"], price=payload["price"],

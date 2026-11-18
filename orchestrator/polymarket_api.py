@@ -303,11 +303,37 @@ def market_row_from_gamma(raw: dict[str, Any], now: datetime | None = None) -> d
     return {k: v for k, v in row.items() if v is not None}
 
 
-def fetch_holder_concentration(condition_id: str) -> dict[str, float] | None:
+def _fetch_outstanding_shares(condition_id: str) -> float | None:
+    """Shares outstanding per side = market open interest from Data API ``/oi`` (each minted set is 1 YES + 1 NO).
+
+    `None` on any error / unexpected shape / non-positive value.
+    """
+    try:
+        payload = _get_json(
+            f"{data_base_url()}/oi",
+            {"condition_id": condition_id},
+            timeout=MANIP["holders_timeout_sec"],
+        )
+        entries = payload.get("data") if isinstance(payload, dict) else payload
+        if not isinstance(entries, list):
+            return None
+        for entry in entries:
+            if isinstance(entry, dict) and "value" in entry:
+                v = _num(entry.get("value"))
+                return v if v is not None and v > 0 else None
+    except Exception:  # noqa: BLE001 - advisory; fall back to top-N basis
+        return None
+    return None
+
+
+def fetch_holder_concentration(condition_id: str) -> dict[str, Any] | None:
     """Top-holder share per side from the Data API ``/holders``; the worst side wins.
 
-    Returns ``{"top1", "top3"}`` (share of the top-N holders' total) or `None` on any error,
-    unexpected shape or zero total. Accepts a bare list or ``{"data": [...]}`` of per-token entries.
+    Returns ``{"top1", "top3", "basis"}`` or `None` on any error, unexpected shape or zero total.
+    ``basis="supply"``: shares of total outstanding per side (open interest from ``/oi``); used only when
+    that total is available and no top-N sum exceeds it (else the total is deemed unreliable).
+    ``basis="top_n"``: fallback, share of the top-N holders' total (overstates concentration).
+    Accepts a bare list or ``{"data": [...]}`` of per-token entries.
     """
     try:
         payload = _get_json(
@@ -318,8 +344,7 @@ def fetch_holder_concentration(condition_id: str) -> dict[str, float] | None:
         entries = payload.get("data") if isinstance(payload, dict) else payload
         if not isinstance(entries, list):
             return None
-        top1 = top3 = 0.0
-        seen = False
+        sides: list[list[float]] = []
         for entry in entries:
             holders = entry.get("holders") if isinstance(entry, dict) else None
             if not isinstance(holders, list):
@@ -328,13 +353,19 @@ def fetch_holder_concentration(condition_id: str) -> dict[str, float] | None:
                 (a for a in (_num(h.get("amount")) for h in holders if isinstance(h, dict)) if a is not None and a > 0),
                 reverse=True,
             )
-            total = sum(amounts)
-            if total <= 0:
-                continue
-            seen = True
-            top1 = max(top1, amounts[0] / total)
-            top3 = max(top3, sum(amounts[:3]) / total)
-        return {"top1": round(top1, 6), "top3": round(top3, 6)} if seen else None
+            if sum(amounts) > 0:
+                sides.append(amounts)
+        if not sides:
+            return None
+        supply = _fetch_outstanding_shares(condition_id)
+        if supply is not None and any(sum(am) > supply * 1.001 for am in sides):
+            supply = None  # top-N exceeding total outstanding: inconsistent, don't trust
+        top1 = top3 = 0.0
+        for amounts in sides:
+            denom = supply if supply is not None else sum(amounts)
+            top1 = max(top1, amounts[0] / denom)
+            top3 = max(top3, sum(amounts[:3]) / denom)
+        return {"top1": round(top1, 6), "top3": round(top3, 6), "basis": "supply" if supply is not None else "top_n"}
     except Exception:  # noqa: BLE001 - advisory signal; never block the pipeline
         return None
 

@@ -38,14 +38,38 @@ from orchestrator.phases.p3_evidence import (
     _bundle_has_entries,
     _ensure_as_of,
     _fetch_and_persist_bundle,
+    fetch_other_source_bundle,
 )
 from orchestrator.phases.research_state import _record_attempt, _skip_research
 from orchestrator.runner import AgentRunner
-from orchestrator.state import flag_inactive, vault_write_or_flag
+from orchestrator.state import InfraUnavailable, flag_inactive, vault_write_or_flag
 
 _CONFIDENCE_RANK = {"low": 0, "medium": 1, "high": 2}
 
 Sample = tuple[DeepResearcherComplete, Any]
+
+
+class ShadowFailure(Exception):
+    """A content/agent error inside a shadow FULL run (ledgered as ``shadow_failed``)."""
+
+    def __init__(self, reason: str, payload: Any = None) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.payload = payload
+
+
+def _flag(
+    vault: ObsidianManager,
+    market_id: str,
+    phase: str,
+    reason: str,
+    payload: Any,
+    shadow: bool,
+) -> None:
+    """Flag the market inactive; a shadow run raises :class:`ShadowFailure` instead (never flags)."""
+    if shadow:
+        raise ShadowFailure(reason, payload)
+    flag_inactive(vault, market_id, phase, reason, payload)
 
 
 def aggregate_samples(
@@ -79,6 +103,7 @@ def _plan_research_queries(
     runner: AgentRunner,
     row: dict[str, Any],
     today: str,
+    shadow: bool = False,
 ) -> list[str] | None:
     market_id = row["market_id"]
     brief_in = _text_fields(row, today)
@@ -98,18 +123,19 @@ def _plan_research_queries(
             runner, "briefer", brief_in, validate_fn=_validate_briefer
         )
     except ValidationError as exc:
-        flag_inactive(
+        _flag(
             vault,
             market_id,
             "phase3",
             f"briefer output validation failed: {exc}",
             brief_in,
+            shadow,
         )
         return None
 
     err = agent_error_reason(brief.model_dump())
     if err:
-        flag_inactive(vault, market_id, "phase3", f"briefer error: {err}", brief.model_dump())
+        _flag(vault, market_id, "phase3", f"briefer error: {err}", brief.model_dump(), shadow)
         return None
 
     return [_ensure_as_of(q, today) for q in brief.research_queries]
@@ -122,6 +148,7 @@ def _research_loop(
     directives: str,
     today: str,
     tag: str,
+    shadow: bool = False,
 ) -> DeepResearcherComplete | None:
     """Lead FULL sample: one round, one follow-up round, then forced synthesis."""
     market_id = row["market_id"]
@@ -135,9 +162,9 @@ def _research_loop(
         try:
             last_out = invoke_deep_researcher(runner, dr_in)
         except ValidationError as exc:
-            flag_inactive(
+            _flag(
                 vault, market_id, "phase3",
-                f"deep researcher output validation failed: {exc}", dr_in,
+                f"deep researcher output validation failed: {exc}", dr_in, shadow,
             )
             return None
         if isinstance(last_out, DeepResearcherComplete):
@@ -154,15 +181,15 @@ def _research_loop(
     try:
         forced = invoke_deep_researcher(runner, override_in)
     except ValidationError as exc:
-        flag_inactive(
+        _flag(
             vault, market_id, "phase3",
-            f"deep researcher forced synthesis validation failed: {exc}", override_in,
+            f"deep researcher forced synthesis validation failed: {exc}", override_in, shadow,
         )
         return None
     if isinstance(forced, DeepResearcherNeedsMore):
-        flag_inactive(
+        _flag(
             vault, market_id, "phase3",
-            "deep researcher disobeyed forced synthesis override", forced.model_dump(),
+            "deep researcher disobeyed forced synthesis override", forced.model_dump(), shadow,
         )
         return None
     return forced
@@ -195,6 +222,49 @@ def _extra_sample(
     return (out, research) if research is not None else None
 
 
+def _indep_sample(
+    vault: ObsidianManager,
+    runner: AgentRunner,
+    row: dict[str, Any],
+    directives: str,
+    today: str,
+    ev_source: str,
+    p_median: float,
+) -> dict[str, Any]:
+    """Measure-only extra sample on the OTHER evidence source (same queries). Never flags.
+
+    Returns ``indep_*`` fields, or ``{"indep_error": ...}``. Not part of median/spread/skip/sizing.
+    """
+    market_id = row["market_id"]
+    try:
+        queries = list(dict.fromkeys(
+            str(e.get("query") or "").strip()
+            for e in vault.read_research_bundle(market_id) or []
+            if str(e.get("query") or "").strip()
+        ))
+        if not queries:
+            return {"indep_error": "no queries in bundle"}
+        source, rows = fetch_other_source_bundle(vault, market_id, queries, ev_source, runner, today)
+        if not evidence.rows_usable(rows):
+            return {"indep_error": f"no usable {source} evidence", "indep_source": source}
+        got = _extra_sample(vault, runner, row, directives, today, rows, "indep")
+        if got is None:
+            return {"indep_error": "sample invalid", "indep_source": source}
+        out = got[0]
+        return {
+            "indep_p": out.estimated_p,
+            "indep_p_low": out.p_low,
+            "indep_p_high": out.p_high,
+            "indep_source": source,
+            "indep_gap": out.estimated_p - p_median,
+        }
+    except InfraUnavailable:
+        raise
+    except Exception as exc:  # noqa: BLE001 - measure-only; must never flag the market
+        log.warning("[PHASE 3] indep sample for %s failed: %s", market_id, exc)
+        return {"indep_error": f"{type(exc).__name__}: {exc}"[:300]}
+
+
 def _prepare_evidence(
     vault: ObsidianManager,
     runner: AgentRunner,
@@ -203,6 +273,7 @@ def _prepare_evidence(
     refresh: bool,
     shared_bundle: list[dict[str, Any]] | None,
     shared_meta: dict[str, Any] | None,
+    shadow: bool = False,
 ) -> bool:
     """Ensure the market has an evidence bundle; ``False`` after a flagged Briefer failure."""
     market_id = row["market_id"]
@@ -212,7 +283,7 @@ def _prepare_evidence(
     elif refresh or not _bundle_has_entries(vault.read_research_bundle(market_id)):
         if refresh:
             vault.clear_research_bundle(market_id)
-        queries = _plan_research_queries(vault, runner, row, today)
+        queries = _plan_research_queries(vault, runner, row, today, shadow)
         if queries is None:
             return False
         _fetch_and_persist_bundle(vault, market_id, queries, runner, today)
@@ -225,13 +296,18 @@ def _collect_samples(
     row: dict[str, Any],
     directives: str,
     today: str,
+    shadow: bool = False,
 ) -> list[Sample] | None:
     """Lead sample plus independent extra samples; ``None`` after an inactive flag."""
     market_id = row["market_id"]
-    lead = _research_loop(vault, runner, row, directives, today, "s1")
+    lead = _research_loop(vault, runner, row, directives, today, "s1", shadow)
     if lead is None:
         return None
-    lead_research = check_complete(vault, market_id, lead)
+    lead_research = check_complete(
+        vault, market_id, lead,
+        on_fail=(lambda reason, payload: _flag(vault, market_id, "phase3", reason, payload, True))
+        if shadow else None,
+    )
     if lead_research is None:
         return None
     samples: list[Sample] = [(lead, lead_research)]
@@ -242,9 +318,9 @@ def _collect_samples(
         if extra is not None:
             samples.append(extra)
     if len(samples) < 2:
-        flag_inactive(
+        _flag(
             vault, market_id, "phase3",
-            "fewer than 2 valid deep researcher samples", {"valid": len(samples)},
+            "fewer than 2 valid deep researcher samples", {"valid": len(samples)}, shadow,
         )
         return None
     return samples
@@ -259,6 +335,7 @@ def _write_research_report(
     samples: list[Sample],
     ev_source: str,
     ev_fallback: bool,
+    indep: dict[str, Any] | None = None,
 ) -> bool:
     """Persist the chosen sample's report to ``02_Active_Research/``."""
     chosen, chosen_research = samples[agg["chosen"]]
@@ -279,6 +356,7 @@ def _write_research_report(
         "samples": agg["samples"],
         "evidence_source": ev_source,
         "evidence_fallback": ev_fallback,
+        **(indep or {}),
     }
     return vault_write_or_flag(
         vault=vault,
@@ -310,14 +388,52 @@ def _research_market(
     Returns the Phase 4 row (``p_value``/``p_low``/``p_high``/``market_data``) when active
     research was written, ``None`` after a ledgered skip or an inactive flag.
     """
+    if not shadow:
+        return _research_market_body(
+            vault, runner, row, directives, refresh, shared_bundle, shared_meta, False, quick
+        )
+    market_id = row["market_id"]
+    try:
+        return _research_market_body(
+            vault, runner, row, directives, refresh, shared_bundle, shared_meta, True, quick
+        )
+    except InfraUnavailable:
+        raise
+    except Exception as exc:  # noqa: BLE001 - a shadow run must never flag the real market
+        if isinstance(exc, ShadowFailure):
+            reason, detail = exc.reason, exc.payload
+        else:
+            reason, detail = f"{type(exc).__name__}: {exc}", None
+        _ledger_safe(
+            vault, market_id, "shadow_failed",
+            shadow=True, reason=reason[:500], error=str(detail)[:1000] if detail else str(exc)[:1000],
+            **_ledger_market_fields(row.get("market_data")),
+        )
+        log.warning("[PHASE 3] shadow_failed for %s: %s", market_id, reason)
+        return None
+
+
+def _research_market_body(
+    vault: ObsidianManager,
+    runner: AgentRunner,
+    row: dict[str, Any],
+    directives: str,
+    refresh: bool,
+    shared_bundle: list[dict[str, Any]] | None,
+    shared_meta: dict[str, Any] | None,
+    shadow: bool,
+    quick: dict[str, Any] | None,
+) -> dict[str, Any] | None:
     market_id = row["market_id"]
     md = row.get("market_data") or {}
     q = scraper.select_q(md)
     today = today_date()
 
-    if not _prepare_evidence(vault, runner, row, today, refresh, shared_bundle, shared_meta):
+    if not _prepare_evidence(
+        vault, runner, row, today, refresh, shared_bundle, shared_meta, shadow
+    ):
         return None
-    samples = _collect_samples(vault, runner, row, directives, today)
+    samples = _collect_samples(vault, runner, row, directives, today, shadow)
     if samples is None:
         return None
 
@@ -330,6 +446,10 @@ def _research_market(
         "samples": agg["samples"], "spread": agg["spread"], "confidence": agg["confidence"],
         "evidence_source": ev_source, "evidence_fallback": ev_fallback,
     }
+    indep: dict[str, Any] = {}
+    if not shadow and evidence.is_indep_sample(market_id):
+        indep = _indep_sample(vault, runner, row, directives, today, ev_source, agg["p"])
+        values.update(indep)
     knobs = extract_filter_directives(directives)
     if shadow:
         would_skip = None
@@ -354,7 +474,9 @@ def _research_market(
         return None
 
 
-    if not _write_research_report(vault, market_id, md, q, agg, samples, ev_source, ev_fallback):
+    if not _write_research_report(
+        vault, market_id, md, q, agg, samples, ev_source, ev_fallback, indep
+    ):
         return None
     _record_attempt(vault, row, "full", "researched", **values)
     return {
@@ -365,4 +487,5 @@ def _research_market(
         "market_data": md,
         "evidence_source": ev_source,
         "evidence_fallback": ev_fallback,
+        **indep,
     }

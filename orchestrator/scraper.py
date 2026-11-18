@@ -56,6 +56,8 @@ _MARKET_DATA_FIELDS: tuple[str, ...] = (
     "no_bid",
     "no_ask",
     "volume",
+    "volume_24h",
+    "day_price_change",
     "liquidity",
     "last_trade_price",
     "midpoint",

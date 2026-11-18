@@ -113,14 +113,18 @@ def check_complete(
     complete: DeepResearcherComplete,
     *,
     flag: bool = True,
+    on_fail: Callable[[str, dict[str, Any]], None] | None = None,
 ) -> Any | None:
     """Cross-check JSON vs markdown frontmatter. Returns the parsed research or ``None``.
 
     ``flag=False`` (extra samples) only logs: one bad sample must not blacklist a market.
+    ``on_fail`` (shadow runs) replaces the inactive flag: it is called with ``(reason, payload)``.
     """
 
     def fail(reason: str, payload: dict[str, Any]) -> None:
-        if flag:
+        if on_fail is not None:
+            on_fail(reason, payload)
+        elif flag:
             flag_inactive(vault, market_id, "phase3", reason, payload)
         else:
             log.warning("[PHASE 3] dropping sample for %s: %s", market_id, reason)

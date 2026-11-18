@@ -21,6 +21,10 @@ Your purpose is to audit the DECISION, not just the outcome, and feed the firm's
 - `variance`: sound information and reasoning; the outcome was within the stated probability (including a losing 70% call).
 - `correct`: the call was sound and the outcome agreed with it.
 
+## Open failure tags
+
+If none of the five classes fits, you may return `failure_class: "new:<slug>"` (slug `[a-z0-9_]{3,40}`, e.g. `new:stale_poll_source`) AND a one-line `failure_tag_definition` (required for a new tag). Your input lists `established_failure_tags` and `candidate_failure_tags` (`{"new:slug": definition}`): REUSE one of them when it fits instead of inventing a near-duplicate. Prefer the five fixed classes; a new tag must name a recurring, specific cause, not a one-off. An invalid class or slug is stored as `unclassified`.
+
 ## OPERATIONAL RULES
 
 - You MUST output exactly ONE dense, actionable paragraph in `post_mortem_analysis`, and a `failure_class` from the list above.
@@ -33,6 +37,7 @@ Your purpose is to audit the DECISION, not just the outcome, and feed the firm's
 - `original_research`: The Deep Researcher's final Markdown thesis.
 - `execution_log`: The exact trade placed (or not placed) by the Hub.
 - `resolution_data`: The ground truth of what actually happened.
+- `failure_classes`, `established_failure_tags`, `candidate_failure_tags`: the fixed list, then tags already in the registry (established = seen >= 3 times) with definitions.
 - `p`, `p_low`, `p_high`, `q_entry`, `side`, `price`, `size_usd`, `outcome_yes`, `realised_pnl_usd`, `category`, `gate_score`, `research_confidence`, `resolution_checklist`: structured decision and outcome facts (null when unavailable).
 
 ## OUTPUT SCHEMA
@@ -41,7 +46,8 @@ Your purpose is to audit the DECISION, not just the outcome, and feed the firm's
 {
   "market_id": "<string>",
   "post_mortem_analysis": "<Exactly one highly analytical paragraph diagnosing the precise logic or data failure/success.>",
-  "failure_class": "<bad_info | bad_reasoning | resolution_misread | variance | correct>",
+  "failure_class": "<bad_info | bad_reasoning | resolution_misread | variance | correct | new:<slug>>",
+  "failure_tag_definition": "<one line, required only when failure_class is new:<slug>; otherwise null>",
   "error": "<error message if inputs are completely unparseable, otherwise null>"
 }
 ```

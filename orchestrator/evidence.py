@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 from typing import Any, Callable
 
-from config.trading_constants import SHADOW_RATE
+from config.trading_constants import INDEP_SAMPLE_RATE, SHADOW_RATE
 from orchestrator import config
 from orchestrator.aiq_bundle import fetch_research_bundle_cached, normalize_query
 from orchestrator.config import RESEARCH_DATA_MAX_CHARS
@@ -51,6 +51,15 @@ def is_shadow(market_id: str) -> bool:
     """
     digest = hashlib.sha256(("shadow:" + str(market_id)).encode("utf-8")).hexdigest()
     return int(digest[:8], 16) / 2**32 < SHADOW_RATE
+
+
+def is_indep_sample(market_id: str) -> bool:
+    """Stable ~INDEP_SAMPLE_RATE selection for the measure-only independent-evidence sample.
+
+    Salted hash prefix: independent of :func:`ab_arm` and :func:`is_shadow`.
+    """
+    digest = hashlib.sha256(("indep:" + str(market_id)).encode("utf-8")).hexdigest()
+    return int(digest[:8], 16) / 2**32 < INDEP_SAMPLE_RATE
 
 
 def intended_source(market_id: str) -> str:
@@ -147,6 +156,7 @@ __all__ = [
     "WEB",
     "ab_arm",
     "is_shadow",
+    "is_indep_sample",
     "fetch_web_bundle",
     "fetch_web_rows",
     "intended_source",

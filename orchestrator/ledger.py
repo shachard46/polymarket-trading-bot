@@ -26,6 +26,9 @@ STAGES = frozenset(
         "triage_reject",
         "research_skip",
         "shadow_research",
+        "shadow_failed",
+        "triage_shadow",
+        "signal_coverage",
         "below_edge",
         "traded",
         "arb_opportunity",
@@ -132,7 +135,7 @@ def unresolved_market_ids(vault: ObsidianManager) -> list[str]:
     resolved: set[str] = set()
     for row in iter_rows(vault):
         mid = row.get("market_id")
-        if not mid:
+        if not mid or row.get("stage") == "signal_coverage":  # per-tick health rows, not markets
             continue
         if row.get("stage") == RESOLUTION_STAGE:
             resolved.add(mid)

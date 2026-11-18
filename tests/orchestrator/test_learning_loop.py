@@ -368,7 +368,7 @@ def test_gate_reads_price_band_and_days_window():
 def test_phase2_uses_directive_knobs(vault):
     market = mk("a", days_to_resolution=5)
     phases.phase2_quantitative_routing(vault, [market], runner=Triage())
-    assert [r["reason"] for r in ledger.iter_rows(vault)] == ["too_soon"]
+    assert [r["reason"] for r in ledger.iter_rows(vault) if r["stage"] == "gate_reject"] == ["too_soon"]
 
     market = mk("b", days_to_resolution=5)
     write(vault, doc(min_days_to_resolution=5), enforce_bounds=False)
@@ -483,10 +483,10 @@ def test_post_mortem_losing_bet_pnl_and_invalid_failure_class(vault, monkeypatch
     seen: list = []
     phases.phase5_resolution_and_post_mortem(vault, runner=_runner(seen, failure_class="unlucky"))
     assert seen[0]["outcome_yes"] == 0 and seen[0]["realised_pnl_usd"] == pytest.approx(-10.0)
-    # an invalid class is a failed attempt: nothing persisted, trade stays open for a retry
-    assert not [r for r in ledger.iter_rows(vault) if r["stage"] == "post_mortem"]
-    assert "failure_class" not in (vault.read_market_record("0xpm", "post_mortem") or {})
-    assert vault.read_trade_log_dict("0xpm")["post_mortem_attempts"] == 1
+    # an invalid class is stored as 'unclassified' (not a failed attempt, market not flagged)
+    pm = [r for r in ledger.iter_rows(vault) if r["stage"] == "post_mortem"]
+    assert [r["failure_class"] for r in pm] == ["unclassified"]
+    assert (vault.read_market_record("0xpm", "post_mortem") or {}).get("failure_class") == "unclassified"
 
 
 def test_post_mortem_schema_requires_failure_class_and_inputs():

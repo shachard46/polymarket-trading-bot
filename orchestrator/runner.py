@@ -300,6 +300,7 @@ def _post_mortem_stub(payload: dict[str, Any]) -> dict[str, Any]:
         "market_id": payload.get("market_id", "stub"),
         "post_mortem_analysis": "stub post-mortem analysis paragraph.",
         "failure_class": "variance",
+        "failure_tag_definition": None,
         "error": None,
     }
 

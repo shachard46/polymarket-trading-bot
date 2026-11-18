@@ -27,4 +27,5 @@ output_schema:
   market_id: string
   post_mortem_analysis: string
   failure_class: string
+  failure_tag_definition: "string | null"
   error: "string | null"

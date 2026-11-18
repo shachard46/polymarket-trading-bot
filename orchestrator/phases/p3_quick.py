@@ -13,9 +13,10 @@ from orchestrator.agent_outputs import DeepResearcherNeedsMore
 from orchestrator.config import FORCED_SYNTHESIS_OVERRIDE
 from orchestrator.directives import extract_filter_directives
 from orchestrator.phases.agent_call import check_complete, invoke_deep_researcher
-from orchestrator.phases.common import _dr_payload
+from orchestrator.phases.common import log, _dr_payload, _ledger_market_fields, _ledger_safe
 from orchestrator.phases.research_state import _record_attempt, _skip_research
 from orchestrator.runner import AgentRunner
+from orchestrator.schema_validation import AgentSchemaError
 from orchestrator.state import flag_inactive
 
 
@@ -85,3 +86,53 @@ def _quick_stage(
         return QuickResult("skip", out.estimated_p, out.p_low, out.p_high)
     _record_attempt(vault, row, "quick", "escalate", **values)
     return QuickResult("escalate", out.estimated_p, out.p_low, out.p_high)
+
+
+def _triage_shadow_quick(
+    vault: ObsidianManager,
+    runner: AgentRunner,
+    row: dict[str, Any],
+    directives: str,
+    today: str,
+    triage: dict[str, Any],
+) -> None:
+    """Measure-only quick estimate for a triage reject: one price-blind call, one ledger row.
+
+    Writes ONE `triage_shadow` row (q, p, p_low, p_high, triage reason, manipulation_risk, market
+    fields). Never escalates, trades, changes status or flags the market inactive: a content error
+    is ledgered in the `error` field. Infra errors propagate (the caller leaves it pending).
+    """
+    market_id = row["market_id"]
+    md = row.get("market_data") or {}
+    q = scraper.select_q(md)
+    high = triage.get("manipulation_risk") == "high"
+    fields = {
+        **_ledger_market_fields(md),
+        "reason": "manipulation_risk" if high else triage.get("reason"),
+        "triage_kind": "manipulation_risk" if high else "not_researchable",
+        "q": q,
+    }
+    if fields.get("category") is None:
+        fields["category"] = triage.get("category")
+    dr_in = _dr_payload(
+        row, directives, [], mode="quick", today=today,
+        system_override=FORCED_SYNTHESIS_OVERRIDE, session_tag="quick",
+    )
+    error: str | None = None
+    out: Any = None
+    try:
+        out = invoke_deep_researcher(runner, dr_in)
+    except (ValueError, AgentSchemaError) as exc:  # content errors (pydantic/parse); infra propagates
+        error = f"quick-stage output invalid: {exc}"
+    if error is None and isinstance(out, DeepResearcherNeedsMore):
+        error = "deep researcher disobeyed quick-stage override"
+    if error is None and check_complete(vault, market_id, out, flag=False) is None:
+        error = "deep researcher quick-stage output incomplete or inconsistent"
+    if error is not None:
+        log.warning("[PHASE 3] triage_shadow for %s failed: %s", market_id, error)
+        _ledger_safe(vault, market_id, "triage_shadow", error=error, **fields)
+        return
+    _ledger_safe(
+        vault, market_id, "triage_shadow",
+        p=out.estimated_p, p_low=out.p_low, p_high=out.p_high, **fields,
+    )

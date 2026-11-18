@@ -13,7 +13,7 @@ from config.trading_constants import (
     FILTERS,
     KNOB_COOLDOWN_VERSIONS,
 )
-from orchestrator import gate, ledger, stats
+from orchestrator import failure_tags, gate, ledger, stats
 from orchestrator.config import OVERSEER_INTERVAL_SEC, overseer_min_new_resolved
 from orchestrator.directives import changed_knobs, effective_knobs
 from orchestrator.phases.agent_call import run_structured_agent
@@ -158,11 +158,15 @@ def phase6_macro_learning_loop(
     stats_path = vault._dirs["system"] / "stats.md"
     stats_md = stats_path.read_text(encoding="utf-8") if stats_path.exists() else ""
     current = vault.read_directives()
+    class_counts, candidate_tags = failure_tags.overseer_failure_views(
+        stats.failure_class_counts(rows), failure_tags.load_registry(vault)
+    )
     payload = {
         "post_mortems": _bounded_post_mortems(vault),
         "current_directives": current,
         "stats_md": stats_md[:PHASE6_MAX_STATS_CHARS],
-        "failure_class_counts": stats.failure_class_counts(rows),
+        "failure_class_counts": class_counts,
+        "candidate_failure_tags": candidate_tags,
         "bounds": _bounds_payload(vault, current),
     }
     parsed, reason = run_structured_agent(runner, "overseer", payload)

@@ -29,6 +29,8 @@ from orchestrator.state import (
 )
 
 _ROOT = Path(__file__).resolve().parents[2]
+# measure-only independent-evidence sample fields: copied from research to the ledger, never used for sizing
+_INDEP_KEYS = ("indep_p", "indep_p_low", "indep_p_high", "indep_source", "indep_gap", "indep_error")
 _ALLOCATION_SKILL_PATH = (
     _ROOT / "skills/calculate-trade-allocation/calculate_trade_allocation.py"
 )
@@ -189,6 +191,7 @@ def _phase4_queue(
                     "p_high": _as_float(fm.get("p_high")),
                     "evidence_source": fm.get("evidence_source"),
                     "evidence_fallback": fm.get("evidence_fallback"),
+                    **{k: fm.get(k) for k in _INDEP_KEYS if fm.get(k) is not None},
                     "market_data": _carry_manipulation_risk(
                         fresh.market_data, vault.read_filter_log(market_id)
                     ),
@@ -334,6 +337,7 @@ def _persist_trade(
             size_usd=size_usd,
             evidence_source=row.get("evidence_source"),
             evidence_fallback=row.get("evidence_fallback"),
+            **{k: row[k] for k in _INDEP_KEYS if row.get(k) is not None},
             lam=allocation.get("lam"),
             min_edge=allocation.get("min_edge"),
             **_ledger_market_fields(market_data),

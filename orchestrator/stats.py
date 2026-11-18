@@ -23,6 +23,15 @@ MIN_FIT_N = 50
 _SKIP_STAGES = ("gate_reject", "triage_reject", "research_skip")
 _COUNTERFACTUAL_STAGES = ("below_edge", "research_skip")
 SHADOW_STAGE = "shadow_research"  # measure-only rows; never part of the main Brier / P&L
+TRIAGE_SHADOW_STAGE = "triage_shadow"
+COVERAGE_STAGE = "signal_coverage"
+# Measure-only / bookkeeping stages: never part of the main Brier, P&L or lambda paths.
+_NON_DECISION = (
+    ledger.RESOLUTION_STAGE, ledger.POST_MORTEM_STAGE, SHADOW_STAGE,
+    TRIAGE_SHADOW_STAGE, "shadow_failed", COVERAGE_STAGE,
+)
+_COVERAGE_SIGNALS = ("volume_24h", "day_price_change", "bid_ask", "holders")
+_GATE_FLAG_REASONS = ("suspicious_move", "concentrated", "wide_spread")
 
 
 def _num(value: Any) -> float | None:
@@ -48,7 +57,7 @@ def _latest_by_market(rows: Iterable[dict[str, Any]], stages: Iterable[str] | No
     out: dict[str, dict[str, Any]] = {}
     for r in rows:
         st = r.get("stage")
-        if st in (ledger.RESOLUTION_STAGE, ledger.POST_MORTEM_STAGE, SHADOW_STAGE) or not r.get("market_id"):
+        if st in _NON_DECISION or not r.get("market_id") or r.get("market_id") == "_tick":
             continue
         if wanted is None or st in wanted:
             out[r["market_id"]] = r
@@ -60,7 +69,7 @@ def scored_triples(rows: list[dict[str, Any]]) -> list[tuple[float, float, int]]
     res = resolutions(rows)
     latest: dict[str, dict[str, Any]] = {}
     for r in rows:
-        if r.get("stage") in (ledger.RESOLUTION_STAGE, ledger.POST_MORTEM_STAGE, SHADOW_STAGE):
+        if r.get("stage") in _NON_DECISION:
             continue
         if r.get("market_id") not in res:
             continue
@@ -73,7 +82,7 @@ def _latest_scored(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     res = resolutions(rows)
     out: dict[str, dict[str, Any]] = {}
     for r in rows:
-        if r.get("stage") in (ledger.RESOLUTION_STAGE, ledger.POST_MORTEM_STAGE, SHADOW_STAGE):
+        if r.get("stage") in _NON_DECISION:
             continue
         if r.get("market_id") in res and _num(r.get("p")) is not None and _num(r.get("q")) is not None:
             out[r["market_id"]] = r
@@ -135,6 +144,119 @@ def brier_shadow(
     ys = [res[m] for m in latest]
     cols = [[_num(r[k]) for r in latest.values()] for k in ("quick_p", "p", "q")]
     return (len(ys), *(brier(c, ys) for c in cols))
+
+
+def _brier_or_none(preds: list[float], ys: list[int]) -> float | None:
+    return brier(preds, ys) if ys else None
+
+
+def triage_shadow_stats(rows: list[dict[str, Any]]) -> dict[str, tuple[int, float | None, float | None]]:
+    """`{kind: (n, Brier(quick p), Brier(q))}` over resolved triage_shadow markets (no error row).
+
+    kinds: `not_researchable`, `manipulation_risk`, `all`. Latest triage_shadow row per market.
+    """
+    res = resolutions(rows)
+    latest: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        if r.get("stage") == TRIAGE_SHADOW_STAGE and r.get("market_id") in res and not r.get("error"):
+            if _num(r.get("p")) is not None and _num(r.get("q")) is not None:
+                latest[r["market_id"]] = r
+    out = {}
+    for kind in ("not_researchable", "manipulation_risk", "all"):
+        sel = [(m, r) for m, r in latest.items() if kind == "all" or r.get("triage_kind") == kind
+               or (r.get("triage_kind") is None and (r.get("reason") == "manipulation_risk") == (kind == "manipulation_risk"))]
+        ys = [res[m] for m, _ in sel]
+        out[kind] = (
+            len(ys),
+            _brier_or_none([_num(r["p"]) for _, r in sel], ys),
+            _brier_or_none([_num(r["q"]) for _, r in sel], ys),
+        )
+    return out
+
+
+def signal_coverage_stats(rows: list[dict[str, Any]], now: datetime | None = None) -> dict[str, Any]:
+    """Latest-tick and 7-day `(missing, total)` per signal from `signal_coverage` rows."""
+    now = now or datetime.now(tz=timezone.utc)
+    cov = [r for r in rows if r.get("stage") == COVERAGE_STAGE]
+    latest = cov[-1] if cov else None
+    out: dict[str, Any] = {"ticks": len(cov), "signals": {}}
+    for sig in _COVERAGE_SIGNALS:
+        lm = lt = wm = wt = 0
+        if latest and isinstance(latest.get(sig), dict):
+            lm, lt = int(latest[sig].get("missing") or 0), int(latest[sig].get("total") or 0)
+        for r in cov:
+            try:
+                age = (now - datetime.fromisoformat(str(r.get("ts")))).total_seconds()
+            except (TypeError, ValueError):
+                continue
+            if age <= 7 * 86400 and isinstance(r.get(sig), dict):
+                wm += int(r[sig].get("missing") or 0)
+                wt += int(r[sig].get("total") or 0)
+        out["signals"][sig] = {"latest": (lm, lt), "week": (wm, wt)}
+    return out
+
+
+def independent_sample_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Research rows carrying `indep_p`: n, mean |indep_gap|, and for resolved ones Brier(median p) vs Brier(indep_p)."""
+    res = resolutions(rows)
+    latest: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        if r.get("stage") in _NON_DECISION or not r.get("market_id") or r.get("market_id") == "_tick":
+            continue
+        if _num(r.get("indep_p")) is not None:
+            latest[r["market_id"]] = r
+    gaps = []
+    for r in latest.values():
+        gap = _num(r.get("indep_gap"))
+        if gap is None and _num(r.get("p")) is not None:
+            gap = _num(r["p"]) - _num(r["indep_p"])
+        if gap is not None:
+            gaps.append(abs(gap))
+    scored = [(m, r) for m, r in latest.items() if m in res and _num(r.get("p")) is not None]
+    ys = [res[m] for m, _ in scored]
+    return {
+        "n": len(latest),
+        "mean_abs_gap": sum(gaps) / len(gaps) if gaps else None,
+        "n_resolved": len(ys),
+        "brier_p": _brier_or_none([_num(r["p"]) for _, r in scored], ys),
+        "brier_indep": _brier_or_none([_num(r["indep_p"]) for _, r in scored], ys),
+    }
+
+
+def gate_flag_stats(rows: list[dict[str, Any]]) -> dict[str, tuple[int, float | None]]:
+    """`{group: (n, Brier(q))}` on resolved markets: gate_reject by flag reason vs markets that passed the gate.
+
+    Uses each market's latest `gate_reject` row (reasons suspicious_move/concentrated/wide_spread);
+    'passed_gate' = resolved markets with any non-gate_reject decision row (reached triage or beyond).
+    Holder-based flags are further split by `holder_basis` when present (e.g. `concentrated/supply`).
+    """
+    res = resolutions(rows)
+    groups: dict[str, dict[str, float]] = defaultdict(dict)
+    rejected: dict[str, dict[str, Any]] = {}
+    passed: dict[str, float] = {}
+    for r in rows:
+        st, m = r.get("stage"), r.get("market_id")
+        if st in _NON_DECISION or not m or m == "_tick" or m not in res or _num(r.get("q")) is None:
+            continue
+        if st == "gate_reject":
+            if r.get("reason") in _GATE_FLAG_REASONS:
+                rejected[m] = r
+            else:
+                rejected.pop(m, None)
+        elif st in ("triage_reject", "research_skip", "below_edge", "traded"):
+            passed[m] = _num(r["q"])
+    for m, r in rejected.items():
+        if m in passed:
+            continue
+        key = r["reason"] + (f"/{r['holder_basis']}" if r.get("holder_basis") and r["reason"] == "concentrated" else "")
+        groups[key][m] = _num(r["q"])
+        groups[r["reason"]][m] = _num(r["q"])
+    groups["passed_gate"] = passed
+    out = {}
+    for key, d in sorted(groups.items()):
+        ids = list(d)
+        out[key] = (len(ids), _brier_or_none([d[m] for m in ids], [res[m] for m in ids]))
+    return out
 
 
 def failure_class_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
@@ -313,6 +435,10 @@ def compute_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
             brier_diff_ci=bootstrap_diff_ci(triples),
         )
     out["brier_shadow"] = brier_shadow(rows)
+    out["triage_shadow"] = triage_shadow_stats(rows)
+    out["signal_coverage"] = signal_coverage_stats(rows)
+    out["indep_sample"] = independent_sample_stats(rows)
+    out["gate_flags"] = gate_flag_stats(rows)
     out["calibration"] = calibration_table(triples)
     out["brier_by_evidence_source"] = brier_by_evidence_source(rows)
     traded = _pnl_groups(rows, res, ("traded",))
@@ -378,6 +504,29 @@ def render_stats(s: dict[str, Any]) -> str:
         "", "| quick p | full p | market q |", "|---|---|---|",
         f"| {_fmt(b_quick)} | {_fmt(b_full)} | {_fmt(b_mkt)} |",
     ]
+    L += ["", "### Signal coverage (missing / total of gated markets)", "",
+          "| signal | latest tick | % | last 7 days | % |", "|---|---|---|---|---|"]
+    alert = trading_constants.SIGNAL_COVERAGE_ALERT_FRAC
+    for sig, d in s.get("signal_coverage", {}).get("signals", {}).items():
+        cells = []
+        for m, t in (d["latest"], d["week"]):
+            frac = m / t if t else None
+            flag = " ⚠" if frac is not None and frac > alert else ""
+            cells += [f"{m}/{t}", f"{_fmt(None if frac is None else 100 * frac, 1)}%{flag}"]
+        L.append(f"| {sig} | " + " | ".join(cells) + " |")
+    L += ["", "### Triage shadow: quick p vs market (resolved triage rejects)", "",
+          "| reason | n | Brier(quick p) | Brier(q) |", "|---|---|---|---|"]
+    for kind, (n, bp, bq) in s.get("triage_shadow", {}).items():
+        L.append(f"| {kind} | {n} | {_fmt(bp)} | {_fmt(bq)} |")
+    ind = s.get("indep_sample", {"n": 0, "mean_abs_gap": None, "n_resolved": 0, "brier_p": None, "brier_indep": None})
+    L += ["", "### Independent evidence sample", "",
+          f"Research rows with indep_p: {ind['n']}; mean |indep_gap|: {_fmt(ind['mean_abs_gap'])}. "
+          f"Resolved: {ind['n_resolved']}; Brier(median p) {_fmt(ind['brier_p'])} vs Brier(indep_p) {_fmt(ind['brier_indep'])}."]
+    L += ["", "### Gate flags vs market calibration", "",
+          "Brier(q) on resolved markets, by gate flag vs markets that passed the gate.", "",
+          "| group | n | Brier(q) |", "|---|---|---|"]
+    for key, (n, bq) in s.get("gate_flags", {}).items():
+        L.append(f"| {key} | {n} | {_fmt(bq)} |")
     L += ["", "## Calibration (p in 10% buckets)", "", "| bucket | n | mean p | hit rate |", "|---|---|---|---|"]
     L += [f"| {c['bucket']} | {c['n']} | {_fmt(c['mean_p'], 3)} | {_fmt(c['hit_rate'], 3)} |" for c in s["calibration"]]
     L += [
@@ -424,4 +573,4 @@ def write_stats(vault: ObsidianManager) -> None:
     path.write_text(render_stats(compute_stats(rows)), encoding="utf-8")
 
 
-__all__ = ["bet_pnl", "brier_by_evidence_source", "brier_by_directive_version", "brier_shadow", "failure_class_counts", "compute_stats", "fit_lambda", "pnl_summary", "realised_pnl", "render_stats", "tax_by_year", "write_stats"]
+__all__ = ["bet_pnl", "brier_by_evidence_source", "brier_by_directive_version", "brier_shadow", "triage_shadow_stats", "signal_coverage_stats", "independent_sample_stats", "gate_flag_stats", "failure_class_counts", "compute_stats", "fit_lambda", "pnl_summary", "realised_pnl", "render_stats", "tax_by_year", "write_stats"]

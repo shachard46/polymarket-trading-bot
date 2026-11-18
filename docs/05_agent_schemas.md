@@ -92,17 +92,18 @@ The former Trade Executioner agent is removed. Phase 4 is deterministic Hub code
 {
   "market_id": "string",
   "post_mortem_analysis": "string",
-  "failure_class": "bad_info | bad_reasoning | resolution_misread | variance | correct",
+  "failure_class": "bad_info | bad_reasoning | resolution_misread | variance | correct | new:<slug>",
+  "failure_tag_definition": "string | null (required for new:<slug>)",
   "error": "string | null"
 }
 ```
 
-`failure_class` is validated by the Hub (`PostMortemPayload`), written to the post-mortem frontmatter, and ledgered on a `post_mortem` stage row.
+`failure_class` is a fixed class or an open tag `new:<slug>` (slug `[a-z0-9_]{3,40}`, plus a one-line `failure_tag_definition`). The Hub (`orchestrator/failure_tags.py`) keeps a registry `00_System/failure_tags.json` `{slug: {definition, count, first_seen, last_seen}}`; tags with `count >= FAILURE_TAG_MIN_COUNT` are *established*. The post-mortem payload also carries `failure_classes`, `established_failure_tags` and `candidate_failure_tags` (`{new:slug: definition}`) so the analyst reuses tags. An invalid class/slug (or a new tag without definition) is stored as `unclassified`. `failure_class` (fixed, `new:<slug>` or `unclassified`) is written to the post-mortem frontmatter and ledgered on a `post_mortem` stage row.
 
 ## 6. The Overseer (Strategy Optimizer)
 
 - **System Prompt:** Interpret the stats, change at most 2 knobs, in steps of at most 15%, cite the stat that justifies each change; may edit the Research Protocol text; may not touch sizing. Doing nothing is valid.
-- **Input Schema:** `{"post_mortems": "list[dict]" (<= 15), "current_directives": "string", "stats_md": "string", "failure_class_counts": "dict", "bounds": "list[dict]"}` (`bounds` rows: `knob, current, default, min, max, max_step_frac, last_changed_version, locked`).
+- **Input Schema:** `{"post_mortems": "list[dict]" (<= 15), "current_directives": "string", "stats_md": "string", "failure_class_counts": "dict" (fixed classes + established `new:` tags), "candidate_failure_tags": "dict" (`{new:slug: {count, definition}}`, below threshold, not evidence), "bounds": "list[dict]"}` (`bounds` rows: `knob, current, default, min, max, max_step_frac, last_changed_version, locked`).
 - **Output Schema:**
 
 ```json

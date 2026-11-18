@@ -87,6 +87,7 @@ def _ledger_market_fields(market_data: dict[str, Any] | None) -> dict[str, Any]:
         "day_price_change": md.get("day_price_change"),
         "holder_top1": md.get("holder_top1"),
         "holder_top3": md.get("holder_top3"),
+        "holder_basis": md.get("holder_basis"),
         "bid_ask_spread": _market_spread(md),
         "manipulation_risk": md.get("manipulation_risk") or "unknown",
     }

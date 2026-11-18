@@ -142,6 +142,12 @@ class ResearchFrontmatter(BaseModel):
     samples: list[float] = []
     evidence_source: Optional[str] = None
     evidence_fallback: Optional[bool] = None
+    indep_p: Optional[float] = None  # measure-only independent-evidence sample (never sizes a bet)
+    indep_p_low: Optional[float] = None
+    indep_p_high: Optional[float] = None
+    indep_source: Optional[str] = None
+    indep_gap: Optional[float] = None
+    indep_error: Optional[str] = None
     status: Optional[str] = None
     error_log: Optional[dict[str, Any]] = None
 
@@ -206,9 +212,15 @@ class PostMortemPayload(BaseModel):
         if value is None:
             return None
         cleaned = value.strip().lower()
-        if cleaned not in FAILURE_CLASSES:
-            raise ValueError(f"failure_class must be one of {sorted(FAILURE_CLASSES)}, got {value!r}")
-        return cleaned
+        from orchestrator.failure_tags import TAG_PREFIX, UNCLASSIFIED, SLUG_RE  # lazy: avoids an import cycle
+
+        if cleaned in FAILURE_CLASSES or cleaned == UNCLASSIFIED:
+            return cleaned
+        if cleaned.startswith(TAG_PREFIX) and SLUG_RE.match(cleaned[len(TAG_PREFIX):]):
+            return cleaned
+        raise ValueError(
+            f"failure_class must be one of {sorted(FAILURE_CLASSES)}, 'unclassified' or 'new:<slug>', got {value!r}"
+        )
 
 
 # Headers the seed directives ship with and the Overseer must keep

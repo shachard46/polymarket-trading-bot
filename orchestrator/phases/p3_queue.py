@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from obsidian_utils import ObsidianManager
-from config.trading_constants import SHADOW_MAX_PER_TICK
+from config.trading_constants import SHADOW_MAX_PER_TICK, TRIAGE_SHADOW_MAX_PER_TICK
 from orchestrator import evidence, gate, scraper
 from orchestrator.config import (
     full_research_budget,
@@ -28,10 +28,11 @@ from orchestrator.phases.common import (
     _as_float,
     _carry_manipulation_risk,
     _open_trade_shows_bet_not_edge_dq,
+    _write_filter_state,
     log,
 )
 from orchestrator.phases.p3_evidence import _bundle_has_entries
-from orchestrator.phases.p3_quick import _quick_stage
+from orchestrator.phases.p3_quick import _quick_stage, _triage_shadow_quick
 from orchestrator.phases.research_state import (
     _attempt_cooldown_active,
     _error_free_active_fm,
@@ -107,6 +108,51 @@ def build_phase3_queue(
         )
         return candidates[:cap]
     return candidates
+
+
+def _triage_shadow_pending(vault: ObsidianManager) -> list[dict[str, Any]]:
+    """Retired filter records whose triage reject awaits its measure-only quick estimate."""
+    out = []
+    for path in vault.iter_dir_files("filters", ".md"):
+        record = vault.read_market_record(path.stem, "filters")
+        triage = (record or {}).get("triage")
+        if (
+            record is not None
+            and gate.is_retired(record)
+            and not is_inactive(record)
+            and isinstance(triage, dict)
+            and triage.get("triage_shadow") == "pending"
+        ):
+            out.append({**record, "market_id": path.stem})
+    return sorted(out, key=lambda r: r["market_id"])
+
+
+def _run_triage_shadows(
+    vault: ObsidianManager,
+    runner: AgentRunner,
+    directives: str,
+    today: str,
+    over_budget: Callable[[], bool],
+) -> int:
+    """Measure-only quick estimates for pending triage rejects (max per tick; no escalation/trade)."""
+    done = 0
+    for record in _triage_shadow_pending(vault):
+        if done >= TRIAGE_SHADOW_MAX_PER_TICK or over_budget():
+            break
+        market_id = record["market_id"]
+        row = scraper.fetch_market_row(market_id)
+        if row is None or market_data_pricing_error(row.market_data):
+            continue  # stays pending; retried next tick
+        market_row = row.model_dump()
+        _carry_manipulation_risk(market_row["market_data"], record)
+        with market_quarantine(vault, market_id, "phase3"):
+            _triage_shadow_quick(vault, runner, market_row, directives, today, record["triage"])
+            _write_filter_state(
+                vault, market_id, record,
+                triage={**record["triage"], "triage_shadow": "done"},
+            )
+        done += 1
+    return done
 
 
 @dataclass
@@ -296,6 +342,8 @@ def phase3_qualitative_pipeline(
         vault, runner, directives, selected + shadow_jobs, over_budget
     )
     log.info("[PHASE 3] researched count=%d", len(researched))
+    # Last, so measure-only triage shadows never displace real quick/FULL work.
+    _run_triage_shadows(vault, runner, directives, today, over_budget)
     return researched
 
 

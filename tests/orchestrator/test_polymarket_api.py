@@ -391,16 +391,42 @@ def test_fetch_holder_concentration_parses_worst_side(monkeypatch):
     seen = {}
 
     def fake(url, params=None, **kw):
-        seen.update(url=url, params=params, kw=kw)
+        if url.endswith("/holders"):
+            seen.update(url=url, params=params, kw=kw)
         return _holders([[50, 30, 10, 10], [10, 10, 10, 10, 10, 10, 10, 10, 10, 10]])
 
     monkeypatch.setattr(api, "_get_json", fake)
-    out = api.fetch_holder_concentration(CID)
-    assert out == {"top1": pytest.approx(0.5), "top3": pytest.approx(0.9)}
+    out = api.fetch_holder_concentration(CID)  # /oi gets holders-shaped junk -> top_n fallback
+    assert out == {"top1": pytest.approx(0.5), "top3": pytest.approx(0.9), "basis": "top_n"}
     assert seen["url"].endswith("/holders") and seen["params"]["condition_id"] == CID
     assert seen["kw"]["timeout"] == api.MANIP["holders_timeout_sec"]
     monkeypatch.setattr(api, "_get_json", lambda *a, **k: _holders([[5, 5]])["data"])  # bare list
     assert api.fetch_holder_concentration(CID)["top1"] == pytest.approx(0.5)
+
+
+def _routed(oi):
+    def fake(url, params=None, **kw):
+        if url.endswith("/oi"):
+            if isinstance(oi, Exception):
+                raise oi
+            return oi
+        return _holders([[50, 30, 10, 10], [20, 10]])
+
+    return fake
+
+
+def test_fetch_holder_concentration_supply_basis(monkeypatch):
+    monkeypatch.setattr(api, "_get_json", _routed({"data": [{"condition_id": CID, "value": 1000.0}]}))
+    out = api.fetch_holder_concentration(CID)
+    assert out == {"top1": pytest.approx(0.05), "top3": pytest.approx(0.09), "basis": "supply"}
+
+
+def test_fetch_holder_concentration_oi_unusable_falls_back(monkeypatch):
+    for oi in (api.PolymarketAPIError("down"), {"data": []}, {"data": [{"value": 0}]}, {"data": [{"value": "x"}]},
+               {"data": [{"value": 80.0}]}):  # 80 < top-N sum 100: inconsistent
+        monkeypatch.setattr(api, "_get_json", _routed(oi))
+        out = api.fetch_holder_concentration(CID)
+        assert out["basis"] == "top_n" and out["top1"] == pytest.approx(2 / 3)
 
 
 def test_fetch_holder_concentration_failures_return_none(monkeypatch):
@@ -412,3 +438,18 @@ def test_fetch_holder_concentration_failures_return_none(monkeypatch):
     for payload in ({"error": "x"}, "junk", [{"holders": "nope"}], _holders([[0, 0]]), _holders([])):
         monkeypatch.setattr(api, "_get_json", lambda *a, _p=payload, **k: _p)
         assert api.fetch_holder_concentration(CID) is None
+
+
+def test_keyset_real_page_signals_survive_list_candidates_and_scraper_snapshot():
+    """Real trimmed /markets/keyset page: volume24hr/oneDayPriceChange present on one market, omitted on the other."""
+    page = load("markets_keyset_page.json")
+    now = datetime(2026, 11, 18, 12, 0, tzinfo=timezone.utc)
+    install(_candidates_handler([page]))
+    rows = api.list_candidates(10, now=now)
+    assert len(rows) == 2
+    full, sparse = rows
+    assert full["volume_24h"] > 0 and isinstance(full["day_price_change"], float)
+    assert sparse["volume_24h"] > 0 and "day_price_change" not in sparse  # omitted by Gamma => absent, never 0
+    snap = scraper._market_snapshot_from_scraper_row(full)
+    assert snap["volume_24h"] == full["volume_24h"] and snap["day_price_change"] == full["day_price_change"]
+    assert "day_price_change" not in scraper._market_snapshot_from_scraper_row(sparse)
