@@ -2,6 +2,38 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Purpose and direction
+
+The goal is a bot that makes money on Polymarket by finding markets where careful, price-blind research of public information disagrees with the market price. We then bet small, Kelly-sized amounts on that disagreement. The strategy was originally momentum and LLM "evaluators"; it was deliberately rebuilt around a **research edge**, measured and corrected by its own track record. The current stage is **paper trading to collect evidence**: is the research calibrated (Brier score), and how much should we trust it versus the market (λ)? Live money comes only after the ledger shows it.
+
+Guiding principles, which should hold for any future change:
+- **LLMs judge, code decides.** Models only read text and estimate probabilities. Gating, sizing, caps, tax, execution and all maths are deterministic Hub code, so every decision is reproducible and testable. Agents that used to decide (Evaluator, Re-Evaluator, Executioner) were removed for this reason.
+- **Price-blind research.** No model ever sees the market price `q`. Models given `q` anchor on it, which kills any independent signal. Trust in the market is applied explicitly in code instead (the λ-shrink), where it can be measured.
+- **Assume the market is usually right.** Liquid markets are hard to beat, so the pipeline is a funnel of cheap filters before expensive research. Large disagreements are treated as probable errors (misread resolution rules), not as big edges. Sizing is conservative: ¼-Kelly, shrink toward `q`, a minimum edge and exposure caps.
+- **Measure everything, learn slowly.** Every decision, including skips and rejects, goes to the decision ledger so it can be scored when the market resolves. `stats.md` reports Brier, calibration, P&L and a λ fit. The Overseer may only nudge a few bounded knobs, needs enough new resolutions before it acts, and is auto-reverted if Brier gets worse. It can never touch sizing.
+- **Cost-aware.** LLM calls and evidence fetches are the main cost. Hence per-tick budgets, caches (triage forever, evidence 24h), same-event bundle reuse, and a quick stage before the full one.
+- **Fail safe, never silently.** Content errors mark the single market `inactive` and the loop moves on. Infra errors are retried. Unknown config values raise instead of falling back. Trades are never retried blindly (idempotent intent files).
+
+## Why each phase looks the way it does
+
+1. **Ingest: direct Gamma/CLOB APIs.** The old `poly-scan` scraper plus SQLite added a stale, second copy of the data. Calling the public APIs directly gives fresh prices, real order books and correct YES/NO token mapping (by label, never by position). Momentum signals were dropped with it because the strategy no longer uses them.
+2. **Gate and triage: cheap before expensive.** A deterministic score prefers quiet markets (a low volume/liquidity ratio means less attention, so more chance of mispricing), 14–45 days out (enough time to matter, short enough to resolve and score), and prices near 0.5. Failing markets back off exponentially and retire after 6 failures, so we don't keep paying to look at them. One cheap, price-blind triage call per event asks whether public research can plausibly beat this market at all; for example, a coin flip or insider-driven question can't. It is cached forever because the answer doesn't change.
+3. **Research: two stages, three samples, skips on doubt.**
+   - The quick stage (model knowledge only) filters out markets where we already agree with the price, so the expensive full stage runs only where there is apparent divergence.
+   - The Briefer's 4 fixed queries (resolution polarity, base rate, current state, strongest counter-evidence) target the known failure modes of LLM forecasting: misreading the rules, ignoring base rates, stale knowledge and confirmation bias.
+   - Three independent samples with a median reduce LLM noise. A spread above 0.15 means the model is unsure, so we skip.
+   - `|p − q| > 0.40` is far more likely a misread than an edge, so we skip.
+   - The evidence source is A/B tested (A-IQ vs plain web search, a stable arm per market) because A-IQ is expensive and its added value is unproven. The ledger will show which one gives the better Brier. Web results are sanitized of odds and prediction-market lines to keep research price-blind.
+4. **Execution: deterministic sizing.**
+   - λ-shrink toward `q`: λ = 0.3 means we trust our own estimate 30% and the market 70% until the ledger fit says otherwise.
+   - ¼-Kelly, a minimum edge, per-market/event/total caps and a depth cap at real CLOB asks (not the midpoint), because an edge measured at the midpoint is not real.
+   - Paper mode uses a looser λ/edge (0.5/0.03) only to collect more scored bets faster. Live keeps 0.3/0.04.
+   - Israeli tax is modeled as 25% of net annual gains (losses offset within the year), so Kelly is computed pre-tax.
+5. **Resolution and post-mortem: classify why.** Every ledger market is resolved, including the ones we skipped or rejected, so we can also measure what the filters cost us. The post-mortem returns a `failure_class` (bad info, bad reasoning, resolution misread, variance, correct). This separates fixable process errors from bad luck before anything is "learned".
+6. **Overseer: bounded, evidence-gated learning.** LLM self-tuning easily overfits noise, so it runs only after ≥ 30 new resolutions, changes at most 2 knobs by at most 15% within `BOUNDS`, has a cooldown, versions every change and auto-reverts on worse Brier.
+
+Open questions the project is working toward: is research Brier better than the market's? What is the fitted λ? Is A-IQ worth its cost vs web search? Do the skip thresholds (spread, misread gap) throw away good bets?
+
 ## Commands
 
 ```bash
