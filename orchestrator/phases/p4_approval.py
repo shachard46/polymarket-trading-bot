@@ -47,7 +47,7 @@ def _park_offer(
             for k in ("p_value", "p_low", "p_high", "evidence_source", "evidence_fallback", *_INDEP_KEYS)
             if row.get(k) is not None
         },
-        "market_fields": _ledger_market_fields(market_data),
+        "market_fields": _ledger_market_fields(market_data, role="deep_researcher"),
         "lam": allocation.get("lam"),
         "min_edge": allocation.get("min_edge"),
     }

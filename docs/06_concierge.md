@@ -110,3 +110,32 @@ Turning `CONCIERGE_APPROVAL` off stops vote processing, so pending offers stay p
 - The Hub acts only on vote files. It never reads Discord directly, and the concierge never writes to the Vault except `inbox/` and `_posted.json`.
 - Offers and proposals are relayed as the Hub wrote them. The concierge adds no filter and no preference.
 - Stats: `stats.md` section 'Offers & votes' shows approved, declined, expired and stale counts, plus Brier and counterfactual P&L per group once resolved.
+
+## 5. Built-in Discord bot
+
+Alternative to the OpenClaw concierge: `orchestrator/discord_bot.py`, a discord.py process. It is never imported by the Hub. Run it on the machine that holds the vault. The bot and the OpenClaw concierge are interchangeable front-ends over the same `outbox/` and `inbox/`. Both use `outbox/_posted.json`, so an item one has posted is skipped by the other. Run one at a time.
+
+### Setup
+
+1. Create an application in the Discord developer portal (https://discord.com/developers/applications). Under Bot, add a bot and copy its token. Never log or commit the token.
+2. Under Bot, enable the Message Content Intent. The owner Q&A reads message text.
+3. Under OAuth2, URL Generator, pick scope `bot` and permission Send Messages. Open the generated URL and invite the bot to your server.
+4. In Discord, enable Developer Mode (User Settings, Advanced). Right-click the private channel and copy its ID. Right-click your own user and copy its ID.
+5. Set the env:
+   ```bash
+   export DISCORD_BOT_TOKEN=...          # required
+   export DISCORD_CHANNEL_ID=...         # required: the private channel
+   export DISCORD_OWNER_ID=...           # required: only this user can vote or ask
+   export CONCIERGE_TZ=UTC               # optional, default UTC
+   export CONCIERGE_QUIET_HOURS=23-07    # optional: digests wait in this window
+   export CONCIERGE_POLL_SEC=300         # optional
+   ```
+   Set the Hub flags you want (section 3). The relay and votes need no model. Owner Q&A needs the direct backend: `ANTHROPIC_API_KEY` (anthropic), or `DIRECT_PROVIDER=openrouter` with `OPENROUTER_API_KEY` and `DIRECT_MODEL_CONCIERGE` or `DIRECT_MODEL_DEFAULT`.
+6. Run `python3 -m orchestrator.discord_bot`. Smoke check as in section 1, step 6: the offer appears in the channel with Yes and No buttons, and the vote moves to `inbox/_done/`.
+
+### Behaviour
+
+- Relays `offer-*.json`, `digest-*.json` and `directive-*.md` from the outbox, once each. Offers and proposals go out even in quiet hours. Digests wait until the window ends.
+- Only `DISCORD_OWNER_ID` can press buttons or ask questions. Other users are ignored.
+- Button presses write `inbox/vote-<id>.json`. The Hub validates the vote as with the OpenClaw concierge.
+- Questions in the channel or by DM get a read-only answer from `stats.md`, the last ledger rows and the research notes named in the question.

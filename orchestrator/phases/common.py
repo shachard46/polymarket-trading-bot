@@ -10,7 +10,16 @@ from typing import Any, Literal
 from obsidian_utils import FilterLogPayload, ObsidianManager
 from config.trading_constants import BELOW_EDGE_KEY
 from orchestrator import ledger
-from orchestrator.config import RUNNER_MODE_DIRECT, direct_model, runner_mode
+import os
+
+from orchestrator.config import (
+    OPENCLAW_MODEL_LABEL_ENV,
+    RUNNER_MODE_DIRECT,
+    RUNNER_MODE_LIVE,
+    direct_model,
+    direct_provider,
+    runner_mode,
+)
 from orchestrator.state import vault_write_or_flag
 from orchestrator.util import to_float
 
@@ -79,21 +88,36 @@ def _market_spread(md: dict[str, Any]) -> float | None:
     return None
 
 
+def _ledger_model_fields(role: str | None = None) -> dict[str, Any]:
+    """Runner backend plus, when the caller names the agent ``role``, the model that produced the row.
+
+    Direct mode adds ``provider`` and ``model`` (per role). Live mode adds ``model`` only from
+    ``OPENCLAW_MODEL_LABEL`` (OpenClaw owns the real model). Stub modes add neither.
+    """
+    mode = runner_mode()
+    out: dict[str, Any] = {"runner_backend": mode}
+    if not role:
+        return out
+    if mode == RUNNER_MODE_DIRECT:
+        out["provider"] = direct_provider()
+        try:
+            out["model"] = direct_model(role)
+        except ValueError:  # startup check should have caught this; never break a ledger write
+            out["model"] = None
+    elif mode == RUNNER_MODE_LIVE:
+        label = os.environ.get(OPENCLAW_MODEL_LABEL_ENV, "").strip()
+        if label:
+            out["model"] = label
+    return out
+
+
 def _ledger_market_fields(
     market_data: dict[str, Any] | None, role: str | None = None
 ) -> dict[str, Any]:
-    """Market-derived ledger fields plus the runner backend.
-
-    ``model`` is added only in direct mode and only when the caller names the agent ``role``
-    (the model is per role); otherwise it is omitted.
-    """
+    """Market-derived ledger fields plus the runner backend (and model/provider when ``role`` is given)."""
     md = market_data or {}
-    mode = runner_mode()
-    backend: dict[str, Any] = {"runner_backend": mode}
-    if mode == RUNNER_MODE_DIRECT and role:
-        backend["model"] = direct_model(role)
     return {
-        **backend,
+        **_ledger_model_fields(role),
         "category": md.get("category"),
         "end_date": md.get("end_date"),
         "event_id": md.get("event_id"),

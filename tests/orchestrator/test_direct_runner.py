@@ -240,3 +240,233 @@ def test_ledger_fields_backend_and_model(monkeypatch):
     assert "model" not in _ledger_market_fields({})
     f = _ledger_market_fields({}, role="triage")
     assert f["runner_backend"] == "direct" and f["model"] == "claude-haiku-5-5"
+
+
+# ---------------------------------------------------------------------------
+# OpenRouter provider
+
+
+class _Resp:
+    def __init__(self, status=200, data=None, text=""):
+        self.status_code, self._data, self.text = status, data, text
+
+    def json(self):
+        if self._data is None:
+            raise ValueError("no json")
+        return self._data
+
+
+def _or_ok(text="{}"):
+    return _Resp(200, {"choices": [{"message": {"role": "assistant", "content": text}}]})
+
+
+def _or_err(status, msg="nope"):
+    return _Resp(status, {"error": {"code": status, "message": msg}})
+
+
+@pytest.fixture()
+def or_env(monkeypatch):
+    monkeypatch.setenv("DIRECT_PROVIDER", "openrouter")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test")
+    monkeypatch.setenv("DIRECT_MODEL_DEFAULT", "vendor/cheap-model")
+    monkeypatch.setenv("OPENCLAW_AGENT_RETRY_BACKOFF", "0")
+    monkeypatch.delenv("OPENROUTER_BASE_URL", raising=False)
+    monkeypatch.setattr(direct_runner.time, "sleep", lambda s: None)
+    calls: list[dict[str, Any]] = []
+    script: list[Any] = []
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        calls.append({"url": url, "headers": headers, "json": json, "timeout": timeout})
+        item = script.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    monkeypatch.setattr(direct_runner.requests, "post", fake_post)
+    return types.SimpleNamespace(calls=calls, script=script)
+
+
+def test_openrouter_payload_shape(or_env):
+    or_env.script[:] = [_or_ok('{"a":1}')]
+    out = _call("triage", _triage_payload())
+    assert out == '{"a":1}'
+    c = or_env.calls[0]
+    assert c["url"] == "https://openrouter.ai/api/v1/chat/completions"
+    assert c["headers"]["Authorization"] == "Bearer or-test"
+    body = c["json"]
+    assert body["model"] == "vendor/cheap-model"
+    assert [m["role"] for m in body["messages"]] == ["system", "user"]
+    assert body["messages"][0]["content"] == agents_blueprint.AGENTS["triage"]["system_prompt"]
+    assert body["response_format"] == {"type": "json_object"}
+    assert "plugins" not in body
+    assert "HTTP-Referer" not in c["headers"] and "X-Title" not in c["headers"]
+
+
+def test_openrouter_optional_headers_and_base_url(or_env, monkeypatch):
+    monkeypatch.setenv("OPENROUTER_HTTP_REFERER", "https://example.test")
+    monkeypatch.setenv("OPENROUTER_APP_TITLE", "bot")
+    monkeypatch.setenv("OPENROUTER_BASE_URL", "http://proxy/v1/")
+    or_env.script[:] = [_or_ok()]
+    _call("triage", _triage_payload())
+    c = or_env.calls[0]
+    assert c["url"] == "http://proxy/v1/chat/completions"
+    assert c["headers"]["HTTP-Referer"] == "https://example.test"
+    assert c["headers"]["X-Title"] == "bot"
+
+
+def test_openrouter_web_plugin_only_for_web_searcher(or_env):
+    or_env.script[:] = [_or_ok(), _or_ok()]
+    _call("web_searcher", {"market_id": "0x1", "queries": ["q"], "today": "2026-01-01"})
+    _call("triage", _triage_payload())
+    assert or_env.calls[0]["json"]["plugins"] == [
+        {"id": "web", "max_results": config.direct_web_max_uses()}
+    ]
+    assert "plugins" not in or_env.calls[1]["json"]
+
+
+def test_openrouter_json_object_400_falls_back(or_env):
+    or_env.script[:] = [_or_err(400, "response_format unsupported"), _or_ok("fine")]
+    assert _call("triage", _triage_payload()) == "fine"
+    assert "response_format" in or_env.calls[0]["json"]
+    assert "response_format" not in or_env.calls[1]["json"]
+
+
+def test_openrouter_400_without_response_format_raises(or_env):
+    or_env.script[:] = [_or_err(400)]
+    with pytest.raises(direct_runner.DirectRunnerError, match="HTTP 400"):
+        direct_runner.complete("concierge", "sys", "hi")
+    assert len(or_env.calls) == 1
+
+
+def test_openrouter_retry_classification(or_env, monkeypatch):
+    monkeypatch.setenv("OPENCLAW_AGENT_MAX_ATTEMPTS", "4")
+    or_env.script[:] = [
+        direct_runner.requests.ConnectionError("x"), _or_err(429), _or_err(503), _or_ok("ok"),
+    ]
+    assert direct_runner.complete("concierge", "sys", "hi") == "ok"
+    assert len(or_env.calls) == 4
+
+
+def test_openrouter_non_retryable_4xx(or_env, monkeypatch):
+    monkeypatch.setenv("OPENCLAW_AGENT_MAX_ATTEMPTS", "4")
+    for status in (401, 402, 404):
+        or_env.calls.clear()
+        or_env.script[:] = [_or_err(status), _or_ok()]
+        with pytest.raises(direct_runner.DirectRunnerError, match=f"HTTP {status}"):
+            direct_runner.complete("concierge", "sys", "hi")
+        assert len(or_env.calls) == 1
+
+
+def test_openrouter_retries_exhausted(or_env, monkeypatch):
+    monkeypatch.setenv("OPENCLAW_AGENT_MAX_ATTEMPTS", "2")
+    or_env.script[:] = [_or_err(502), _or_err(502)]
+    with pytest.raises(direct_runner.DirectRunnerError, match="after 2 attempts"):
+        direct_runner.complete("concierge", "sys", "hi")
+
+
+def test_openrouter_does_not_need_anthropic_sdk(or_env, monkeypatch):
+    monkeypatch.setitem(sys.modules, "anthropic", None)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    direct_runner.require_api_key()
+    or_env.script[:] = [_or_ok("hi")]
+    assert direct_runner.complete("concierge", "sys", "u") == "hi"
+
+
+def test_complete_openrouter_no_tools_no_json(or_env):
+    or_env.script[:] = [_or_ok("answer")]
+    assert direct_runner.complete("concierge", "SYS", "USER") == "answer"
+    body = or_env.calls[0]["json"]
+    assert body["messages"] == [
+        {"role": "system", "content": "SYS"}, {"role": "user", "content": "USER"},
+    ]
+    assert "response_format" not in body and "plugins" not in body
+
+
+def test_complete_anthropic(fake_anthropic):
+    _FakeClient.script = [_ok("x")]
+    assert direct_runner.complete("concierge", "SYS", "USER") == "x!"
+    kw = _FakeClient.instances[0].calls[0]
+    assert kw["system"][0]["text"] == "SYS"
+    assert kw["messages"] == [{"role": "user", "content": "USER"}]
+    assert "tools" not in kw and kw["model"] == "claude-sonnet-5-5"
+
+
+def test_require_api_key_openrouter(or_env, monkeypatch):
+    direct_runner.require_api_key()  # default model covers every Hub role
+    monkeypatch.delenv("OPENROUTER_API_KEY")
+    with pytest.raises(direct_runner.DirectRunnerError, match="OPENROUTER_API_KEY"):
+        direct_runner.require_api_key()
+
+
+def test_require_api_key_openrouter_missing_model_lists_hub_roles(or_env, monkeypatch):
+    monkeypatch.delenv("DIRECT_MODEL_DEFAULT")
+    monkeypatch.setenv("DIRECT_MODEL_TRIAGE", "m")
+    with pytest.raises(direct_runner.DirectRunnerError) as ei:
+        direct_runner.require_api_key()
+    msg = str(ei.value)
+    assert "deep_researcher" in msg and "overseer" in msg
+    assert "triage" not in msg.split("role(s)")[1].split(":")[0]
+    assert "concierge" not in msg
+
+
+def test_require_api_key_openrouter_concierge_not_required(or_env, monkeypatch):
+    monkeypatch.delenv("DIRECT_MODEL_DEFAULT")
+    for role, spec in agents_blueprint.AGENTS.items():
+        if spec["hub_spawned"]:
+            monkeypatch.setenv(f"DIRECT_MODEL_{role.upper()}", "m")
+    direct_runner.require_api_key()
+
+
+def test_unknown_provider_raises(monkeypatch):
+    monkeypatch.setenv("DIRECT_PROVIDER", "bogus")
+    with pytest.raises(direct_runner.DirectRunnerError, match="DIRECT_PROVIDER"):
+        direct_runner.require_api_key()
+
+
+def test_direct_model_resolution(monkeypatch):
+    monkeypatch.delenv("DIRECT_PROVIDER", raising=False)
+    monkeypatch.setenv("DIRECT_MODEL_DEFAULT", "dflt")
+    assert config.direct_model("triage") == "claude-haiku-5-5"  # built-in role default wins
+    assert config.direct_model("concierge") == "dflt"
+    monkeypatch.setenv("DIRECT_PROVIDER", "openrouter")
+    assert config.direct_model("triage") == "dflt"
+    monkeypatch.setenv("DIRECT_MODEL_TRIAGE", "mine")
+    assert config.direct_model("triage") == "mine"
+    monkeypatch.delenv("DIRECT_MODEL_DEFAULT")
+    with pytest.raises(ValueError):
+        config.direct_model("overseer")
+
+
+def test_ledger_fields_provider_and_live_label(monkeypatch):
+    from orchestrator.phases.common import _ledger_market_fields
+
+    monkeypatch.setenv(config.RUNNER_MODE_ENV, "direct")
+    monkeypatch.setenv("DIRECT_PROVIDER", "openrouter")
+    monkeypatch.setenv("DIRECT_MODEL_DEFAULT", "vendor/m")
+    f = _ledger_market_fields({}, role="deep_researcher")
+    assert f["provider"] == "openrouter" and f["model"] == "vendor/m"
+    assert "provider" not in _ledger_market_fields({})
+    monkeypatch.setenv(config.RUNNER_MODE_ENV, "live")
+    monkeypatch.setenv("OPENCLAW_MODEL_LABEL", "claw-x")
+    f = _ledger_market_fields({}, role="triage")
+    assert f["model"] == "claw-x" and "provider" not in f
+    monkeypatch.delenv("OPENCLAW_MODEL_LABEL")
+    assert "model" not in _ledger_market_fields({}, role="triage")
+
+
+def test_stats_brier_by_model():
+    from orchestrator import ledger
+    from orchestrator.stats import compute_stats, render_stats
+
+    rows = [
+        {"market_id": "a", "stage": "traded", "p": 0.8, "q": 0.5, "model": "m1", "ts": "2026-01-01T00:00:00Z"},
+        {"market_id": "b", "stage": "traded", "p": 0.2, "q": 0.5, "model": "m2", "ts": "2026-01-01T00:00:00Z"},
+        {"market_id": "a", "stage": ledger.RESOLUTION_STAGE, "outcome_yes": 1, "ts": "2026-01-02T00:00:00Z"},
+        {"market_id": "b", "stage": ledger.RESOLUTION_STAGE, "outcome_yes": 1, "ts": "2026-01-02T00:00:00Z"},
+    ]
+    s = compute_stats(rows)
+    by = s["brier_by_model"]
+    assert by["m1"][0] == 1 and by["m1"][1] == pytest.approx(0.04)
+    assert by["m2"][1] == pytest.approx(0.64)
+    out = render_stats(s)
+    assert "### Brier by model" in out and "m1" in out

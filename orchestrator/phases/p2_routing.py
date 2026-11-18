@@ -14,6 +14,7 @@ from orchestrator.directives import extract_filter_directives
 from orchestrator.phases.agent_call import flag_inactive, run_structured_or_flag
 from orchestrator.phases.common import (
     _ledger_market_fields,
+    _ledger_model_fields,
     _ledger_safe,
     _open_trade_shows_bet_not_edge_dq,
     _write_filter_state,
@@ -331,7 +332,8 @@ def _rank_and_triage(
                     vault, market_id, "triage_reject",
                     reason=reason, q=q,
                     **({"manipulation_reason": triage.get("manipulation_reason")} if high else {}),
-                    **{**fields, "category": triage.get("category") or fields["category"]},
+                    **{**fields, **_ledger_model_fields("triage"),
+                       "category": triage.get("category") or fields["category"]},
                 )
                 continue
             researchable.append((sc, market, prior, {**base, "triage": triage}))

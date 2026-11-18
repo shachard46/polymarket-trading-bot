@@ -4,3 +4,4 @@ pydantic>=2.6
 PyYAML>=6.0
 requests>=2.31
 anthropic>=0.40  # only needed for OPENCLAW_ORCHESTRATOR_MODE=direct
+discord.py>=2.3  # only needed for python3 -m orchestrator.discord_bot

@@ -339,7 +339,7 @@ def _persist_trade(
             **{k: row[k] for k in _INDEP_KEYS if row.get(k) is not None},
             lam=allocation.get("lam"),
             min_edge=allocation.get("min_edge"),
-            **_ledger_market_fields(market_data),
+            **_ledger_market_fields(market_data, role="deep_researcher"),
         )
 
 

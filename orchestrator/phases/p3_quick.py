@@ -107,7 +107,7 @@ def _triage_shadow_quick(
     q = scraper.select_q(md)
     high = triage.get("manipulation_risk") == "high"
     fields = {
-        **_ledger_market_fields(md),
+        **_ledger_market_fields(md, role="deep_researcher"),
         "reason": "manipulation_risk" if high else triage.get("reason"),
         "triage_kind": "manipulation_risk" if high else "not_researchable",
         "q": q,

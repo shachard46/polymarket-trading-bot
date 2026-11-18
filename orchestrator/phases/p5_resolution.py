@@ -12,6 +12,7 @@ from orchestrator.phases.common import (
     _as_float,
     _filter_integrity_fields,
     _filter_manipulation_risk,
+    _ledger_model_fields,
     _ledger_safe,
     log,
 )
@@ -198,6 +199,7 @@ def _resolve_market(
         size_usd=payload["size_usd"], category=payload["category"],
         manipulation_risk=payload["manipulation_risk"],
         **_filter_integrity_fields(vault.read_filter_log(market_id)),
+        **_ledger_model_fields("post_mortem_analyst"),
     )
     try:
         vault.archive_trade(market_id)

@@ -269,7 +269,7 @@ def _research_market(
         _ledger_safe(
             vault, market_id, "shadow_failed",
             shadow=True, reason=reason[:500], error=str(detail)[:1000] if detail else str(exc)[:1000],
-            **_ledger_market_fields(row.get("market_data")),
+            **_ledger_market_fields(row.get("market_data"), role="deep_researcher"),
         )
         log.warning("[PHASE 3] shadow_failed for %s: %s", market_id, reason)
         return None
@@ -324,7 +324,7 @@ def _research_market_body(
             vault, market_id, "shadow_research",
             shadow=True, would_skip=would_skip,
             quick_p=quick.get("p"), quick_p_low=quick.get("p_low"), quick_p_high=quick.get("p_high"),
-            **values, **_ledger_market_fields(md),
+            **values, **_ledger_market_fields(md, role="deep_researcher"),
         )
         log.info("[PHASE 3] shadow_research for %s (would_skip=%s)", market_id, would_skip)
         return None

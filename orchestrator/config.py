@@ -35,6 +35,18 @@ DEFAULT_DIRECT_MODELS = {
     "overseer": "claude-opus-5-5",
 }
 FALLBACK_DIRECT_MODEL = "claude-sonnet-5-5"
+# Direct backend provider: "anthropic" (default, Messages API) or "openrouter" (chat completions).
+DIRECT_PROVIDER_ENV = "DIRECT_PROVIDER"
+DIRECT_PROVIDER_ANTHROPIC = "anthropic"
+DIRECT_PROVIDER_OPENROUTER = "openrouter"
+DIRECT_PROVIDERS = frozenset({DIRECT_PROVIDER_ANTHROPIC, DIRECT_PROVIDER_OPENROUTER})
+OPENROUTER_API_KEY_ENV = "OPENROUTER_API_KEY"
+OPENROUTER_BASE_URL_ENV = "OPENROUTER_BASE_URL"
+DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+# Model for any role without its own DIRECT_MODEL_<ROLE> (required on openrouter; model ids are never guessed).
+DIRECT_MODEL_DEFAULT_ENV = "DIRECT_MODEL_DEFAULT"
+# Live mode: OpenClaw owns the real model; this env labels ledger rows.
+OPENCLAW_MODEL_LABEL_ENV = "OPENCLAW_MODEL_LABEL"
 DIRECT_MAX_TOKENS_ENV = "DIRECT_MAX_TOKENS"
 DEFAULT_DIRECT_MAX_TOKENS = 16000
 DIRECT_WEB_MAX_USES_ENV = "DIRECT_WEB_MAX_USES"
@@ -176,12 +188,39 @@ def runner_mode() -> str:
     return mode
 
 
+def direct_provider() -> str:
+    """Direct backend provider (``DIRECT_PROVIDER``, default anthropic); unknown values raise."""
+    value = os.environ.get(DIRECT_PROVIDER_ENV, "").strip().lower() or DIRECT_PROVIDER_ANTHROPIC
+    if value not in DIRECT_PROVIDERS:
+        raise ValueError(
+            f"{DIRECT_PROVIDER_ENV}={value!r} is not valid; use one of {sorted(DIRECT_PROVIDERS)}"
+        )
+    return value
+
+
+def openrouter_base_url() -> str:
+    return (os.environ.get(OPENROUTER_BASE_URL_ENV, "").strip() or DEFAULT_OPENROUTER_BASE_URL).rstrip("/")
+
+
 def direct_model(role: str) -> str:
-    """Model id for a role in direct mode: ``DIRECT_MODEL_<ROLE>`` env, else the role default."""
+    """Model id for a role in direct mode.
+
+    anthropic: ``DIRECT_MODEL_<ROLE>`` env, else the built-in role default, else
+    ``DIRECT_MODEL_DEFAULT``, else the fallback. openrouter: ``DIRECT_MODEL_<ROLE>`` env, else
+    ``DIRECT_MODEL_DEFAULT``; with neither it raises ``ValueError`` (no model id is guessed).
+    """
     override = os.environ.get(DIRECT_MODEL_ENV_PREFIX + role.upper(), "").strip()
     if override:
         return override
-    return DEFAULT_DIRECT_MODELS.get(role, FALLBACK_DIRECT_MODEL)
+    default = os.environ.get(DIRECT_MODEL_DEFAULT_ENV, "").strip()
+    if direct_provider() == DIRECT_PROVIDER_OPENROUTER:
+        if default:
+            return default
+        raise ValueError(
+            f"no model for role {role!r}: set {DIRECT_MODEL_ENV_PREFIX}{role.upper()} "
+            f"or {DIRECT_MODEL_DEFAULT_ENV} (provider openrouter)"
+        )
+    return DEFAULT_DIRECT_MODELS.get(role) or default or FALLBACK_DIRECT_MODEL
 
 
 def direct_max_tokens() -> int:
@@ -249,6 +288,8 @@ __all__ = [
     "RUNNER_MODE_LIVE",
     "RUNNER_MODE_DIRECT",
     "direct_model",
+    "direct_provider",
+    "openrouter_base_url",
     "direct_max_tokens",
     "direct_web_max_uses",
     "runner_mode",
