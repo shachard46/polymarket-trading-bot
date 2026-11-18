@@ -21,10 +21,16 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from typing import Any, Callable, Protocol
 
 import agents_blueprint
-from orchestrator.config import RUNNER_MODE_LIVE, RUNNER_MODE_STUB_ERROR, runner_mode
+from orchestrator.config import (
+    RUNNER_MODE_DIRECT,
+    RUNNER_MODE_LIVE,
+    RUNNER_MODE_STUB_ERROR,
+    runner_mode,
+)
 from orchestrator.agent_outputs import parse_deep_researcher_json
 from orchestrator.parse import (
     AgentOutputParseError,
@@ -61,6 +67,10 @@ def spawn_agent(role: str, payload: dict[str, Any]) -> Any:
     mode = runner_mode()
     if mode == RUNNER_MODE_LIVE:
         result = _spawn_live(role, spec, payload)
+    elif mode == RUNNER_MODE_DIRECT:
+        from orchestrator.direct_runner import run_direct  # lazy: needs anthropic
+
+        result = run_direct(role, spec, payload)
     elif mode == RUNNER_MODE_STUB_ERROR:
         result = _spawn_stub_error(role, spec, payload)
     else:
@@ -351,15 +361,32 @@ def _spawn_live(role: str, spec: dict[str, Any], payload: dict[str, Any]) -> Any
     return extract_agent_text(result)
 
 
+_run_nonce: str = uuid.uuid4().hex[:12]
+
+
+def set_run_nonce(nonce: str) -> None:
+    """Set the per-run (tick) nonce mixed into OpenClaw session keys."""
+    global _run_nonce
+    _run_nonce = "".join(c if c.isalnum() or c in "._-" else "-" for c in str(nonce)) or "run"
+
+
+def get_run_nonce() -> str:
+    return _run_nonce
+
+
 def _live_session_key(agent_id: str, role: str, payload: dict[str, Any]) -> str:
-    """Scope OpenClaw transcript state to one market per agent (and per sample ``session_tag``)."""
+    """Scope OpenClaw transcript state to one market per agent per run (and per sample ``session_tag``).
+
+    The run nonce (see :func:`set_run_nonce`) keeps a market re-researched on a later tick from
+    reusing an earlier transcript, which would leak its prior estimate into "independent" samples.
+    """
     if role == "overseer":
-        return f"agent:{agent_id}:orch-overseer-directives"
+        return f"agent:{agent_id}:orch-overseer-directives-{_run_nonce}"
     raw_market_id = str(payload.get("market_id") or "global")
     safe_market_id = "".join(
         char if char.isalnum() or char in "._-" else "-" for char in raw_market_id
     )
-    key = f"agent:{agent_id}:orch-{safe_market_id}"
+    key = f"agent:{agent_id}:orch-{_run_nonce}-{safe_market_id}"
     tag = payload.get("session_tag")
     if tag:
         # Independent Deep Researcher samples must not share a transcript.
@@ -412,5 +439,7 @@ __all__ = [
     "STUB_RESPONSES",
     "_build_live_prompt",
     "_live_session_key",
+    "get_run_nonce",
+    "set_run_nonce",
     "spawn_agent",
 ]

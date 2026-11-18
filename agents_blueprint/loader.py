@@ -79,6 +79,8 @@ def load_agents_from_dir(agents_root: Path | None = None) -> dict[str, dict[str,
                 "output_is_markdown": is_markdown_output(out_schema),
                 "output_is_state_machine": is_state_machine_output(out_schema),
                 "workspace_path": str(child.resolve()),
+                # False for agents that run only on OpenClaw (e.g. concierge); the Hub never spawns them.
+                "hub_spawned": bool(meta.get("hub_spawned", True)),
                 "openclaw": {
                     "openclaw_agent_id": meta.get("openclaw_agent_id"),
                     "description": meta.get("description"),

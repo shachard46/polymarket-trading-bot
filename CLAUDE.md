@@ -13,6 +13,7 @@ Principles, which should hold for any future change:
 - **Measure everything, learn slowly.** Every decision, including skips and rejects, goes to the decision ledger and is scored on resolution. `stats.md` reports Brier, calibration, P&L and a λ fit. The Overseer nudges a few bounded knobs, only with enough new resolutions, is auto-reverted if Brier worsens, and never touches sizing.
 - **Measure before you filter.** A new filter starts as measurement: a shadow run, a triage shadow, an independent-evidence sample, or a record-only score. Hard-reject only extreme cases until resolved data justifies more.
 - **Cost-aware.** LLM calls and evidence fetches are the main cost: per-tick budgets, caches, a quick stage before the full one.
+- **Humans approve, code acts.** Approval flags put a human yes/no between a decision and money or knob changes. The concierge only relays Hub files and records votes: it never decides, filters or keeps preferences.
 - **Fail safe, never silently.** Content errors mark the single market `inactive` and the loop moves on. Infra errors are retried. Unknown config values raise instead of falling back. Trades are never retried blindly. Measure-only runs never flag the real market; they ledger `shadow_failed` or an error field instead.
 
 ## Why each phase looks the way it does
@@ -28,9 +29,9 @@ Principles, which should hold for any future change:
    - Four fixed briefing queries target known LLM failures: misread rules, ignored base rates, stale knowledge, confirmation bias.
    - A median of three samples reduces noise; wide spread means unsure, so skip. A huge gap to `q` is likelier a misread than an edge, so skip too.
    - The evidence source is A/B tested because A-IQ is expensive and unproven; an extra sample on the other source measures evidence noise versus reasoning noise.
-4. **Execution: deterministic sizing.** λ-shrink trusts our estimate only partly until the ledger fit says otherwise. An edge at the midpoint is not real, so size is capped at real ask depth. Paper mode loosens λ/edge only to collect scored bets faster.
+4. **Execution: deterministic sizing.** λ-shrink trusts our estimate only partly until the ledger fit says otherwise. An edge at the midpoint is not real, so size is capped at real ask depth. Paper mode loosens λ/edge only to collect scored bets faster. With `CONCIERGE_APPROVAL=1` a passing trade is parked as an offer and executed only on a yes vote, after re-quote and re-size; the edge must still clear.
 5. **Resolution and post-mortem: classify why.** Every ledger market is resolved, including skipped and rejected ones, so filter costs are measurable. The post-mortem separates fixable process errors from variance. Open tags catch new failure modes, trusted only once they recur.
-6. **Overseer: bounded, evidence-gated learning.** LLM self-tuning overfits noise, so it acts only after enough new resolutions, moves few knobs in small steps within hard bounds, and auto-reverts on worse Brier.
+6. **Overseer: bounded, evidence-gated learning.** LLM self-tuning overfits noise, so it acts only after enough new resolutions, moves few knobs in small steps within hard bounds, and auto-reverts on worse Brier. With `CONCIERGE_APPROVE_DIRECTIVES=1` each knob change waits for a yes vote instead.
 
 Open questions the project is working toward:
 - Is research Brier better than the market's? What is the fitted λ?
@@ -49,6 +50,7 @@ Deferred work: `docs/TODO.md`.
 pip install -r requirements.txt            # orchestrator deps
 python3 main.py                            # run the orchestrator loop (stub runner by default)
 OPENCLAW_ORCHESTRATOR_MODE=live python3 main.py   # call real agents via the `openclaw agent` CLI
+OPENCLAW_ORCHESTRATOR_MODE=direct ANTHROPIC_API_KEY=... python3 main.py   # call the Anthropic API directly, no OpenClaw
 
 python3 -m pytest tests                    # full suite (bare `pytest` also collects the scraper submodule and breaks)
 python3 -m pytest tests/orchestrator/test_parse.py::test_name   # single test
@@ -65,7 +67,7 @@ OPENCLAW_AGENTS_ROOT=~/.openclaw/agents ./scripts/sync_openclaw_agent_workspace.
 
 ## Architecture
 
-Hub-and-Spoke LLM trading pipeline. Specs in `docs/01_architecture.md` to `docs/05_agent_schemas.md` (pipeline, sizing math, skill and agent I/O); keep them in sync with behavior.
+Hub-and-Spoke LLM trading pipeline. Specs in `docs/01_architecture.md` to `docs/06_concierge.md` (pipeline, sizing math, skill and agent I/O, concierge); keep them in sync with behavior.
 
 **Hub (`orchestrator/`)** is the only component that spawns agents or touches disk. `loop.run_forever` runs `run_pipeline_tick` every `PIPELINE_INTERVAL_SEC` and the Overseer every `OVERSEER_INTERVAL_SEC`. `orchestrator/phases/` has one module per phase or stage (`p1_ingest` … `p6_overseer`, with `p3_quick`/`p3_full`/`p3_evidence`/`p3_queue`). Tests must patch the defining submodule, not the package.
 
@@ -81,7 +83,7 @@ Hub-and-Spoke LLM trading pipeline. Specs in `docs/01_architecture.md` to `docs/
    - Evidence: `OPENCLAW_EVIDENCE_SOURCE` `aiq|web|ab` (default `ab`: stable per-market A/B). A-IQ failure falls back to `web_searcher`; the Hub sanitizes odds lines. 24h query caches. `stats.md` splits Brier by `evidence_source`.
    - Quick shadow: stable ~10% of quick `no_divergence` skips (`SHADOW_RATE`, max `SHADOW_MAX_PER_TICK` 2, only after the FULL budget) also run FULL: no report, state change or trade. Ledger `shadow_research`; `stats.md` 'Shadow: quick vs full vs market'. Errors ledger `shadow_failed`.
    - Independent sample: stable ~20% of non-shadow FULL markets (`INDEP_SAMPLE_RATE`) get one extra sample on the other source (aiq <-> web). Fields `indep_p`, `indep_p_low`, `indep_p_high`, `indep_source`, `indep_gap` (vs median p), `indep_error`, copied to ledger rows. Never in median, skips or sizing. `stats.md` 'Independent evidence sample'.
-4. **Execution** (Hub code, no agent): `compute_allocation` (`skills/calculate-trade-allocation`): λ-shrink toward `q`, ¼-Kelly. `PAPER_TRADE_MODE` uses `PAPER_LAMBDA`/`PAPER_MIN_EDGE` (0.5/0.03) via `effective_lambda()`/`effective_min_edge()`; live `LAMBDA`/`MIN_EDGE` (0.3/0.04). `TAX_MODE = "annual_offset"`: 25% of NET annual gains, Kelly is pre-tax. Real CLOB asks, order capped by ask depth within 2c (failed quote skips the tick) → `execute_polymarket_trade` → `03_Trades/` + ledger `traded`/`below_edge` (idempotent intent files).
+4. **Execution** (Hub code, no agent): `compute_allocation` (`skills/calculate-trade-allocation`): λ-shrink toward `q`, ¼-Kelly. `PAPER_TRADE_MODE` uses `PAPER_LAMBDA`/`PAPER_MIN_EDGE` (0.5/0.03) via `effective_lambda()`/`effective_min_edge()`; live `LAMBDA`/`MIN_EDGE` (0.3/0.04). `TAX_MODE = "annual_offset"`: 25% of NET annual gains, Kelly is pre-tax. Real CLOB asks, order capped by ask depth within 2c (failed quote skips the tick) → `execute_polymarket_trade` → `03_Trades/` + ledger `traded`/`below_edge` (idempotent intent files). Approval mode adds `offer_pending` → `offer_approved` / `offer_stale` / `offer_declined` / `offer_expired` (+ `user_vote`); `stats.md` 'Offers & votes'. Ledger rows carry `runner_backend`.
 5. **Resolution** (Gamma `closed` + `outcomePrices`, also for gate-rejected ledger markets) → `04_Post_Mortems/`; `failure_class` (`bad_info|bad_reasoning|resolution_misread|variance|correct`), ledger `post_mortem`. Open tags `new:<slug>` (+ `failure_tag_definition`) are counted in `00_System/failure_tags.json`, established at `FAILURE_TAG_MIN_COUNT` (3).
 6. **Overseer**: auto-reverts a directives version whose Brier is worse by > 0.02 (>= 30 scored markets each); otherwise runs with >= `OVERSEER_MIN_NEW_RESOLVED` (30) new resolutions and >= 24h since last run.
    - Inputs: `stats.md` (Signal coverage, Triage shadow, Independent evidence sample, Gate flags vs market calibration, Shadow: quick vs full vs market), Market integrity (report-only), failure-class counts (established `new:` tags included), `candidate_failure_tags` (not evidence), <= 15 post-mortems, directives, `BOUNDS`.
@@ -90,13 +92,17 @@ Hub-and-Spoke LLM trading pipeline. Specs in `docs/01_architecture.md` to `docs/
 
 **Spokes (`agents_blueprint/<role>/`)**: `AGENTS.md` (prompt), `TOOLS.md`, `agent.yaml` (agent id, tool allowlist, input/output schemas); `loader.py` builds Pydantic models from the YAML; `runner.spawn_agent` validates input. Agents never write files or do math; the Hub parses (`parse.py`, `agent_outputs.py`) and validates (`schema_validation.py`) their output.
 
-**Runner modes** (`OPENCLAW_ORCHESTRATOR_MODE`): `stub` (default), `stub_error`, `live`. Unknown values raise.
+**Runner modes** (`OPENCLAW_ORCHESTRATOR_MODE`): `stub` (default, deterministic), `stub_error` (injected failures), `live` (`openclaw agent` CLI, needs the gateway), `direct` (Anthropic Messages API, needs `ANTHROPIC_API_KEY`). Unknown values raise.
+- `direct`: stateless, one Messages call per spawn. System prompt = the role's AGENTS.md (prompt-cached); user message = the same live prompt as `live`. Only `web_searcher` gets web search/fetch tools. Model per role: `DIRECT_MODEL_<ROLE>` (defaults: triage `claude-haiku-5-5`, overseer `claude-opus-5-5`, others `claude-sonnet-5-5`). `DIRECT_MAX_TOKENS` (16000), `DIRECT_WEB_MAX_USES` (8, per web_searcher call). Retries reuse `OPENCLAW_AGENT_MAX_ATTEMPTS` and backoff.
+- Session nonce: `runner.set_run_nonce(tick_id)` each tick, mixed into OpenClaw session keys (`orch-<nonce>-<market>`). Before, a market re-researched on a later tick reused its transcript and saw its own earlier estimate, so samples were not independent. No transcript is reused across ticks now.
 
-**Vault I/O (`obsidian_utils.ObsidianManager`)** is the single gatekeeper for writes. Vault root: `OPENCLAW_VAULT_PATH`, else repo root; dirs `Vault/00_System` … `Vault/04_Post_Mortems` (`VAULT_PATHS`). Tests use a tmp dir.
+**Hub outbox and concierge.** `orchestrator/notify.py` writes `06_Concierge/outbox/`: offers built from the Phase 4 trade record, a daily digest, and directive proposals (approval on). Votes in `06_Concierge/inbox/` are read by `p4_execution.process_inbox` and `p6_overseer.process_directive_votes`, polled every `CONCIERGE_POLL_SEC` between ticks when a flag is on. The **concierge** (`agents_blueprint/concierge/`: OpenClaw + Discord, `hub_spawned: false`) posts outbox files, writes votes, and answers questions from `stats.md`, `02_Active_Research` and the ledger, quoting only numbers found there. Setup, file formats and flag behaviour: `docs/06_concierge.md`. Notification never raises and never breaks a tick.
+
+**Vault I/O (`obsidian_utils.ObsidianManager`)** is the single gatekeeper for writes. Vault root: `OPENCLAW_VAULT_PATH`, else repo root; dirs `Vault/00_System` … `Vault/04_Post_Mortems`, `Vault/06_Concierge` (`VAULT_PATHS`; `outbox/` Hub→user, `inbox/` user→Hub, `_done/`, `_pending/`, `_posted.json`). Tests use a tmp dir.
 
 **Error model: in-place state machine, no error directory.** On an agent, parse or validation error the Hub sets `status: inactive` and `error_log` on that market's own artifact and moves on. Inactive markets are skipped until `orchestrator.replay` clears the flags. Infra failures are retried, content failures mark inactive, soft gate failures back off (`next_check_at`), a failed trade call is not retried. Keep these separate.
 
-**Config.** Strategy constants are in `config/trading_constants.py`: `F_MAX`, `LIQ_FRAC`, `FILTERS`, `PAPER_TRADE_MODE`, A-IQ settings, `RESEARCH_*` thresholds, and the Overseer `BOUNDS` (the only Overseer-tunable knobs). These groups are fixed, not Overseer knobs: `MANIP`, `INTEGRITY`, `SHADOW_*`, `TRIAGE_SHADOW_*`, `INDEP_SAMPLE_RATE`, `SIGNAL_COVERAGE_ALERT_FRAC`, `FAILURE_TAG_MIN_COUNT`. Env tunables (`OPENCLAW_*`, `OVERSEER_MIN_NEW_RESOLVED`: timeouts, retries, budgets, workers) are in `orchestrator/config.py`.
+**Config.** Strategy constants are in `config/trading_constants.py`: `F_MAX`, `LIQ_FRAC`, `FILTERS`, `PAPER_TRADE_MODE`, A-IQ settings, `RESEARCH_*` thresholds, and the Overseer `BOUNDS` (the only Overseer-tunable knobs). These groups are fixed, not Overseer knobs: `MANIP`, `INTEGRITY`, `SHADOW_*`, `TRIAGE_SHADOW_*`, `INDEP_SAMPLE_RATE`, `SIGNAL_COVERAGE_ALERT_FRAC`, `FAILURE_TAG_MIN_COUNT`. Env tunables (`OPENCLAW_*`, `OVERSEER_MIN_NEW_RESOLVED`: timeouts, retries, budgets, workers) are in `orchestrator/config.py`. Concierge env: `CONCIERGE_APPROVAL` (0; 1 = offers need a yes vote), `CONCIERGE_APPROVE_DIRECTIVES` (0; 1 = Overseer changes need a yes vote), `CONCIERGE_POLL_SEC` (300), `CONCIERGE_OFFER_TTL_SEC` (14400), `CONCIERGE_DIRECTIVE_TTL_SEC` (172800), `DISCORD_WEBHOOK_URL` (optional push; failures logged, never raised). Direct env: see Runner modes.
 
 ## Testing notes
 

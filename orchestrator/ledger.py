@@ -20,6 +20,10 @@ log = logging.getLogger(__name__)
 LEDGER_FILENAME = "decisions.jsonl"
 RESOLUTION_STAGE = "resolution"
 POST_MORTEM_STAGE = "post_mortem"
+# Concierge bookkeeping rows that never make a market "decided": pending/approved offers are followed by
+# a trade row, and a vote is not a decision. Declined/expired/stale offers ARE final decisions (counterfactual
+# P&L needs their market resolved), so they stay in the unresolved set.
+NON_MARKET_STAGES = frozenset({"signal_coverage", "offer_pending", "offer_approved", "user_vote"})
 STAGES = frozenset(
     {
         "gate_reject",
@@ -32,6 +36,12 @@ STAGES = frozenset(
         "below_edge",
         "traded",
         "arb_opportunity",
+        "offer_pending",
+        "offer_approved",
+        "offer_declined",
+        "offer_expired",
+        "offer_stale",
+        "user_vote",
         POST_MORTEM_STAGE,
         RESOLUTION_STAGE,
     }
@@ -135,7 +145,7 @@ def unresolved_market_ids(vault: ObsidianManager) -> list[str]:
     resolved: set[str] = set()
     for row in iter_rows(vault):
         mid = row.get("market_id")
-        if not mid or row.get("stage") == "signal_coverage":  # per-tick health rows, not markets
+        if not mid or row.get("stage") in NON_MARKET_STAGES:  # per-tick health / offer bookkeeping rows
             continue
         if row.get("stage") == RESOLUTION_STAGE:
             resolved.add(mid)

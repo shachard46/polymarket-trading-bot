@@ -18,7 +18,27 @@ RUNNER_MODE_ENV = "OPENCLAW_ORCHESTRATOR_MODE"
 RUNNER_MODE_STUB = "stub"
 RUNNER_MODE_STUB_ERROR = "stub_error"
 RUNNER_MODE_LIVE = "live"
-_VALID_RUNNER_MODES = frozenset({RUNNER_MODE_STUB, RUNNER_MODE_STUB_ERROR, RUNNER_MODE_LIVE})
+# "direct" calls the Anthropic Messages API (no OpenClaw gateway needed).
+RUNNER_MODE_DIRECT = "direct"
+_VALID_RUNNER_MODES = frozenset(
+    {RUNNER_MODE_STUB, RUNNER_MODE_STUB_ERROR, RUNNER_MODE_LIVE, RUNNER_MODE_DIRECT}
+)
+
+# Direct backend: model per agent role (env override DIRECT_MODEL_<ROLE upper>).
+DIRECT_MODEL_ENV_PREFIX = "DIRECT_MODEL_"
+DEFAULT_DIRECT_MODELS = {
+    "triage": "claude-haiku-5-5",
+    "briefer": "claude-sonnet-5-5",
+    "web_searcher": "claude-sonnet-5-5",
+    "deep_researcher": "claude-sonnet-5-5",
+    "post_mortem_analyst": "claude-sonnet-5-5",
+    "overseer": "claude-opus-5-5",
+}
+FALLBACK_DIRECT_MODEL = "claude-sonnet-5-5"
+DIRECT_MAX_TOKENS_ENV = "DIRECT_MAX_TOKENS"
+DEFAULT_DIRECT_MAX_TOKENS = 16000
+DIRECT_WEB_MAX_USES_ENV = "DIRECT_WEB_MAX_USES"
+DEFAULT_DIRECT_WEB_MAX_USES = 8
 
 OPENCLAW_BIN_ENV = "OPENCLAW_BIN"
 OPENCLAW_AGENT_TIMEOUT_ENV = "OPENCLAW_AGENT_TIMEOUT"
@@ -159,6 +179,24 @@ def runner_mode() -> str:
     return mode
 
 
+def direct_model(role: str) -> str:
+    """Model id for a role in direct mode: ``DIRECT_MODEL_<ROLE>`` env, else the role default."""
+    override = os.environ.get(DIRECT_MODEL_ENV_PREFIX + role.upper(), "").strip()
+    if override:
+        return override
+    return DEFAULT_DIRECT_MODELS.get(role, FALLBACK_DIRECT_MODEL)
+
+
+def direct_max_tokens() -> int:
+    """Max output tokens per direct call (default 16000)."""
+    return max(1, _int_env(DIRECT_MAX_TOKENS_ENV, DEFAULT_DIRECT_MAX_TOKENS))
+
+
+def direct_web_max_uses() -> int:
+    """Cap on server-side web_search/web_fetch uses per web_searcher call (default 8)."""
+    return max(1, _int_env(DIRECT_WEB_MAX_USES_ENV, DEFAULT_DIRECT_WEB_MAX_USES))
+
+
 def openclaw_bin() -> str:
     """Return OpenClaw CLI binary name/path."""
     return os.environ.get(OPENCLAW_BIN_ENV, "openclaw").strip() or "openclaw"
@@ -212,6 +250,10 @@ __all__ = [
     "RUNNER_MODE_STUB",
     "RUNNER_MODE_STUB_ERROR",
     "RUNNER_MODE_LIVE",
+    "RUNNER_MODE_DIRECT",
+    "direct_model",
+    "direct_max_tokens",
+    "direct_web_max_uses",
     "runner_mode",
     "OPENCLAW_BIN_ENV",
     "OPENCLAW_AGENT_TIMEOUT_ENV",

@@ -128,8 +128,9 @@ def test_live_session_key_scopes_samples():
     s2 = runner._live_session_key(
         "agent-x", "deep_researcher", {"market_id": "0xabc", "session_tag": "s2"}
     )
-    assert base == "agent:agent-x:orch-0xabc"
-    assert s2 == "agent:agent-x:orch-0xabc-s2"
+    n = runner.get_run_nonce()
+    assert base == f"agent:agent-x:orch-{n}-0xabc"
+    assert s2 == f"agent:agent-x:orch-{n}-0xabc-s2"
 
 
 def test_live_runner_invokes_openclaw_cli(monkeypatch):
@@ -160,7 +161,7 @@ def test_live_runner_invokes_openclaw_cli(monkeypatch):
     parsed = parse_agent_json_or_yaml(out)
     assert parsed["reason"] == "live fake"
     assert calls["agent_id"] == "polymarket-triage"
-    assert calls["session_key"] == "agent:polymarket-triage:orch-0xabc"
+    assert calls["session_key"] == f"agent:polymarket-triage:orch-{runner.get_run_nonce()}-0xabc"
     assert "OpenClaw agent id: polymarket-triage" in calls["message"]
     assert "Input JSON" in calls["message"]
     assert calls["timeout"] is None
@@ -188,4 +189,6 @@ def test_live_runner_sanitizes_session_key(monkeypatch):
 
     runner.spawn_agent("triage", {**_TRIAGE_IN, "market_id": "market with spaces"})
 
-    assert calls["session_key"] == "agent:polymarket-triage:orch-market-with-spaces"
+    assert calls["session_key"] == (
+        f"agent:polymarket-triage:orch-{runner.get_run_nonce()}-market-with-spaces"
+    )

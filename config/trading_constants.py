@@ -153,6 +153,7 @@ VAULT_PATHS = {
     "active": "Vault/02_Active_Research/",
     "trades": "Vault/03_Trades/",
     "post_mortem": "Vault/04_Post_Mortems/",
+    "concierge": "Vault/06_Concierge/",
 }
 
 # In-place pipeline state keys (filter frontmatter / trade JSON / research frontmatter)

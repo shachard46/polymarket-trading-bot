@@ -21,7 +21,8 @@ TAX_MODE = getattr(trading_constants, "TAX_MODE", "annual_offset")
 _EPS = 1e-6
 MIN_FIT_N = 50
 _SKIP_STAGES = ("gate_reject", "triage_reject", "research_skip")
-_COUNTERFACTUAL_STAGES = ("below_edge", "research_skip")
+OFFER_FINAL_STAGES = ("offer_declined", "offer_expired", "offer_stale")
+_COUNTERFACTUAL_STAGES = ("below_edge", "research_skip") + OFFER_FINAL_STAGES
 SHADOW_STAGE = "shadow_research"  # measure-only rows; never part of the main Brier / P&L
 TRIAGE_SHADOW_STAGE = "triage_shadow"
 COVERAGE_STAGE = "signal_coverage"
@@ -29,6 +30,7 @@ COVERAGE_STAGE = "signal_coverage"
 _NON_DECISION = (
     ledger.RESOLUTION_STAGE, ledger.POST_MORTEM_STAGE, SHADOW_STAGE,
     TRIAGE_SHADOW_STAGE, "shadow_failed", COVERAGE_STAGE,
+    "offer_pending", "offer_approved", "user_vote",
 )
 _COVERAGE_SIGNALS = (
     "volume_24h", "day_price_change", "bid_ask", "holders", "price_history", "trades", "book",
@@ -127,6 +129,62 @@ def brier_by_evidence_source(rows: list[dict[str, Any]]) -> dict[str, tuple[int,
         bp = brier([p for p, _, _ in t], ys)
         out[src] = (len(t), bp, bp - brier([q for _, q, _ in t], ys))
     return out
+
+
+def brier_by_runner_backend(rows: list[dict[str, Any]]) -> dict[str, tuple[int, float, float]]:
+    """``{runner_backend: (n, brier_p, brier_p - brier_q)}`` over resolved scored markets (absent field: ``unknown``)."""
+    res = resolutions(rows)
+    groups: dict[str, list[tuple[float, float, int]]] = defaultdict(list)
+    for m, r in _latest_scored(rows).items():
+        groups[str(r.get("runner_backend") or "unknown")].append((_num(r["p"]), _num(r["q"]), res[m]))
+    out = {}
+    for key, t in sorted(groups.items()):
+        ys = [y for _, _, y in t]
+        bp = brier([p for p, _, _ in t], ys)
+        out[key] = (len(t), bp, bp - brier([q for _, q, _ in t], ys))
+    return out
+
+
+_OFFER_GROUPS = {
+    "offer_approved": "approved",
+    "offer_declined": "declined",
+    "offer_expired": "expired",
+    "offer_stale": "stale",
+}
+
+
+def offers_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Offers & votes: counts per outcome plus Brier / counterfactual P&L per resolved group.
+
+    ``pending`` = offers with an ``offer_pending`` row and no later outcome row for the same offer_id
+    (rows without offer_id fall back to market_id). Per-group Brier and P&L use that group's offer rows
+    (the stated side/price/size_usd of the offer), once the market resolved.
+    """
+    res = resolutions(rows)
+    pending: dict[str, None] = {}
+    counts = {g: 0 for g in _OFFER_GROUPS.values()}
+    group_rows: dict[str, list[dict[str, Any]]] = {g: [] for g in _OFFER_GROUPS.values()}
+    for r in rows:
+        stage = r.get("stage")
+        key = str(r.get("offer_id") or r.get("market_id"))
+        if stage == "offer_pending":
+            pending[key] = None
+        elif stage in _OFFER_GROUPS:
+            pending.pop(key, None)
+            counts[_OFFER_GROUPS[stage]] += 1
+            group_rows[_OFFER_GROUPS[stage]].append(r)
+    groups: dict[str, dict[str, Any]] = {}
+    for g, grs in group_rows.items():
+        scored = [r for r in grs if r.get("market_id") in res and _num(r.get("p")) is not None and _num(r.get("q")) is not None]
+        ys = [res[r["market_id"]] for r in scored]
+        pnls = [x for x in (_pnl(r, res[r["market_id"]], 1.0) for r in grs if r.get("market_id") in res) if x is not None]
+        groups[g] = {
+            "n_resolved": len([r for r in grs if r.get("market_id") in res]),
+            "brier_p": _brier_or_none([_num(r["p"]) for r in scored], ys),
+            "brier_q": _brier_or_none([_num(r["q"]) for r in scored], ys),
+            "pnl": sum(pnls),
+        }
+    return {"pending": len(pending), "counts": counts, "groups": groups}
 
 
 def brier_shadow(
@@ -490,6 +548,8 @@ def compute_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
     out["market_integrity"] = market_integrity_stats(rows)
     out["calibration"] = calibration_table(triples)
     out["brier_by_evidence_source"] = brier_by_evidence_source(rows)
+    out["brier_by_runner_backend"] = brier_by_runner_backend(rows)
+    out["offers"] = offers_stats(rows)
     traded = _pnl_groups(rows, res, ("traded",))
     summ = pnl_summary(rows, ("traded",))
     out["pnl_total"] = summ["pre_tax"]
@@ -546,6 +606,11 @@ def render_stats(s: dict[str, Any]) -> str:
         f"| {k} | {n} | {_fmt(bp)} | {_fmt(d)} |"
         for k, (n, bp, d) in s.get("brier_by_evidence_source", {}).items()
     ]
+    L += ["", "### Brier by runner backend", "", "| runner_backend | n | Brier(p) | Brier(p) - Brier(q) |", "|---|---|---|---|"]
+    L += [
+        f"| {k} | {n} | {_fmt(bp)} | {_fmt(d)} |"
+        for k, (n, bp, d) in s.get("brier_by_runner_backend", {}).items()
+    ]
     n_sh, b_quick, b_full, b_mkt = s.get("brier_shadow", (0, None, None, None))
     L += [
         "", "### Shadow: quick vs full vs market", "",
@@ -584,6 +649,13 @@ def render_stats(s: dict[str, Any]) -> str:
         L.append(f"| score {key} | {n} | {_fmt(bq)} |")
     for key, (n, bq) in mi["rejects"].items():
         L.append(f"| gate_reject {key} | {n} | {_fmt(bq)} |")
+    off = s.get("offers") or {"pending": 0, "counts": {}, "groups": {}}
+    L += ["", "## Offers & votes", "", f"Pending: {off['pending']}. Approved {off['counts'].get('approved', 0)}, "
+          f"declined {off['counts'].get('declined', 0)}, expired {off['counts'].get('expired', 0)}, "
+          f"stale {off['counts'].get('stale', 0)}.", "",
+          "| group | n resolved | Brier(p) | Brier(q) | hypothetical P&L USD |", "|---|---|---|---|---|"]
+    for g, v in off["groups"].items():
+        L.append(f"| {g} | {v['n_resolved']} | {_fmt(v['brier_p'])} | {_fmt(v['brier_q'])} | {v['pnl']:.2f} |")
     L += ["", "## Calibration (p in 10% buckets)", "", "| bucket | n | mean p | hit rate |", "|---|---|---|---|"]
     L += [f"| {c['bucket']} | {c['n']} | {_fmt(c['mean_p'], 3)} | {_fmt(c['hit_rate'], 3)} |" for c in s["calibration"]]
     L += [
@@ -630,4 +702,4 @@ def write_stats(vault: ObsidianManager) -> None:
     path.write_text(render_stats(compute_stats(rows)), encoding="utf-8")
 
 
-__all__ = ["bet_pnl", "brier_by_evidence_source", "brier_by_directive_version", "brier_shadow", "triage_shadow_stats", "signal_coverage_stats", "independent_sample_stats", "gate_flag_stats", "market_integrity_stats", "failure_class_counts", "compute_stats", "fit_lambda", "pnl_summary", "realised_pnl", "render_stats", "tax_by_year", "write_stats"]
+__all__ = ["brier_by_runner_backend", "offers_stats", "bet_pnl", "brier_by_evidence_source", "brier_by_directive_version", "brier_shadow", "triage_shadow_stats", "signal_coverage_stats", "independent_sample_stats", "gate_flag_stats", "market_integrity_stats", "failure_class_counts", "compute_stats", "fit_lambda", "pnl_summary", "realised_pnl", "render_stats", "tax_by_year", "write_stats"]

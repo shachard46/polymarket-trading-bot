@@ -269,5 +269,7 @@ def test_live_session_key_overseer_is_isolated():
         "overseer",
         {"post_mortems": [], "current_directives": "x"},
     )
-    assert key == "agent:polymarket-overseer:orch-overseer-directives"
+    from orchestrator.runner import get_run_nonce
+
+    assert key == f"agent:polymarket-overseer:orch-overseer-directives-{get_run_nonce()}"
     assert "global" not in key

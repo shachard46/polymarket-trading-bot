@@ -10,6 +10,7 @@ from typing import Any, Literal
 from obsidian_utils import FilterLogPayload, ObsidianManager
 from config.trading_constants import BELOW_EDGE_KEY
 from orchestrator import ledger
+from orchestrator.config import RUNNER_MODE_DIRECT, direct_model, runner_mode
 from orchestrator.state import vault_write_or_flag
 
 # One logger name for the whole package (the module used to be ``orchestrator.phases``).
@@ -77,9 +78,21 @@ def _market_spread(md: dict[str, Any]) -> float | None:
     return None
 
 
-def _ledger_market_fields(market_data: dict[str, Any] | None) -> dict[str, Any]:
+def _ledger_market_fields(
+    market_data: dict[str, Any] | None, role: str | None = None
+) -> dict[str, Any]:
+    """Market-derived ledger fields plus the runner backend.
+
+    ``model`` is added only in direct mode and only when the caller names the agent ``role``
+    (the model is per role); otherwise it is omitted.
+    """
     md = market_data or {}
+    mode = runner_mode()
+    backend: dict[str, Any] = {"runner_backend": mode}
+    if mode == RUNNER_MODE_DIRECT and role:
+        backend["model"] = direct_model(role)
     return {
+        **backend,
         "category": md.get("category"),
         "end_date": md.get("end_date"),
         "event_id": md.get("event_id"),
