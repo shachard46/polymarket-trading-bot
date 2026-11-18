@@ -46,7 +46,7 @@ def test_outcome_mapping(res, expected):
 def test_phase5_resolves_ledger_with_cap(vault, monkeypatch):
     for m in ("a", "b", "c"):
         ledger.record(vault, m, "gate_reject", q=0.3)
-    monkeypatch.setenv("OPENCLAW_LEDGER_RESOLVE_LIMIT", "2")
+    monkeypatch.setenv("PMBOT_LEDGER_RESOLVE_LIMIT", "2")
     monkeypatch.setattr(
         scraper, "fetch_resolution", lambda mid: None if mid == "a" else {"outcome": "Yes"}
     )

@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-VAULT_PATH_ENV = "OPENCLAW_VAULT_PATH"
+VAULT_PATH_ENV = "PMBOT_VAULT_PATH"
 
 _DEFAULT_VAULT_BASE = Path(__file__).resolve().parent.parent
 

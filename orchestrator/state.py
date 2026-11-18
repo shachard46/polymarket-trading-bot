@@ -21,7 +21,7 @@ from config.trading_constants import (
     STATUS_INACTIVE,
     STATUS_KEY,
 )
-from orchestrator.openclaw_cli import OpenClawCLIError
+from orchestrator.llm.base import LLMError
 from orchestrator.research import split_yaml_frontmatter_markdown
 
 try:  # requests is optional; skills that use it surface its errors here
@@ -41,7 +41,7 @@ class InfraUnavailable(RuntimeError):
 
 
 _INFRA_ERRORS: tuple[type[BaseException], ...] = (
-    OpenClawCLIError,
+    LLMError,
     OSError,
     subprocess.TimeoutExpired,
     *((_RequestException,) if _RequestException is not None else ()),

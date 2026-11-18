@@ -1,8 +1,7 @@
 """Live Phase 3 smoke: one DB market → Briefer → A-IQ → Deep Researcher.
 
 Opt-in only (skipped in normal ``pytest`` runs). Use on a host with:
-- OpenClaw Gateway
-- live briefer/deep_researcher agents
+- provider key for the briefer and deep_researcher roles
 - working A-IQ
 - network access to Polymarket's public Gamma API (no auth)
 
@@ -11,17 +10,17 @@ This runs Phase 3 in isolation (no phases 1–2, 4–6). It fetches one market t
 ``phase3_research_market`` (no full ``01_Filters/`` queue scan).
 
 ```bash
-export OPENCLAW_PHASE3_LIVE=1
-export OPENCLAW_ORCHESTRATOR_MODE=live
-export OPENCLAW_VAULT_PATH=/tmp/phase3-live-vault
+export PMBOT_PHASE3_LIVE=1
+export PMBOT_MODE=live
+export PMBOT_VAULT_PATH=/tmp/phase3-live-vault
 # optional: pin a market_id instead of ingesting the freshest open row
-# export OPENCLAW_PHASE3_MARKET_ID=0x...
+# export PMBOT_PHASE3_MARKET_ID=0x...
 
 python tests/orchestrator/test_research_pipeline_integration.py
 
 # pytest with live logs:
 pytest tests/orchestrator/test_research_pipeline_integration.py -v -s --log-cli-level=INFO
-# optional: export OPENCLAW_PHASE3_LOG_LEVEL=DEBUG
+# optional: export PMBOT_PHASE3_LOG_LEVEL=DEBUG
 ```
 """
 
@@ -36,14 +35,14 @@ import pytest
 from config.vault import VAULT_PATH_ENV, resolve_vault_base
 from orchestrator import phases, scraper
 from orchestrator.config import RUNNER_MODE_ENV, RUNNER_MODE_LIVE
-from orchestrator.openclaw_cli import require_gateway
+from orchestrator.direct_runner import require_api_key
 from orchestrator.research import parse_deep_researcher
 from orchestrator.runner import spawn_agent
 from orchestrator.scraper import MarketRow
 
-_PHASE3_LIVE_ENV = "OPENCLAW_PHASE3_LIVE"
-_PHASE3_MARKET_ENV = "OPENCLAW_PHASE3_MARKET_ID"
-_LOG_LEVEL_ENV = "OPENCLAW_PHASE3_LOG_LEVEL"
+_PHASE3_LIVE_ENV = "PMBOT_PHASE3_LIVE"
+_PHASE3_MARKET_ENV = "PMBOT_PHASE3_MARKET_ID"
+_LOG_LEVEL_ENV = "PMBOT_PHASE3_LOG_LEVEL"
 
 log = logging.getLogger(__name__)
 
@@ -84,7 +83,7 @@ def _resolve_market_row() -> MarketRow:
         _log_status("market resolved (pinned)", market_id=row.market_id, title=row.market_title)
         return row
 
-    _log_status("fetching one open market", ingest_limit=os.environ.get("OPENCLAW_INGEST_LIMIT", "1"))
+    _log_status("fetching one open market", ingest_limit=os.environ.get("PMBOT_INGEST_LIMIT", "1"))
     rows = scraper.fetch_target_markets()
     if not rows:
         raise RuntimeError(
@@ -166,11 +165,11 @@ def run_phase3_isolated() -> int:
         return 2
 
     try:
-        _log_status("checking OpenClaw gateway")
-        require_gateway()
-        _log_status("gateway ok")
+        _log_status("checking LLM provider keys")
+        require_api_key()
+        _log_status("provider keys ok")
     except Exception as exc:
-        log.error("OpenClaw gateway not ready: %s", exc)
+        log.error("LLM provider not ready: %s", exc)
         return 2
 
     try:
@@ -217,11 +216,11 @@ def phase3_live_env(monkeypatch):
     _log_status("pytest live env: checking prerequisites")
     monkeypatch.setenv(RUNNER_MODE_ENV, RUNNER_MODE_LIVE)
     try:
-        require_gateway()
-        _log_status("pytest live env: gateway ok")
+        require_api_key()
+        _log_status("pytest live env: provider keys ok")
     except Exception as exc:
-        _log_status("pytest live env: skipped", reason=f"gateway: {exc}")
-        pytest.skip(f"OpenClaw gateway not ready: {exc}")
+        _log_status("pytest live env: skipped", reason=f"provider: {exc}")
+        pytest.skip(f"LLM provider not ready: {exc}")
 
     try:
         _wire_scraper_env(monkeypatch)

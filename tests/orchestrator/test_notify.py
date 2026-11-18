@@ -59,16 +59,14 @@ def test_no_webhook_means_no_post(vault, monkeypatch):
     assert notify.post_discord("hi") is False
 
 
-def test_tick_runs_digest_and_sets_nonce(vault, monkeypatch):
-    seen = []
+def test_tick_runs_digest(vault, monkeypatch):
     monkeypatch.setattr(loop, "phase1_data_ingestion", lambda v: [])
     monkeypatch.setattr(loop, "phase2_quantitative_routing", lambda v, t: None)
     monkeypatch.setattr(loop, "phase3_qualitative_pipeline", lambda v: [])
     monkeypatch.setattr(loop, "phase4_execution", lambda v, r: None)
     monkeypatch.setattr(loop, "phase5_resolution_and_post_mortem", lambda v: None)
-    monkeypatch.setattr(loop._runner, "set_run_nonce", seen.append, raising=False)
     loop.run_pipeline_tick(vault)
-    assert len(seen) == 1 and list(notify.outbox_dir(vault).glob("digest-*.json"))
+    assert list(notify.outbox_dir(vault).glob("digest-*.json"))
 
 
 def test_sleep_polls_inbox_only_with_approval(vault, monkeypatch):

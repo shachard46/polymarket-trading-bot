@@ -1,4 +1,4 @@
-"""Per-role OpenClaw-style agent workspaces (see ``agents/<role>/``)."""
+"""Per-role agent definitions: ``agents_blueprint/<role>/`` (system prompt in AGENTS.md, schemas in agent.yaml)."""
 
 from __future__ import annotations
 

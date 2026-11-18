@@ -1,5 +1,4 @@
 id: web_searcher
-openclaw_agent_id: polymarket-web-searcher
 description: Price-blind web evidence gatherer — runs the Briefer's queries and reports sourced, dated facts (never market prices or odds).
 model: null
 tools:

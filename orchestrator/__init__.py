@@ -1,4 +1,4 @@
-"""OpenClaw orchestrator package — Hub-and-Spoke Polymarket trading pipeline.
+"""Orchestrator package — Hub + LLM agents Polymarket trading pipeline.
 
 The orchestrator is the only component that touches the filesystem (via
 :class:`obsidian_utils.ObsidianManager`) and the only component that spawns
@@ -9,7 +9,7 @@ agents. Modules are split by responsibility:
 - :mod:`orchestrator.research`    — Deep Researcher frontmatter parsing
 - :mod:`orchestrator.state` — in-place inactive flagging + replay helpers
 - :mod:`orchestrator.scraper`     — polymarket-scraper integration stubs
-- :mod:`orchestrator.runner`      — OpenClaw agent execution adapter
+- :mod:`orchestrator.runner`      — agent execution adapter (stub or live LLM calls)
 - :mod:`orchestrator.phases`      — six pipeline phases (package)
 - :mod:`orchestrator.loop`        — top-level scheduling loop
 """

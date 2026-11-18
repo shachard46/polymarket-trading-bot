@@ -1,10 +1,10 @@
-# Polymarket Hub-and-Spoke Trading Architecture
+# Polymarket Hub + LLM Agents Trading Architecture
 
 ## 1. Core Infrastructure
 
-- **Framework:** Python backend utilizing the local OpenClaw Gateway via the `openclaw` CLI.
-- **Design Pattern:** Hub-and-Spoke. The central Orchestrator (`main.py`) controls execution flow. Agents are strictly ephemeral functions.
-- **Lifecycle:** Orchestrator creates JSON input -> invokes `openclaw agent --agent <id>` -> Agent executes Tools -> Agent returns JSON -> Orchestrator parses output.
+- **Framework:** Python backend. Live mode calls the LLM providers directly (`orchestrator/llm/`: Anthropic, OpenRouter, Gemini), with the provider and model chosen per role in `config/models.yaml`. The Discord bot (`orchestrator/discord_bot.py`) is the only front-end.
+- **Design Pattern:** Hub + LLM agents. The central Orchestrator (`main.py`) controls execution flow. Agents are stateless: one model call per spawn.
+- **Lifecycle:** Orchestrator builds the prompt (system prompt from the role's `AGENTS.md`, user message from its `agent.yaml` schemas) -> calls the role's provider -> the model returns JSON or markdown -> Orchestrator parses and validates the output.
 - **Tooling:** Agents do not perform math, execute API calls natively, or manage state. Math and trading are deterministic Hub code over the skills in `04_skills_contracts.md` (Phase 4 has no agent).
 - **Price-blind models:** no agent payload contains the market price `q`. Models estimate from market text and evidence; the Hub compares the estimate to `q` (divergence, misread and sample-spread guards) and applies the lambda-shrink toward `q` when sizing. See `02_orchestrator_pipeline.md` section 3.
 - **Quantitative inputs:** Phase 2 is deterministic Hub code (`orchestrator/gate.py`): eligibility, a ranking score, per-market backoff, and an arbitrage check, followed by the price-blind `triage` agent. Market data comes straight from Polymarket's public APIs (`orchestrator/polymarket_api.py`: Gamma for candidates/prices/resolution, CLOB for executable asks); there is no scraper DB or momentum signal any more. Agents never query Polymarket directly.

@@ -1,5 +1,4 @@
 id: overseer
-openclaw_agent_id: polymarket-overseer
 description: Macro-learner; makes small, bounded edits to active_directives.md from stats, failure classes and post-mortems.
 model: null
 tools:

@@ -65,7 +65,7 @@ def _fetch_and_persist_bundle(
     """Fetch evidence for ``queries`` (A-IQ or web searcher) and persist the bundle.
 
     The source is the market's recorded one (follow-up queries stay on it), else chosen by
-    ``OPENCLAW_EVIDENCE_SOURCE`` (``ab``: stable per-market arm). In ``ab`` mode an A-IQ arm
+    ``PMBOT_EVIDENCE_SOURCE`` (``ab``: stable per-market arm). In ``ab`` mode an A-IQ arm
     whose rows all failed falls back to web. Returns ``{evidence_source, evidence_fallback}``.
     """
     cleaned = [str(q).strip() for q in queries if str(q).strip()]

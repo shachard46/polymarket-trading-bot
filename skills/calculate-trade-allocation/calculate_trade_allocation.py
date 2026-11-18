@@ -1,4 +1,4 @@
-"""calculate_trade_allocation — OpenClaw skill execution module.
+"""calculate_trade_allocation — skill execution module.
 
 Contract: docs/04_skills_contracts.md §2
 Math:     docs/03_strategy_math.md

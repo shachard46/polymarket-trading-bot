@@ -65,8 +65,8 @@ def test_triage_payload_has_no_price(vault):
 
 
 def test_budgets_respected_and_ranked(vault, monkeypatch):
-    monkeypatch.setenv("OPENCLAW_GATE_BUDGET", "4")
-    monkeypatch.setenv("OPENCLAW_TRIAGE_BUDGET", "2")
+    monkeypatch.setenv("PMBOT_GATE_BUDGET", "4")
+    monkeypatch.setenv("PMBOT_TRIAGE_BUDGET", "2")
     # lower volume => lower attention => higher score
     markets = [mk(f"m{i}", vol=1_000.0 * (i + 1) ** 2) for i in range(6)]
     t = Triage()
@@ -248,7 +248,7 @@ def _run_p3_p4(vault, monkeypatch, rows):
     from orchestrator import scraper
     from orchestrator.phases import p3_evidence
 
-    monkeypatch.setenv("OPENCLAW_ORCHESTRATOR_MODE", "stub")
+    monkeypatch.setenv("PMBOT_MODE", "stub")
     monkeypatch.setattr(scraper, "fetch_market_row", lambda mid: rows.get(mid))
     monkeypatch.setattr(scraper, "fetch_resolution", lambda mid: None)
     monkeypatch.setattr(

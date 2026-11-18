@@ -87,7 +87,7 @@ def test_high_manipulation_reason_and_cap_per_tick(world, vault):
 
 
 def test_never_displaces_real_quick_work(world, vault, monkeypatch):
-    monkeypatch.setenv("OPENCLAW_QUICK_RESEARCH_BUDGET", "1")
+    monkeypatch.setenv("PMBOT_QUICK_RESEARCH_BUDGET", "1")
     mid = _ids(True, 1)[0]
     world.market(mid, 0.5)
     _retired(vault, mid)

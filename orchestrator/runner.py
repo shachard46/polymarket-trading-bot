@@ -1,32 +1,29 @@
-"""OpenClaw agent execution adapter.
+"""Agent execution adapter.
 
-Phase code never imports the OpenClaw SDK directly. It calls
+Phase code never calls an LLM provider directly. It calls
 :func:`spawn_agent`, which returns the raw text response (or a dict if the
-SDK already deserialised it). Parsing is the caller's responsibility — see
+runner already deserialised it). Parsing is the caller's responsibility — see
 :mod:`orchestrator.parse`.
 
-The runner has three modes, switchable via the ``OPENCLAW_ORCHESTRATOR_MODE``
+The runner has three modes, switchable via the ``PMBOT_MODE``
 environment variable:
 
 - ``stub`` (default) — returns a deterministic, schema-valid canned response
-  per role so CI can exercise the *success* path without a live gateway.
+  per role so CI can exercise the *success* path without any model call.
 - ``stub_error``     — returns an explicit ``{"error": ...}`` payload so CI
   can exercise the inactive-flag failure path.
-- ``live``           — calls the local OpenClaw Gateway through the
-  ``openclaw agent`` CLI, using each agent's ``openclaw_agent_id`` from
-  ``agent.yaml``.
+- ``live``           — calls the role's configured LLM directly through
+  :mod:`orchestrator.direct_runner` (provider routing in ``config/models.yaml``).
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import uuid
 from typing import Any, Callable, Protocol
 
 import agents_blueprint
 from orchestrator.config import (
-    RUNNER_MODE_DIRECT,
     RUNNER_MODE_LIVE,
     RUNNER_MODE_STUB_ERROR,
     runner_mode,
@@ -40,7 +37,6 @@ from orchestrator.parse import (
     parse_agent_json_or_yaml,
     preprocess_agent_text,
 )
-from orchestrator.openclaw_cli import extract_agent_text, run_agent
 from orchestrator.research import parse_deep_researcher
 from orchestrator.runner_stubs import (
     STUB_ESTIMATED_P,
@@ -48,7 +44,6 @@ from orchestrator.runner_stubs import (
     _deep_researcher_stub,
     _stub_deep_researcher_markdown,
 )
-from orchestrator.util import safe_key
 from orchestrator.live_prompt import build_live_response_hint, today_line
 from orchestrator.schema_validation import AgentSchemaError, validate_payload
 
@@ -73,9 +68,7 @@ def spawn_agent(role: str, payload: dict[str, Any]) -> Any:
 
     mode = runner_mode()
     if mode == RUNNER_MODE_LIVE:
-        result = _spawn_live(role, spec, payload)
-    elif mode == RUNNER_MODE_DIRECT:
-        from orchestrator.direct_runner import run_direct  # lazy: needs anthropic
+        from orchestrator.direct_runner import run_direct  # lazy: provider SDKs load on demand
 
         result = run_direct(role, spec, payload)
     elif mode == RUNNER_MODE_STUB_ERROR:
@@ -177,13 +170,7 @@ def _validate_response(
 
 
 def _spawn_stub(role: str, spec: dict[str, Any], payload: dict[str, Any]) -> Any:
-    oc = spec.get("openclaw") or {}
-    log.info(
-        "[STUB] spawn role=%s workspace=%s openclaw_agent_id=%r",
-        role,
-        spec.get("workspace_path"),
-        oc.get("openclaw_agent_id"),
-    )
+    log.info("[STUB] spawn role=%s workspace=%s", role, spec.get("workspace_path"))
     log.debug("[STUB] payload: %s", json.dumps(payload, indent=2, default=str))
     builder = STUB_RESPONSES.get(role)
     if builder is None:
@@ -223,60 +210,12 @@ def _spawn_stub_error(role: str, spec: dict[str, Any], payload: dict[str, Any]) 
     return {"error": "stub_error mode"}
 
 
-def _spawn_live(role: str, spec: dict[str, Any], payload: dict[str, Any]) -> Any:
-    oc = spec.get("openclaw") or {}
-    agent_id = oc.get("openclaw_agent_id")
-    if not agent_id:
-        raise RuntimeError(f"agent '{role}' has no openclaw_agent_id in agent.yaml")
-
-    log.info("[LIVE] spawn role=%s openclaw_agent_id=%s", role, agent_id)
-    prompt = _build_live_prompt(role, spec, payload, agent_id=agent_id)
-    result = run_agent(
-        agent_id,
-        prompt,
-        session_key=_live_session_key(agent_id, role, payload),
-    )
-    return extract_agent_text(result)
-
-
-_run_nonce: str = uuid.uuid4().hex[:12]
-
-
-def set_run_nonce(nonce: str) -> None:
-    """Set the per-run (tick) nonce mixed into OpenClaw session keys."""
-    global _run_nonce
-    _run_nonce = safe_key(nonce) or "run"
-
-
-def get_run_nonce() -> str:
-    return _run_nonce
-
-
-def _live_session_key(agent_id: str, role: str, payload: dict[str, Any]) -> str:
-    """Scope OpenClaw transcript state to one market per agent per run (and per sample ``session_tag``).
-
-    The run nonce (see :func:`set_run_nonce`) keeps a market re-researched on a later tick from
-    reusing an earlier transcript, which would leak its prior estimate into "independent" samples.
-    """
-    if role == "overseer":
-        return f"agent:{agent_id}:orch-overseer-directives-{_run_nonce}"
-    raw_market_id = str(payload.get("market_id") or "global")
-    key = f"agent:{agent_id}:orch-{_run_nonce}-{safe_key(raw_market_id)}"
-    tag = payload.get("session_tag")
-    if tag:
-        # Independent Deep Researcher samples must not share a transcript.
-        key += "-" + safe_key(tag)
-    return key
-
-
 def _build_live_prompt(
     role: str,
     spec: dict[str, Any],
     payload: dict[str, Any],
-    *,
-    agent_id: str | None = None,
 ) -> str:
-    """Serialize the orchestrator payload for the target OpenClaw workspace."""
+    """Serialize the orchestrator payload into the user message for the agent."""
     if spec.get("output_is_markdown"):
         response_hint = (
             "Return only the Markdown document required by your output contract."
@@ -298,8 +237,6 @@ def _build_live_prompt(
         if extra:
             response_hint = f"{response_hint}\n\n{str(extra).strip()}"
     header = f"Run the {role} agent for this orchestrator payload."
-    if agent_id:
-        header = f"{header}\nOpenClaw agent id: {agent_id}"
     return (
         f"{today_line()}\n\n"
         f"{header}\n\n"
@@ -313,8 +250,5 @@ __all__ = [
     "AgentRunner",
     "STUB_RESPONSES",
     "_build_live_prompt",
-    "_live_session_key",
-    "get_run_nonce",
-    "set_run_nonce",
     "spawn_agent",
 ]

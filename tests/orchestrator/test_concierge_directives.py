@@ -130,7 +130,6 @@ def test_concierge_blueprint_loads():
     from agents_blueprint import AGENTS
 
     spec = AGENTS["concierge"]
-    assert spec["openclaw"]["openclaw_agent_id"] == "polymarket-concierge"
     assert spec["hub_spawned"] is False
-    assert "never vote on your own" in spec["system_prompt"].lower()
+    assert "## Q&A mode" in spec["system_prompt"]
     assert all(AGENTS[r]["hub_spawned"] for r in AGENTS if r != "concierge")

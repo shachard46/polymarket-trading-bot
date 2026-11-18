@@ -1,8 +1,7 @@
 """Discover per-role agent workspaces under ``agents/<role>/`` and build ``AGENTS``.
 
-Layout follows OpenClaw workspace conventions: each subdirectory is a mini-workspace
-with ``AGENTS.md`` (operating instructions / system prompt) and ``agent.yaml``
-(metadata, schemas, tool allowlist). See https://docs.openclaw.ai/concepts/agent-workspace
+Each subdirectory is a mini-workspace with ``AGENTS.md`` (system prompt) and
+``agent.yaml`` (metadata, schemas, tool allowlist).
 """
 
 from __future__ import annotations
@@ -79,14 +78,11 @@ def load_agents_from_dir(agents_root: Path | None = None) -> dict[str, dict[str,
                 "output_is_markdown": is_markdown_output(out_schema),
                 "output_is_state_machine": is_state_machine_output(out_schema),
                 "workspace_path": str(child.resolve()),
-                # False for agents that run only on OpenClaw (e.g. concierge); the Hub never spawns them.
+                # False for agents the Hub never spawns (e.g. concierge, used by the Discord bot).
                 "hub_spawned": bool(meta.get("hub_spawned", True)),
-                "openclaw": {
-                    "openclaw_agent_id": meta.get("openclaw_agent_id"),
-                    "description": meta.get("description"),
-                    "model": meta.get("model"),
-                    "tools": meta.get("tools"),
-                },
+                "description": meta.get("description"),
+                "model": meta.get("model"),
+                "tools": meta.get("tools"),
             }
         except Exception:
             logger.exception("failed to load agent workspace %s", child)

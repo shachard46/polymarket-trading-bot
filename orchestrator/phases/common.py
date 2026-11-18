@@ -10,14 +10,9 @@ from typing import Any, Literal
 from obsidian_utils import FilterLogPayload, ObsidianManager
 from config.trading_constants import BELOW_EDGE_KEY
 from orchestrator import ledger
-import os
 
 from orchestrator.config import (
-    OPENCLAW_MODEL_LABEL_ENV,
-    RUNNER_MODE_DIRECT,
     RUNNER_MODE_LIVE,
-    direct_model,
-    direct_provider,
     runner_mode,
 )
 from orchestrator.state import vault_write_or_flag
@@ -91,23 +86,20 @@ def _market_spread(md: dict[str, Any]) -> float | None:
 def _ledger_model_fields(role: str | None = None) -> dict[str, Any]:
     """Runner backend plus, when the caller names the agent ``role``, the model that produced the row.
 
-    Direct mode adds ``provider`` and ``model`` (per role). Live mode adds ``model`` only from
-    ``OPENCLAW_MODEL_LABEL`` (OpenClaw owns the real model). Stub modes add neither.
+    Live mode adds ``provider`` and ``model`` (from ``routing.spec_for(role)``). Stub modes add neither.
     """
     mode = runner_mode()
     out: dict[str, Any] = {"runner_backend": mode}
     if not role:
         return out
-    if mode == RUNNER_MODE_DIRECT:
-        out["provider"] = direct_provider()
+    if mode == RUNNER_MODE_LIVE:
+        from orchestrator.llm import routing  # noqa: PLC0415 - avoid import cycle at module load
+
         try:
-            out["model"] = direct_model(role)
-        except ValueError:  # startup check should have caught this; never break a ledger write
-            out["model"] = None
-    elif mode == RUNNER_MODE_LIVE:
-        label = os.environ.get(OPENCLAW_MODEL_LABEL_ENV, "").strip()
-        if label:
-            out["model"] = label
+            spec = routing.spec_for(role)
+            out["provider"], out["model"] = spec.provider, spec.model
+        except Exception:  # noqa: BLE001 - startup check should have caught this; never break a ledger write
+            out["provider"], out["model"] = None, None
     return out
 
 

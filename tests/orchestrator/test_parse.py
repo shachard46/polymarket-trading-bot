@@ -120,7 +120,7 @@ def test_parse_empty_output_raises():
 
 
 def test_parse_double_encoded_json_string():
-    """OpenClaw sometimes returns the JSON object as a JSON-encoded string."""
+    """Some models return the JSON object as a JSON-encoded string."""
     inner = (
         '{"passed": false, "trigger": null, "confidence_multiplier": 1.0, '
         '"details": "No filter triggered. Notes: all filters evaluated", '

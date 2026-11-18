@@ -6,7 +6,7 @@ answers owner questions read-only. It never trades and never touches knobs; the 
 
 Env: ``DISCORD_BOT_TOKEN``, ``DISCORD_CHANNEL_ID``, ``DISCORD_OWNER_ID`` (all required),
 ``CONCIERGE_TZ`` (default UTC), ``CONCIERGE_QUIET_HOURS`` (e.g. ``23-07``), ``CONCIERGE_POLL_SEC``.
-The outbox marker ``outbox/_posted.json`` is shared with the OpenClaw concierge (list of file names).
+The outbox marker ``outbox/_posted.json`` lists the file names already posted.
 """
 
 from __future__ import annotations

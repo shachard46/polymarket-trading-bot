@@ -205,7 +205,7 @@ def coerce_deep_researcher_state_machine(
 def coerce_deep_researcher_markdown(raw: Any) -> str:
     """Normalize a Deep Researcher response into a markdown string.
 
-    Live OpenClaw responses for ``deep_researcher`` should be a raw markdown
+    Live ``deep_researcher`` responses should be a raw markdown
     string (frontmatter + body). Some transports wrap the payload as
     ``{"markdown": "..."}`` or ``{"content": "..."}``; both are unwrapped
     here. Anything else raises :class:`AgentOutputParseError`.

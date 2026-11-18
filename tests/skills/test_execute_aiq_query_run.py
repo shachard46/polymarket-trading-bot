@@ -17,7 +17,7 @@ _REPO_CONFIG = _ROOT / "config/trading_constants.py"
 
 
 def _run_py_env() -> dict[str, str]:
-    """Prefer OpenClaw gateway layout; fall back to repo config for local CI."""
+    """Prefer the deployed config layout; fall back to repo config for local CI."""
     env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
     if _OPENCLAW_CONFIG.is_file():
         return env
@@ -75,7 +75,7 @@ def test_run_py_missing_query_exits_1():
     reason="OpenClaw gateway config not present (run on boldplane)",
 )
 def test_run_py_imports_without_pythonpath():
-    """run.py must import config from hardcoded OpenClaw root without PYTHONPATH."""
+    """run.py must import config from hardcoded deployed root without PYTHONPATH."""
     run_env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
     result = subprocess.run(
         [sys.executable, str(_RUN_PY), '{"query": "test question"}'],

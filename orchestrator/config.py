@@ -12,74 +12,47 @@ from config.trading_constants import (
 )
 from config.vault import VAULT_PATH_ENV, resolve_vault_base
 
-# Execution mode for the OpenClaw runner. "stub" returns deterministic responses
-# for CI; "live" invokes the local OpenClaw Gateway via the OpenClaw CLI.
-RUNNER_MODE_ENV = "OPENCLAW_ORCHESTRATOR_MODE"
+# Execution mode of the agent runner. "stub" returns deterministic responses for CI; "live" calls
+# the LLM providers directly (provider + model per role: config/models.yaml, see orchestrator/llm).
+RUNNER_MODE_ENV = "PMBOT_MODE"
 RUNNER_MODE_STUB = "stub"
 RUNNER_MODE_STUB_ERROR = "stub_error"
 RUNNER_MODE_LIVE = "live"
-# "direct" calls the Anthropic Messages API (no OpenClaw gateway needed).
-RUNNER_MODE_DIRECT = "direct"
-_VALID_RUNNER_MODES = frozenset(
-    {RUNNER_MODE_STUB, RUNNER_MODE_STUB_ERROR, RUNNER_MODE_LIVE, RUNNER_MODE_DIRECT}
-)
+_VALID_RUNNER_MODES = frozenset({RUNNER_MODE_STUB, RUNNER_MODE_STUB_ERROR, RUNNER_MODE_LIVE})
 
-# Direct backend: model per agent role (env override DIRECT_MODEL_<ROLE upper>).
-DIRECT_MODEL_ENV_PREFIX = "DIRECT_MODEL_"
-DEFAULT_DIRECT_MODELS = {
-    "triage": "claude-haiku-5-5",
-    "briefer": "claude-sonnet-5-5",
-    "web_searcher": "claude-sonnet-5-5",
-    "deep_researcher": "claude-sonnet-5-5",
-    "post_mortem_analyst": "claude-sonnet-5-5",
-    "overseer": "claude-opus-5-5",
-}
-FALLBACK_DIRECT_MODEL = "claude-sonnet-5-5"
-# Direct backend provider: "anthropic" (default, Messages API) or "openrouter" (chat completions).
-DIRECT_PROVIDER_ENV = "DIRECT_PROVIDER"
-DIRECT_PROVIDER_ANTHROPIC = "anthropic"
-DIRECT_PROVIDER_OPENROUTER = "openrouter"
-DIRECT_PROVIDERS = frozenset({DIRECT_PROVIDER_ANTHROPIC, DIRECT_PROVIDER_OPENROUTER})
-OPENROUTER_API_KEY_ENV = "OPENROUTER_API_KEY"
 OPENROUTER_BASE_URL_ENV = "OPENROUTER_BASE_URL"
 DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-# Model for any role without its own DIRECT_MODEL_<ROLE> (required on openrouter; model ids are never guessed).
-DIRECT_MODEL_DEFAULT_ENV = "DIRECT_MODEL_DEFAULT"
-# Live mode: OpenClaw owns the real model; this env labels ledger rows.
-OPENCLAW_MODEL_LABEL_ENV = "OPENCLAW_MODEL_LABEL"
-DIRECT_MAX_TOKENS_ENV = "DIRECT_MAX_TOKENS"
+# Defaults for models.yaml (`max_tokens`, `web_max_uses`).
 DEFAULT_DIRECT_MAX_TOKENS = 16000
-DIRECT_WEB_MAX_USES_ENV = "DIRECT_WEB_MAX_USES"
 DEFAULT_DIRECT_WEB_MAX_USES = 8
 
-OPENCLAW_BIN_ENV = "OPENCLAW_BIN"
-OPENCLAW_AGENT_TIMEOUT_ENV = "OPENCLAW_AGENT_TIMEOUT"
-DEFAULT_OPENCLAW_AGENT_TIMEOUT = 600
+PMBOT_LLM_TIMEOUT_ENV = "PMBOT_LLM_TIMEOUT"
+DEFAULT_PMBOT_LLM_TIMEOUT = 600
 
-OPENCLAW_AGENT_MAX_ATTEMPTS_ENV = "OPENCLAW_AGENT_MAX_ATTEMPTS"
-DEFAULT_OPENCLAW_AGENT_MAX_ATTEMPTS = 3
+PMBOT_LLM_MAX_ATTEMPTS_ENV = "PMBOT_LLM_MAX_ATTEMPTS"
+DEFAULT_PMBOT_LLM_MAX_ATTEMPTS = 3
 
-OPENCLAW_AGENT_RETRY_BACKOFF_ENV = "OPENCLAW_AGENT_RETRY_BACKOFF"
-DEFAULT_OPENCLAW_AGENT_RETRY_BACKOFF = 2.0
+PMBOT_LLM_RETRY_BACKOFF_ENV = "PMBOT_LLM_RETRY_BACKOFF"
+DEFAULT_PMBOT_LLM_RETRY_BACKOFF = 2.0
 
-AUTO_REPLAY_ENV = "OPENCLAW_AUTO_REPLAY"
+AUTO_REPLAY_ENV = "PMBOT_AUTO_REPLAY"
 
-TOP_QUALITATIVE_MARKETS_ENV = "OPENCLAW_TOP_MARKETS"
+TOP_QUALITATIVE_MARKETS_ENV = "PMBOT_TOP_MARKETS"
 
 # Funnel budgets (docs/02): how many markets survive each stage per tick.
-GATE_BUDGET_ENV = "OPENCLAW_GATE_BUDGET"
+GATE_BUDGET_ENV = "PMBOT_GATE_BUDGET"
 DEFAULT_GATE_BUDGET = 15
-TRIAGE_BUDGET_ENV = "OPENCLAW_TRIAGE_BUDGET"
+TRIAGE_BUDGET_ENV = "PMBOT_TRIAGE_BUDGET"
 DEFAULT_TRIAGE_BUDGET = 8
-QUICK_RESEARCH_BUDGET_ENV = "OPENCLAW_QUICK_RESEARCH_BUDGET"
+QUICK_RESEARCH_BUDGET_ENV = "PMBOT_QUICK_RESEARCH_BUDGET"
 DEFAULT_QUICK_RESEARCH_BUDGET = 8
-FULL_RESEARCH_BUDGET_ENV = "OPENCLAW_FULL_RESEARCH_BUDGET"
+FULL_RESEARCH_BUDGET_ENV = "PMBOT_FULL_RESEARCH_BUDGET"
 DEFAULT_FULL_RESEARCH_BUDGET = 3
 
 # Phase 3 concurrency / wall-clock (FULL stage runs markets in parallel).
-RESEARCH_WORKERS_ENV = "OPENCLAW_RESEARCH_WORKERS"
+RESEARCH_WORKERS_ENV = "PMBOT_RESEARCH_WORKERS"
 DEFAULT_RESEARCH_WORKERS = 3
-RESEARCH_TICK_BUDGET_ENV = "OPENCLAW_RESEARCH_TICK_BUDGET_SEC"
+RESEARCH_TICK_BUDGET_ENV = "PMBOT_RESEARCH_TICK_BUDGET_SEC"
 DEFAULT_RESEARCH_TICK_BUDGET_SEC = 1800
 
 # Phase 3 Forensic Pipeline — FULL stage: one round + one follow-up, then forced synthesis.
@@ -145,7 +118,7 @@ def research_tick_budget_sec() -> int:
 
 
 # Phase 3 evidence source: A-IQ, a price-blind web searcher agent, or a stable per-market A/B.
-EVIDENCE_SOURCE_ENV = "OPENCLAW_EVIDENCE_SOURCE"
+EVIDENCE_SOURCE_ENV = "PMBOT_EVIDENCE_SOURCE"
 EVIDENCE_AIQ = "aiq"
 EVIDENCE_WEB = "web"
 EVIDENCE_AB = "ab"
@@ -188,87 +161,41 @@ def runner_mode() -> str:
     return mode
 
 
-def direct_provider() -> str:
-    """Direct backend provider (``DIRECT_PROVIDER``, default anthropic); unknown values raise."""
-    value = os.environ.get(DIRECT_PROVIDER_ENV, "").strip().lower() or DIRECT_PROVIDER_ANTHROPIC
-    if value not in DIRECT_PROVIDERS:
-        raise ValueError(
-            f"{DIRECT_PROVIDER_ENV}={value!r} is not valid; use one of {sorted(DIRECT_PROVIDERS)}"
-        )
-    return value
-
-
 def openrouter_base_url() -> str:
     return (os.environ.get(OPENROUTER_BASE_URL_ENV, "").strip() or DEFAULT_OPENROUTER_BASE_URL).rstrip("/")
 
 
-def direct_model(role: str) -> str:
-    """Model id for a role in direct mode.
-
-    anthropic: ``DIRECT_MODEL_<ROLE>`` env, else the built-in role default, else
-    ``DIRECT_MODEL_DEFAULT``, else the fallback. openrouter: ``DIRECT_MODEL_<ROLE>`` env, else
-    ``DIRECT_MODEL_DEFAULT``; with neither it raises ``ValueError`` (no model id is guessed).
-    """
-    override = os.environ.get(DIRECT_MODEL_ENV_PREFIX + role.upper(), "").strip()
-    if override:
-        return override
-    default = os.environ.get(DIRECT_MODEL_DEFAULT_ENV, "").strip()
-    if direct_provider() == DIRECT_PROVIDER_OPENROUTER:
-        if default:
-            return default
-        raise ValueError(
-            f"no model for role {role!r}: set {DIRECT_MODEL_ENV_PREFIX}{role.upper()} "
-            f"or {DIRECT_MODEL_DEFAULT_ENV} (provider openrouter)"
-        )
-    return DEFAULT_DIRECT_MODELS.get(role) or default or FALLBACK_DIRECT_MODEL
-
-
-def direct_max_tokens() -> int:
-    """Max output tokens per direct call (default 16000)."""
-    return max(1, _int_env(DIRECT_MAX_TOKENS_ENV, DEFAULT_DIRECT_MAX_TOKENS))
-
-
-def direct_web_max_uses() -> int:
-    """Cap on server-side web_search/web_fetch uses per web_searcher call (default 8)."""
-    return max(1, _int_env(DIRECT_WEB_MAX_USES_ENV, DEFAULT_DIRECT_WEB_MAX_USES))
-
-
-def openclaw_bin() -> str:
-    """Return OpenClaw CLI binary name/path."""
-    return os.environ.get(OPENCLAW_BIN_ENV, "openclaw").strip() or "openclaw"
-
-
-def openclaw_agent_timeout() -> int:
-    """Return per-agent OpenClaw CLI timeout in seconds."""
-    raw = os.environ.get(OPENCLAW_AGENT_TIMEOUT_ENV)
+def llm_timeout() -> int:
+    """Return per-call LLM HTTP timeout in seconds."""
+    raw = os.environ.get(PMBOT_LLM_TIMEOUT_ENV)
     if not raw:
-        return DEFAULT_OPENCLAW_AGENT_TIMEOUT
+        return DEFAULT_PMBOT_LLM_TIMEOUT
     try:
         return max(10, int(raw))
     except ValueError:
-        return DEFAULT_OPENCLAW_AGENT_TIMEOUT
+        return DEFAULT_PMBOT_LLM_TIMEOUT
 
 
-def openclaw_agent_max_attempts() -> int:
-    """Return max OpenClaw agent CLI attempts before surfacing failure."""
-    raw = os.environ.get(OPENCLAW_AGENT_MAX_ATTEMPTS_ENV)
+def llm_max_attempts() -> int:
+    """Return max LLM call attempts before surfacing failure."""
+    raw = os.environ.get(PMBOT_LLM_MAX_ATTEMPTS_ENV)
     if not raw:
-        return DEFAULT_OPENCLAW_AGENT_MAX_ATTEMPTS
+        return DEFAULT_PMBOT_LLM_MAX_ATTEMPTS
     try:
         return max(1, int(raw))
     except ValueError:
-        return DEFAULT_OPENCLAW_AGENT_MAX_ATTEMPTS
+        return DEFAULT_PMBOT_LLM_MAX_ATTEMPTS
 
 
-def openclaw_agent_retry_backoff() -> float:
-    """Return base seconds for exponential backoff between CLI retries."""
-    raw = os.environ.get(OPENCLAW_AGENT_RETRY_BACKOFF_ENV)
+def llm_retry_backoff() -> float:
+    """Return base seconds for exponential backoff between LLM call retries."""
+    raw = os.environ.get(PMBOT_LLM_RETRY_BACKOFF_ENV)
     if not raw:
-        return DEFAULT_OPENCLAW_AGENT_RETRY_BACKOFF
+        return DEFAULT_PMBOT_LLM_RETRY_BACKOFF
     try:
         return max(0.0, float(raw))
     except ValueError:
-        return DEFAULT_OPENCLAW_AGENT_RETRY_BACKOFF
+        return DEFAULT_PMBOT_LLM_RETRY_BACKOFF
 
 
 def auto_replay() -> bool:
@@ -286,23 +213,16 @@ __all__ = [
     "RUNNER_MODE_STUB",
     "RUNNER_MODE_STUB_ERROR",
     "RUNNER_MODE_LIVE",
-    "RUNNER_MODE_DIRECT",
-    "direct_model",
-    "direct_provider",
     "openrouter_base_url",
-    "direct_max_tokens",
-    "direct_web_max_uses",
     "runner_mode",
-    "OPENCLAW_BIN_ENV",
-    "OPENCLAW_AGENT_TIMEOUT_ENV",
-    "OPENCLAW_AGENT_MAX_ATTEMPTS_ENV",
-    "OPENCLAW_AGENT_RETRY_BACKOFF_ENV",
+    "PMBOT_LLM_TIMEOUT_ENV",
+    "PMBOT_LLM_MAX_ATTEMPTS_ENV",
+    "PMBOT_LLM_RETRY_BACKOFF_ENV",
     "AUTO_REPLAY_ENV",
     "auto_replay",
-    "openclaw_bin",
-    "openclaw_agent_timeout",
-    "openclaw_agent_max_attempts",
-    "openclaw_agent_retry_backoff",
+    "llm_timeout",
+    "llm_max_attempts",
+    "llm_retry_backoff",
     "TOP_QUALITATIVE_MARKETS_ENV",
     "top_qualitative_markets",
     "GATE_BUDGET_ENV",

@@ -1,4 +1,4 @@
-"""execute_aiq_query — OpenClaw skill execution module.
+"""execute_aiq_query — skill execution module.
 
 Contract: docs/04_skills_contracts.md §5
 

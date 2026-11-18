@@ -38,7 +38,7 @@ def test_no_row_without_gated_markets(vault):
 
 
 def test_holders_counted_only_when_attempted(vault, monkeypatch):
-    monkeypatch.setenv("OPENCLAW_GATE_BUDGET", "1")
+    monkeypatch.setenv("PMBOT_GATE_BUDGET", "1")
     monkeypatch.setattr(polymarket_api, "fetch_holder_concentration",
                         lambda cid: {"top1": 0.1, "top3": 0.2, "basis": "supply"})
     phases.phase2_quantitative_routing(vault, [mk("a"), mk("b")], runner=Triage())

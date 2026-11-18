@@ -57,7 +57,7 @@ def _no_integrity_network(monkeypatch):
 @pytest.fixture(autouse=True)
 def _aiq_evidence_by_default(monkeypatch):
     """Existing phase tests exercise the A-IQ path; evidence tests override the env."""
-    monkeypatch.setenv("OPENCLAW_EVIDENCE_SOURCE", "aiq")
+    monkeypatch.setenv("PMBOT_EVIDENCE_SOURCE", "aiq")
 
 
 @pytest.fixture()
@@ -66,3 +66,28 @@ def vault(tmp_path):
     v = ObsidianManager(vault_base=tmp_path)
     v.cold_start_protocol()
     return v
+
+
+# Fixed provider/model config for tests: the shipped config/models.yaml is user-edited
+# (providers and models change), so tests never read it unless they opt in explicitly.
+TEST_MODELS_YAML = """\
+max_tokens: 16000
+web_max_uses: 8
+default: {provider: anthropic, model: claude-sonnet-5-5}
+roles:
+  triage:          {provider: anthropic, model: claude-haiku-5-5}
+  briefer:         {provider: anthropic, model: claude-sonnet-5-5}
+  web_searcher:    {provider: anthropic, model: claude-sonnet-5-5, web_max_uses: 5}
+  deep_researcher: {provider: anthropic, model: claude-sonnet-5-5}
+  post_mortem_analyst: {provider: anthropic, model: claude-sonnet-5-5}
+  overseer:        {provider: anthropic, model: claude-opus-5-5}
+  concierge:       {provider: anthropic, model: claude-haiku-5-5}
+"""
+
+
+@pytest.fixture(autouse=True)
+def _fixed_models_config(monkeypatch, tmp_path_factory):
+    p = tmp_path_factory.getbasetemp() / "test_models.yaml"
+    if not p.exists():
+        p.write_text(TEST_MODELS_YAML)
+    monkeypatch.setenv("LLM_MODELS_CONFIG", str(p))

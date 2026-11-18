@@ -1,7 +1,7 @@
-"""OpenClaw Orchestrator entry point.
+"""Orchestrator entry point.
 
-Lifecycle: Orchestrator builds JSON input → spawns agent → agent uses tools →
-agent returns JSON / Markdown → Orchestrator parses output → ObsidianManager
+Lifecycle: Orchestrator builds JSON input → calls the role's LLM →
+the model returns JSON / Markdown → Orchestrator parses output → ObsidianManager
 validates and writes. Agents never touch the filesystem directly.
 
 All business logic lives in the :mod:`orchestrator` package; this module

@@ -13,6 +13,7 @@ from orchestrator.stats.groups import (
     _COUNTERFACTUAL_STAGES,
     brier_by_evidence_source,
     brier_by_model,
+    brier_by_provider,
     brier_by_runner_backend,
     brier_shadow,
     false_negative_rate,
@@ -55,6 +56,7 @@ def compute_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
     out["brier_by_evidence_source"] = brier_by_evidence_source(rows)
     out["brier_by_runner_backend"] = brier_by_runner_backend(rows)
     out["brier_by_model"] = brier_by_model(rows)
+    out["brier_by_provider"] = brier_by_provider(rows)
     out["offers"] = offers_stats(rows)
     traded = _pnl_groups(rows, res, ("traded",))
     summ = pnl_summary(rows, ("traded",))
@@ -242,6 +244,7 @@ def render_stats(s: dict[str, Any]) -> str:
     L += _render_brier_by(s, "evidence source", "evidence_source", "brier_by_evidence_source")
     L += _render_brier_by(s, "runner backend", "runner_backend", "brier_by_runner_backend")
     L += _render_brier_by(s, "model", "model", "brier_by_model")
+    L += _render_brier_by(s, "provider", "provider", "brier_by_provider")
     for section in (
         _render_shadow, _render_signal_coverage, _render_triage_shadow, _render_indep,
         _render_gate_flags, _render_integrity, _render_offers, _render_calibration,

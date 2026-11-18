@@ -15,7 +15,6 @@ from orchestrator.config import (
     runner_mode,
 )
 from orchestrator import ledger, notify, runner as _runner
-from orchestrator.openclaw_cli import require_gateway
 from orchestrator.phases.p4_approval import process_inbox
 from orchestrator.phases.p6_overseer import process_directive_votes
 from orchestrator.phases import (
@@ -36,9 +35,6 @@ def run_pipeline_tick(vault: ObsidianManager) -> None:
     """Run a single phase 1 → 5 sweep over the scraper queue."""
     tick_id = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%S")
     notify.set_tick(tick_id)
-    set_nonce = getattr(_runner, "set_run_nonce", None)  # added by the direct-runner work; optional
-    if callable(set_nonce):
-        set_nonce(tick_id)
     target_ids = phase1_data_ingestion(vault)
     target_ids = [
         m
@@ -86,15 +82,9 @@ def _sleep_polling_inbox(vault: ObsidianManager, total_sec: float) -> None:
 def run_forever(vault: ObsidianManager | None = None) -> None:
     """Run the orchestrator forever — phase 1-5 every tick, phase 6 on cadence."""
     if runner_mode() == RUNNER_MODE_LIVE:
-        require_gateway()
-    elif runner_mode() == "direct":
-        try:
-            from orchestrator import direct_runner
-        except ImportError:
-            direct_runner = None
-        check = getattr(direct_runner, "require_api_key", None)
-        if callable(check):
-            check()
+        from orchestrator.llm import routing  # noqa: PLC0415
+
+        routing.validate()
 
     vault = vault or ObsidianManager()
     if vault.cold_start_protocol():

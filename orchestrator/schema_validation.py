@@ -1,6 +1,6 @@
 """Hub-side validation of agent inputs and outputs against ``agent.yaml``.
 
-The OpenClaw cloud SDK does not advertise its registered schemas back to the
+No model API advertises the schemas it was sent back to the
 caller, so the local repository is the only source of truth. ``spawn_agent``
 calls into this module to:
 

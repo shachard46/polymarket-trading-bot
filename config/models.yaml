@@ -1,0 +1,20 @@
+# Provider + model per agent role (live runner mode). Edit one line to switch a role's provider.
+# Env overrides: LLM_ROLE_<ROLE>=provider:model (e.g. LLM_ROLE_TRIAGE=openrouter:<model-id>)
+#                LLM_DEFAULT=provider:model (replaces "default" for roles without their own entry)
+# Path override: LLM_MODELS_CONFIG. Keys: ANTHROPIC_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY.
+max_tokens: 16000     # max output tokens per call (per-role override: max_tokens)
+web_max_uses: 8       # cap on web search/fetch uses per web call (per-role override: web_max_uses)
+
+default: {provider: anthropic, model: claude-sonnet-5-5}
+
+roles:
+  triage:          {provider: anthropic, model: claude-haiku-5-5}
+  briefer:         {provider: anthropic, model: claude-sonnet-5-5}
+  web_searcher:    {provider: openrouter, model: deepseek/deepseek-v4.1-flash, web_max_uses: 5}
+  deep_researcher: {provider: anthropic, model: claude-sonnet-5-5}
+  post_mortem_analyst: {provider: anthropic, model: claude-sonnet-5-5}
+  overseer:        {provider: gemini, model: gemini-4-hydrogen}
+  concierge:       {provider: anthropic, model: claude-haiku-5-5}
+  # Examples (replace the placeholder ids):
+  # deep_researcher: {provider: openrouter, model: <model-id>}
+  # triage:          {provider: gemini, model: <model-id>}

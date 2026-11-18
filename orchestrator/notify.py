@@ -1,6 +1,6 @@
 """Concierge outbox: offers and daily digests the Hub writes for the user-facing front-end.
 
-The Hub writes; the concierge (OpenClaw / Discord) only reads these files and writes votes to
+The Hub writes; the Discord bot only reads these files and writes votes to
 ``06_Concierge/inbox/``. Nothing here decides anything and nothing here may break a tick.
 
 Env: ``CONCIERGE_APPROVAL`` (0/1, default 0), ``CONCIERGE_POLL_SEC`` (300),

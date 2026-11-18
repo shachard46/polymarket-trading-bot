@@ -224,7 +224,7 @@ def test_quick_wide_range_escalates_even_if_it_contains_q(world, vault):
 
 
 def test_escalation_survives_full_budget_exhaustion(world, vault, monkeypatch):
-    monkeypatch.setenv("OPENCLAW_FULL_RESEARCH_BUDGET", "1")
+    monkeypatch.setenv("PMBOT_FULL_RESEARCH_BUDGET", "1")
     for i, mid in enumerate(("a", "b")):
         world.market(mid, 0.42)
         _seed(vault, mid, score=2.0 - i)
@@ -348,8 +348,8 @@ def test_full_stage_follow_up_cap_then_forced_synthesis(world, vault):
 
 
 def test_quick_and_full_budgets_are_enforced_in_score_order(world, vault, monkeypatch):
-    monkeypatch.setenv("OPENCLAW_QUICK_RESEARCH_BUDGET", "3")
-    monkeypatch.setenv("OPENCLAW_FULL_RESEARCH_BUDGET", "2")
+    monkeypatch.setenv("PMBOT_QUICK_RESEARCH_BUDGET", "3")
+    monkeypatch.setenv("PMBOT_FULL_RESEARCH_BUDGET", "2")
     for i in range(5):
         mid = f"m{i}"
         world.market(mid, 0.42)
@@ -363,22 +363,22 @@ def test_quick_and_full_budgets_are_enforced_in_score_order(world, vault, monkey
 
 
 def test_tick_wall_clock_budget_stops_new_markets(world, vault, monkeypatch):
-    monkeypatch.setenv("OPENCLAW_RESEARCH_TICK_BUDGET_SEC", "0")
+    monkeypatch.setenv("PMBOT_RESEARCH_TICK_BUDGET_SEC", "0")
     world.market("m1", 0.42)
     _seed(vault, "m1")
     assert phases.phase3_qualitative_pipeline(vault, runner=world.runner) == []
     assert world.calls == []
 
-    monkeypatch.setenv("OPENCLAW_RESEARCH_TICK_BUDGET_SEC", "1800")
+    monkeypatch.setenv("PMBOT_RESEARCH_TICK_BUDGET_SEC", "1800")
     assert len(phases.phase3_qualitative_pipeline(vault, runner=world.runner)) == 1
 
 
 def test_tick_budget_checked_between_full_markets(world, vault, monkeypatch):
     """The QUICK scan fits the budget, but FULL markets queued behind a slow one do not start."""
-    monkeypatch.setenv("OPENCLAW_RESEARCH_WORKERS", "1")
+    monkeypatch.setenv("PMBOT_RESEARCH_WORKERS", "1")
     clock = {"t": 0.0}
     monkeypatch.setattr(p3_queue.time, "monotonic", lambda: clock["t"])
-    monkeypatch.setenv("OPENCLAW_RESEARCH_TICK_BUDGET_SEC", "100")
+    monkeypatch.setenv("PMBOT_RESEARCH_TICK_BUDGET_SEC", "100")
     for i, mid in enumerate(("a", "b")):
         world.market(mid, 0.42)
         _seed(vault, mid, score=2.0 - i)
@@ -393,7 +393,7 @@ def test_tick_budget_checked_between_full_markets(world, vault, monkeypatch):
 
 
 def test_full_stage_markets_run_concurrently(world, vault, monkeypatch):
-    monkeypatch.setenv("OPENCLAW_RESEARCH_WORKERS", "2")
+    monkeypatch.setenv("PMBOT_RESEARCH_WORKERS", "2")
     for mid in ("a", "b"):
         world.market(mid, 0.42, event_id=f"ev-{mid}")
         _seed(vault, mid)
@@ -423,7 +423,7 @@ def test_same_event_markets_share_one_bundle(world, vault):
 
 
 def test_infra_failure_in_a_worker_aborts_the_tick(world, vault):
-    from orchestrator.openclaw_cli import OpenClawCLIError
+    from orchestrator.llm.base import LLMError
     from orchestrator.state import InfraUnavailable
 
     world.market("a", 0.42)
@@ -431,7 +431,7 @@ def test_infra_failure_in_a_worker_aborts_the_tick(world, vault):
 
     def runner(role, payload):
         if role == "briefer":
-            raise OpenClawCLIError("gateway down")
+            raise LLMError("provider down")
         return world.runner(role, payload)
 
     with pytest.raises(InfraUnavailable):
@@ -560,7 +560,7 @@ def test_small_price_move_does_not_refresh(world, vault):
 
 
 def test_refresh_counts_against_full_budget(world, vault, monkeypatch):
-    monkeypatch.setenv("OPENCLAW_FULL_RESEARCH_BUDGET", "1")
+    monkeypatch.setenv("PMBOT_FULL_RESEARCH_BUDGET", "1")
     _seed(vault, "old", score=2.0)
     _research(vault, "old", hours_ago=500)
     world.market("old", 0.42)

@@ -10,7 +10,6 @@ from pydantic import ValidationError
 
 from config.vault import VAULT_PATH_ENV, resolve_vault_base
 from obsidian_utils import ObsidianManager, VaultWriteError, _atomic_write_text
-from orchestrator import openclaw_cli
 from orchestrator.agent_outputs import parse_deep_researcher_json
 from orchestrator.parse import (
     AgentOutputParseError,
@@ -23,13 +22,6 @@ from orchestrator.schema_validation import (
     build_model,
     validate_payload,
 )
-
-
-@pytest.fixture(autouse=True)
-def _reset_cli_cache():
-    openclaw_cli.reset_agent_cli_capability_cache()
-    yield
-    openclaw_cli.reset_agent_cli_capability_cache()
 
 
 def test_yaml_error_becomes_value_error():
@@ -119,56 +111,6 @@ def test_strict_bool_rejected_and_nan_rejected():
     with pytest.raises(AgentSchemaError):
         validate_payload("r", "output", model, {"passed": True, "x": float("nan")})
     validate_payload("r", "output", model, {"passed": False, "x": 1})
-
-
-def _fake_cli(monkeypatch, runner):
-    monkeypatch.setattr(openclaw_cli.shutil, "which", lambda b: "/usr/bin/openclaw")
-    monkeypatch.setattr(openclaw_cli.subprocess, "run", runner)
-    monkeypatch.setattr(openclaw_cli.time, "sleep", lambda s: None)
-
-
-def test_retry_false_single_attempt(monkeypatch):
-    calls = []
-
-    def run(cmd, **kw):
-        if cmd[1:3] == ["agent", "--help"]:
-            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-        calls.append(cmd)
-        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="boom")
-
-    _fake_cli(monkeypatch, run)
-    with pytest.raises(openclaw_cli.OpenClawCLIError):
-        openclaw_cli.run_agent("triage", "m", session_key="k", timeout=5, retry=False)
-    assert len(calls) == 1
-
-
-def test_oserror_wrapped_and_help_timeout_not_cached(monkeypatch):
-    def run(cmd, **kw):
-        raise OSError(7, "Argument list too long")
-
-    _fake_cli(monkeypatch, run)
-    with pytest.raises(openclaw_cli.OpenClawCLIError):
-        openclaw_cli.run_agent("triage", "m", session_key="k", timeout=5, retry=False)
-    ok, detail = openclaw_cli.gateway_reachable()
-    assert ok is False and "Argument list too long" in detail
-
-    def timeout_run(cmd, **kw):
-        raise subprocess.TimeoutExpired(cmd, 10)
-
-    _fake_cli(monkeypatch, timeout_run)
-    with pytest.raises(openclaw_cli.OpenClawCLIError, match="--help probe timed out"):
-        openclaw_cli.run_agent("triage", "m", session_key="k", timeout=5, retry=False)
-    assert openclaw_cli._SESSION_KEY_HELP_FLAG is None
-
-
-def test_stdout_with_prefix_noise_recovered(monkeypatch):
-    def run(cmd, **kw):
-        if cmd[1:3] == ["agent", "--help"]:
-            return subprocess.CompletedProcess(cmd, 0, stdout="--session-key", stderr="")
-        return subprocess.CompletedProcess(cmd, 0, stdout='warn: x\n{"a": 1}\n', stderr="")
-
-    _fake_cli(monkeypatch, run)
-    assert openclaw_cli.run_agent("triage", "m", session_key="k", timeout=5) == {"a": 1}
 
 
 def test_parse_prefers_embedded_json_over_yaml_prose():

@@ -1,5 +1,4 @@
 id: deep_researcher
-openclaw_agent_id: polymarket-deep-researcher
 description: Forensic Fact Verifier — price-blind probability estimate with an honest range from the supplied evidence.
 model: null
 tools:

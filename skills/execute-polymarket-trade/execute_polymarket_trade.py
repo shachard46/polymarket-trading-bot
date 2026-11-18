@@ -1,4 +1,4 @@
-"""execute_polymarket_trade — OpenClaw skill execution module.
+"""execute_polymarket_trade — skill execution module.
 
 Contract: docs/04_skills_contracts.md §4
 

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from orchestrator import runner
@@ -116,58 +114,3 @@ def test_stub_error_deep_researcher_carries_error_in_frontmatter(monkeypatch):
     parsed = parse_deep_researcher_json(out)
     research = parse_deep_researcher(parsed.markdown)
     assert research.error == "stub_error mode"
-
-
-def test_live_session_key_scopes_samples():
-    base = runner._live_session_key("agent-x", "deep_researcher", {"market_id": "0xabc"})
-    s2 = runner._live_session_key(
-        "agent-x", "deep_researcher", {"market_id": "0xabc", "session_tag": "s2"}
-    )
-    n = runner.get_run_nonce()
-    assert base == f"agent:agent-x:orch-{n}-0xabc"
-    assert s2 == f"agent:agent-x:orch-{n}-0xabc-s2"
-
-
-@pytest.mark.parametrize(
-    ("market_id", "key_suffix"),
-    [("0xabc", "0xabc"), ("market with spaces", "market-with-spaces")],
-)
-def test_live_runner_invokes_openclaw_cli(monkeypatch, market_id, key_suffix):
-    calls = {}
-
-    def fake_run_agent(agent_id, message, *, session_key, timeout=None):
-        calls["agent_id"] = agent_id
-        calls["message"] = message
-        calls["session_key"] = session_key
-        calls["timeout"] = timeout
-        return {
-            "payloads": [
-                {
-                    "text": json.dumps(
-                        {
-                            "market_id": market_id,
-                            "researchable": False,
-                            "category": "sports",
-                            "manipulation_risk": "low",
-                            "manipulation_reason": "none",
-                            "reason": "live fake",
-                            "error": None,
-                        }
-                    )
-                }
-            ]
-        }
-
-    monkeypatch.setenv(RUNNER_MODE_ENV, RUNNER_MODE_LIVE)
-    monkeypatch.setattr(runner, "run_agent", fake_run_agent)
-
-    out = runner.spawn_agent("triage", {**_TRIAGE_IN, "market_id": market_id})
-
-    parsed = parse_agent_json_or_yaml(out)
-    assert parsed["reason"] == "live fake"
-    assert calls["agent_id"] == "polymarket-triage"
-    # the key is sanitized (no spaces) and scoped by the per-tick run nonce
-    assert calls["session_key"] == f"agent:polymarket-triage:orch-{runner.get_run_nonce()}-{key_suffix}"
-    assert "OpenClaw agent id: polymarket-triage" in calls["message"]
-    assert "Input JSON" in calls["message"]
-    assert calls["timeout"] is None

@@ -285,7 +285,7 @@ def _rank_and_triage(
         if rank >= budget:
             _write_filter_state(
                 vault, market_id, prior, passed=False, trigger="over_gate_budget",
-                details="eligible; below OPENCLAW_GATE_BUDGET cut", **base,
+                details="eligible; below PMBOT_GATE_BUDGET cut", **base,
             )
             continue
 
@@ -343,14 +343,14 @@ def _rank_and_triage(
 def _promote_researchable(
     vault: ObsidianManager, researchable: list[_Researchable]
 ) -> None:
-    """Stage 3: the top ``OPENCLAW_TRIAGE_BUDGET`` researchable markets get ``passed: true``."""
+    """Stage 3: the top ``PMBOT_TRIAGE_BUDGET`` researchable markets get ``passed: true``."""
     for idx, (sc, market, prior, base) in enumerate(researchable):
         with market_quarantine(vault, market.market_id, "phase2"):
             promoted = idx < triage_budget()
             _write_filter_state(
                 vault, market.market_id, prior, passed=promoted,
                 trigger=None if promoted else "over_triage_budget",
-                details="researchable" if promoted else "researchable; below OPENCLAW_TRIAGE_BUDGET cut",
+                details="researchable" if promoted else "researchable; below PMBOT_TRIAGE_BUDGET cut",
                 **base,
             )
 
@@ -368,8 +368,8 @@ def phase2_quantitative_routing(
     3. ``gate.eligibility``: failures are ledgered once per state change and
        back off (5h * 2^(n-1), retired after 6).
     4. Eligible markets are ranked by ``gate.score``; the top
-       ``OPENCLAW_GATE_BUDGET`` go to Triage (verdict cached forever, once per event).
-    5. The top ``OPENCLAW_TRIAGE_BUDGET`` researchable markets get ``passed: true``
+       ``PMBOT_GATE_BUDGET`` go to Triage (verdict cached forever, once per event).
+    5. The top ``PMBOT_TRIAGE_BUDGET`` researchable markets get ``passed: true``
        (``confidence_multiplier`` = score), which is all Phase 3 reads.
     """
     log.info("[PHASE 2] Gate + triage")

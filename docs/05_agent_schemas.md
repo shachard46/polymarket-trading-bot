@@ -48,7 +48,7 @@ On success `research_queries` is a list of **exactly 4** non-empty strings, in s
 The Deep Researcher is **price-blind**: its payload contains no `q`, `yes_price` or any other market price, and it must not be asked to anchor on or default to one. The Hub compares its output to `q` (see `02_orchestrator_pipeline.md` section 3).
 
 - **System Prompt:** "**Forensic Fact Verifier**. Work resolution rules first (polarity!), then reference class, then verified current state as of `today`, then the strongest disconfirming evidence. Output a probability with an honest range. Inconclusive evidence means a wide range and low confidence - never a neutral default. In `mode: quick` you have no bundle and must answer from the market text and your knowledge; in `mode: full` you may use `needs_more_data` once (1-3 follow-up queries)."
-- **Input Schema:** `{"market_id": "string", "title": "string", "description": "string", "resolution_source": "string | null", "end_date": "string | null", "category": "string | null", "today": "string", "mode": "string (quick|full)", "directives": "string", "research_bundle": "list[dict]", "system_override": "string | null", "format_validation_error": "string | null", "session_tag": "string | null"}`. `session_tag` (`quick`, `s1`..`s3`) gives each independent sample its own agent session.
+- **Input Schema:** `{"market_id": "string", "title": "string", "description": "string", "resolution_source": "string | null", "end_date": "string | null", "category": "string | null", "today": "string", "mode": "string (quick|full)", "directives": "string", "research_bundle": "list[dict]", "system_override": "string | null", "format_validation_error": "string | null", "session_tag": "string | null"}`. `session_tag` (`quick`, `s1`..`s3`) gives each independent sample its own label; calls are stateless.
 - **Output Schema (state machine):**
 
 ```json
@@ -118,15 +118,15 @@ The `filters:` yaml block may contain only the knobs in `config.trading_constant
 
 ## Rollout checklist (breaking changes)
 
-After the Wave 3 research redesign lands, sync each OpenClaw workspace from [`agents_blueprint/<role>/`](../agents_blueprint/) before running live orchestrator ticks:
+Contract changes from the Wave 3 research redesign (re-check the live prompts against these after any change to `agents_blueprint/<role>/`):
 
-| Role | OpenClaw agent id | Critical contract changes |
-|------|-------------------|---------------------------|
-| **web_searcher** | `polymarket-web-searcher` | Spoke for the `web` evidence arm. Input `{market_id, queries: list[str], today}`; tools `web_search`, `web_fetch`. Output `{market_id, results: [{query, research_data (<= 4000 chars, sourced and dated facts), error}], error}`. Price-blind: it must never report prediction-market or betting prices/odds; the Hub also redacts such lines. |
-| **briefer** | `polymarket-briefer` | Input is price-blind text (`title`, `description`, `resolution_source`, `end_date`, `category`, `today`). Output `research_queries`: exactly 4 fixed-slot strings with `as of {today}`. `tools.allow` is empty — Hub runs `execute_aiq_query`. |
-| **deep_researcher** | `polymarket-deep-researcher` | Price-blind input (no `q`), `mode`, `session_tag`. Complete output adds `p_low`, `p_high`, `confidence`, `resolution_checklist`, `key_assumptions`, `as_of`. JSON state machine, no agent tools. |
-| **executioner** | `polymarket-executioner` | **Removed.** Phase 4 is deterministic Hub code; delete this OpenClaw agent workspace. |
+| Role | Critical contract changes |
+|------|---------------------------|
+| **web_searcher** | Agent for the `web` evidence arm. Input `{market_id, queries: list[str], today}`; tools `web_search`, `web_fetch`. Output `{market_id, results: [{query, research_data (<= 4000 chars, sourced and dated facts), error}], error}`. Price-blind: it must never report prediction-market or betting prices/odds; the Hub also redacts such lines. |
+| **briefer** | Input is price-blind text (`title`, `description`, `resolution_source`, `end_date`, `category`, `today`). Output `research_queries`: exactly 4 fixed-slot strings with `as of {today}`. `tools.allow` is empty; the Hub runs `execute_aiq_query`. |
+| **deep_researcher** | Price-blind input (no `q`), `mode`, `session_tag`. Complete output adds `p_low`, `p_high`, `confidence`, `resolution_checklist`, `key_assumptions`, `as_of`. JSON state machine, no agent tools. |
+| **executioner** | **Removed.** Phase 4 is deterministic Hub code. |
 
-**Hub behavior:** The orchestrator always populates `research_bundle` before spawning Deep Researcher. A-IQ fetches are never invoked from agent workspaces. No agent payload contains the market price.
+**Hub behavior:** The orchestrator always populates `research_bundle` before spawning Deep Researcher. A-IQ fetches are never invoked by agents. No agent payload contains the market price.
 
-**Compatibility:** Deep Researcher output must be the JSON state machine (`status` `needs_more_data` or `complete`); raw markdown is rejected, with no fallback. Legacy briefer `summary`-only JSON receives a retryable `format_validation_error` directing the model to emit `research_queries`. Remove this briefer adapter once live workspaces are validated.
+**Compatibility:** Deep Researcher output must be the JSON state machine (`status` `needs_more_data` or `complete`); raw markdown is rejected, with no fallback. Legacy briefer `summary`-only JSON receives a retryable `format_validation_error` directing the model to emit `research_queries`. Remove this briefer adapter once live model outputs are validated.

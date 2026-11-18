@@ -15,15 +15,15 @@ single-market list.
 Trade output is JSON at ``Vault/03_Trades/{market_id}.json`` (not markdown).
 
 ```bash
-export OPENCLAW_PHASE4_LIVE=1
-export OPENCLAW_PHASE4_MARKET_ID=0x...          # required: pre-researched market
-export OPENCLAW_VAULT_PATH=/path/to/vault       # required: must contain active research
+export PMBOT_PHASE4_LIVE=1
+export PMBOT_PHASE4_MARKET_ID=0x...          # required: pre-researched market
+export PMBOT_VAULT_PATH=/path/to/vault       # required: must contain active research
 
 python tests/orchestrator/test_execution_pipeline_integration.py
 
 # pytest with live logs:
 pytest tests/orchestrator/test_execution_pipeline_integration.py -v -s --log-cli-level=INFO
-# optional: export OPENCLAW_PHASE4_LOG_LEVEL=DEBUG
+# optional: export PMBOT_PHASE4_LOG_LEVEL=DEBUG
 ```
 """
 
@@ -50,9 +50,9 @@ from orchestrator.research import parse_deep_researcher
 from orchestrator.scraper import market_data_hydration_error
 from orchestrator.state import is_inactive
 
-_PHASE4_LIVE_ENV = "OPENCLAW_PHASE4_LIVE"
-_PHASE4_MARKET_ENV = "OPENCLAW_PHASE4_MARKET_ID"
-_LOG_LEVEL_ENV = "OPENCLAW_PHASE4_LOG_LEVEL"
+_PHASE4_LIVE_ENV = "PMBOT_PHASE4_LIVE"
+_PHASE4_MARKET_ENV = "PMBOT_PHASE4_MARKET_ID"
+_LOG_LEVEL_ENV = "PMBOT_PHASE4_LOG_LEVEL"
 
 log = logging.getLogger(__name__)
 

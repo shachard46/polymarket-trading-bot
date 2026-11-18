@@ -115,6 +115,11 @@ def brier_by_model(rows: list[dict[str, Any]]) -> dict[str, tuple[int, float, fl
     return _brier_by_field(rows, "model")
 
 
+def brier_by_provider(rows: list[dict[str, Any]]) -> dict[str, tuple[int, float, float]]:
+    """``{provider: (n, brier_p, brier_p - brier_q)}`` over resolved scored markets (absent: ``unknown``)."""
+    return _brier_by_field(rows, "provider")
+
+
 def brier_shadow(
     rows: list[dict[str, Any]],
 ) -> tuple[int, float | None, float | None, float | None]:

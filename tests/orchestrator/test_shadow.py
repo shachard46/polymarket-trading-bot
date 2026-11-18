@@ -69,7 +69,7 @@ def test_non_shadow_quick_skip_runs_no_full_stage(world, vault):
 
 
 def test_shadow_jobs_never_displace_escalations_and_are_capped(world, vault, monkeypatch):
-    monkeypatch.setenv("OPENCLAW_FULL_RESEARCH_BUDGET", "1")
+    monkeypatch.setenv("PMBOT_FULL_RESEARCH_BUDGET", "1")
     shadows = _ids(True, SHADOW_MAX_PER_TICK + 2)
     for i, mid in enumerate(shadows):  # scanned first (higher score)
         world.market(mid, 0.5)
@@ -96,7 +96,7 @@ def test_shadow_respects_tick_budget(world, vault, monkeypatch):
     world.market(mid, 0.5)
     _seed(vault, mid)
     world.dr_p = _quick_flat_full_far
-    monkeypatch.setenv("OPENCLAW_RESEARCH_TICK_BUDGET_SEC", "0")
+    monkeypatch.setenv("PMBOT_RESEARCH_TICK_BUDGET_SEC", "0")
     assert phases.phase3_qualitative_pipeline(vault, runner=world.runner) == []
     assert not _shadow_rows(vault)
 

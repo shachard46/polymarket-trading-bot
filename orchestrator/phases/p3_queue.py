@@ -102,7 +102,7 @@ def build_phase3_queue(
     cap = top_qualitative_markets()
     if len(candidates) > cap:
         log.info(
-            "[PHASE 3 queue] capping qualitative queue: %d -> %d (OPENCLAW_TOP_MARKETS)",
+            "[PHASE 3 queue] capping qualitative queue: %d -> %d (PMBOT_TOP_MARKETS)",
             len(candidates),
             cap,
         )
@@ -252,12 +252,12 @@ def phase3_qualitative_pipeline(
 ) -> list[dict[str, Any]]:
     """QUICK stage -> Hub decision -> FULL stage; persist research to ``02_Active_Research/``.
 
-    Candidates are processed in gate-score order. QUICK (<= ``OPENCLAW_QUICK_RESEARCH_BUDGET``
+    Candidates are processed in gate-score order. QUICK (<= ``PMBOT_QUICK_RESEARCH_BUDGET``
     markets) is one price-blind Deep Researcher call without A-IQ data; the Hub skips markets
     where q lies inside a narrow ``[p_low, p_high]`` and escalates the rest. FULL
-    (<= ``OPENCLAW_FULL_RESEARCH_BUDGET``) is Briefer -> A-IQ -> 3 Deep Researcher samples.
+    (<= ``PMBOT_FULL_RESEARCH_BUDGET``) is Briefer -> A-IQ -> 3 Deep Researcher samples.
     Refresh candidates go straight to FULL. No new market starts after
-    ``OPENCLAW_RESEARCH_TICK_BUDGET_SEC``.
+    ``PMBOT_RESEARCH_TICK_BUDGET_SEC``.
     """
     log.info("[PHASE 3] Research pipeline")
     directives = vault.read_directives()

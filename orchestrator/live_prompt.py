@@ -1,4 +1,4 @@
-"""Schema-driven live prompts for OpenClaw agent invocations."""
+"""Schema-driven live prompts for LLM agent invocations."""
 
 from __future__ import annotations
 

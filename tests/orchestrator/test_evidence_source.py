@@ -21,11 +21,11 @@ def _row(market_id):
 
 
 def test_config_default_ab_and_unknown_raises(monkeypatch):
-    monkeypatch.delenv("OPENCLAW_EVIDENCE_SOURCE", raising=False)
+    monkeypatch.delenv("PMBOT_EVIDENCE_SOURCE", raising=False)
     assert orch_config.evidence_source() == "ab"
-    monkeypatch.setenv("OPENCLAW_EVIDENCE_SOURCE", "WEB")
+    monkeypatch.setenv("PMBOT_EVIDENCE_SOURCE", "WEB")
     assert orch_config.evidence_source() == "web"
-    monkeypatch.setenv("OPENCLAW_EVIDENCE_SOURCE", "bogus")
+    monkeypatch.setenv("PMBOT_EVIDENCE_SOURCE", "bogus")
     with pytest.raises(ValueError):
         orch_config.evidence_source()
 
@@ -35,11 +35,11 @@ def test_ab_arm_is_stable_and_balanced(monkeypatch):
     arms = [evidence.ab_arm(m) for m in ids]
     assert arms == [evidence.ab_arm(m) for m in ids]
     assert 60 < arms.count("aiq") < 140 and set(arms) == {"aiq", "web"}
-    monkeypatch.setenv("OPENCLAW_EVIDENCE_SOURCE", "ab")
+    monkeypatch.setenv("PMBOT_EVIDENCE_SOURCE", "ab")
     assert [evidence.intended_source(m) for m in ids] == arms
-    monkeypatch.setenv("OPENCLAW_EVIDENCE_SOURCE", "aiq")
+    monkeypatch.setenv("PMBOT_EVIDENCE_SOURCE", "aiq")
     assert {evidence.intended_source(m) for m in ids} == {"aiq"}
-    monkeypatch.setenv("OPENCLAW_EVIDENCE_SOURCE", "web")
+    monkeypatch.setenv("PMBOT_EVIDENCE_SOURCE", "web")
     assert {evidence.intended_source(m) for m in ids} == {"web"}
 
 
@@ -60,7 +60,7 @@ def test_sanitizer_redacts_market_and_odds_lines():
 
 
 def test_aiq_arm_failure_falls_back_to_web(vault, monkeypatch):
-    monkeypatch.setenv("OPENCLAW_EVIDENCE_SOURCE", "ab")
+    monkeypatch.setenv("PMBOT_EVIDENCE_SOURCE", "ab")
     monkeypatch.setattr(evidence, "ab_arm", lambda m: "aiq")
     monkeypatch.setattr(
         p3_evidence,
@@ -74,7 +74,7 @@ def test_aiq_arm_failure_falls_back_to_web(vault, monkeypatch):
 
 
 def test_aiq_arm_success_keeps_aiq_and_no_fallback_in_aiq_mode(vault, monkeypatch):
-    monkeypatch.setenv("OPENCLAW_EVIDENCE_SOURCE", "ab")
+    monkeypatch.setenv("PMBOT_EVIDENCE_SOURCE", "ab")
     monkeypatch.setattr(evidence, "ab_arm", lambda m: "aiq")
     monkeypatch.setattr(
         p3_evidence,
@@ -84,7 +84,7 @@ def test_aiq_arm_success_keeps_aiq_and_no_fallback_in_aiq_mode(vault, monkeypatc
     meta = phases._fetch_and_persist_bundle(vault, "m2", ["a"], spawn_agent, "2026-10-22")
     assert meta == {"evidence_source": "aiq", "evidence_fallback": False}
 
-    monkeypatch.setenv("OPENCLAW_EVIDENCE_SOURCE", "aiq")
+    monkeypatch.setenv("PMBOT_EVIDENCE_SOURCE", "aiq")
     monkeypatch.setattr(
         p3_evidence,
         "fetch_research_bundle",
@@ -95,7 +95,7 @@ def test_aiq_arm_success_keeps_aiq_and_no_fallback_in_aiq_mode(vault, monkeypatc
 
 
 def test_web_path_end_to_end_in_stub_mode(vault, monkeypatch):
-    monkeypatch.setenv("OPENCLAW_EVIDENCE_SOURCE", "web")
+    monkeypatch.setenv("PMBOT_EVIDENCE_SOURCE", "web")
     out = phases._research_market(vault, spawn_agent, _row("0xweb"), "d")
     assert out is not None
     assert (out["evidence_source"], out["evidence_fallback"]) == ("web", False)
@@ -107,7 +107,7 @@ def test_web_path_end_to_end_in_stub_mode(vault, monkeypatch):
 
 
 def test_web_searcher_stub_error_yields_error_rows(monkeypatch):
-    monkeypatch.setenv("OPENCLAW_ORCHESTRATOR_MODE", "stub_error")
+    monkeypatch.setenv("PMBOT_MODE", "stub_error")
     rows = evidence.fetch_web_rows(spawn_agent, "m", ["q1", "q2"], "2026-10-22")
     assert [r["query"] for r in rows] == ["q1", "q2"]
     assert all(r["error"] and not r["research_data"] for r in rows)

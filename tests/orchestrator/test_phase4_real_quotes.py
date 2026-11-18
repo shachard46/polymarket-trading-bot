@@ -10,7 +10,7 @@ import pytest
 
 from config.trading_constants import BANKROLL_USD
 from orchestrator import ledger, phases, polymarket_api, scraper
-from orchestrator.openclaw_cli import OpenClawCLIError
+from orchestrator.llm.base import LLMError
 from orchestrator.phases import p4_execution
 from orchestrator.polymarket_api import PolymarketAPIError
 from orchestrator.scraper import MarketRow
@@ -228,7 +228,7 @@ def test_phase4_failure_leaves_intent_and_not_reeligible(vault, monkeypatch):
 
 def test_phase4_infra_failure_keeps_intent_and_aborts(vault, monkeypatch):
     def down(**_kw):
-        raise OpenClawCLIError("gateway down")
+        raise LLMError("provider down")
 
     monkeypatch.setattr(p4_execution, "_load_execute_polymarket_trade", lambda: down)
     with pytest.raises(InfraUnavailable):

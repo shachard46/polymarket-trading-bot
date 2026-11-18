@@ -21,8 +21,8 @@ def _row(mid: str, **over) -> MarketRow:
 
 
 def test_two_stub_ticks(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENCLAW_ORCHESTRATOR_MODE", "stub")
-    monkeypatch.setenv("OPENCLAW_VAULT_PATH", str(tmp_path))
+    monkeypatch.setenv("PMBOT_MODE", "stub")
+    monkeypatch.setenv("PMBOT_VAULT_PATH", str(tmp_path))
     rows = {
         "ok1": _row("ok1", yes_price=0.26, no_price=0.74),
         "ok2": _row("ok2", yes_price=0.55, no_price=0.45),

@@ -9,7 +9,6 @@ from orchestrator.live_prompt import build_live_response_hint
 from orchestrator.runner import (
     STUB_RESPONSES,
     _build_live_prompt,
-    _live_session_key,
     spawn_agent,
 )
 from orchestrator.schema_validation import (
@@ -200,7 +199,6 @@ def test_build_live_prompt_lists_briefer_schema_keys():
             "category": None,
             "today": "2026-10-22",
         },
-        agent_id="polymarket-briefer",
     )
     assert "research_queries" in prompt
     assert "error" in prompt
@@ -214,7 +212,6 @@ def test_build_live_prompt_overseer_includes_yaml_hint():
         "overseer",
         spec,
         {"post_mortems": [], "current_directives": "x"},
-        agent_id="polymarket-overseer",
     )
     assert "new_directives_markdown" in prompt
     assert "rationale" in prompt
@@ -268,15 +265,3 @@ def test_spawn_agent_briefer_accepts_valid_payload():
     assert out["market_id"] == "0xabc"
     assert out["research_queries"]
     assert out.get("error") is None
-
-
-def test_live_session_key_overseer_is_isolated():
-    key = _live_session_key(
-        "polymarket-overseer",
-        "overseer",
-        {"post_mortems": [], "current_directives": "x"},
-    )
-    from orchestrator.runner import get_run_nonce
-
-    assert key == f"agent:polymarket-overseer:orch-overseer-directives-{get_run_nonce()}"
-    assert "global" not in key

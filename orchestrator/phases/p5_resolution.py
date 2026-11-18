@@ -43,7 +43,7 @@ def phase5_resolution_and_post_mortem(
 def _resolve_ledger_markets(vault: ObsidianManager) -> None:
     """Record resolutions for every unresolved ledger market (capped per tick)."""
     try:
-        limit = int(os.environ.get("OPENCLAW_LEDGER_RESOLVE_LIMIT", "100"))
+        limit = int(os.environ.get("PMBOT_LEDGER_RESOLVE_LIMIT", "100"))
     except ValueError:
         limit = 100
     for market_id in ledger.unresolved_market_ids(vault)[: max(limit, 0)]:

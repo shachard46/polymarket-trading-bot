@@ -7,7 +7,7 @@ to empty results, so a Polymarket outage degrades to "nothing to do this tick" r
 
 Environment variables:
 
-- ``OPENCLAW_INGEST_LIMIT`` — max candidate markets pulled per ingestion cycle (default ``100``).
+- ``PMBOT_INGEST_LIMIT`` — max candidate markets pulled per ingestion cycle (default ``100``).
 - ``GAMMA_BASE_URL`` / ``CLOB_BASE_URL`` / ``POLYMARKET_API_TIMEOUT_SEC`` — see ``polymarket_api``.
 """
 
@@ -31,13 +31,13 @@ _DEFAULT_INGEST_LIMIT = 100
 
 
 def _ingest_limit() -> int:
-    raw = os.environ.get("OPENCLAW_INGEST_LIMIT")
+    raw = os.environ.get("PMBOT_INGEST_LIMIT")
     if not raw:
         return _DEFAULT_INGEST_LIMIT
     try:
         return max(1, int(raw))
     except ValueError:
-        log.warning("Invalid OPENCLAW_INGEST_LIMIT=%r; using default", raw)
+        log.warning("Invalid PMBOT_INGEST_LIMIT=%r; using default", raw)
         return _DEFAULT_INGEST_LIMIT
 
 
@@ -243,7 +243,7 @@ def fetch_target_markets(knobs: dict[str, Any] | None = None) -> list[MarketRow]
 
     ``knobs`` is the directives-derived mapping (``extract_filter_directives``) so the server-side
     window follows the Overseer-tunable ``min/max_days_to_resolution``. Limit is
-    ``OPENCLAW_INGEST_LIMIT``. Phase 2 still applies the full deterministic gate.
+    ``PMBOT_INGEST_LIMIT``. Phase 2 still applies the full deterministic gate.
     """
     try:
         data = polymarket_api.list_candidates(_ingest_limit(), knobs)

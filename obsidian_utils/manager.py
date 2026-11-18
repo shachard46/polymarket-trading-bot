@@ -93,7 +93,7 @@ class ObsidianManager(DirectivesMixin, ResearchBundleMixin):
     vault_base:
         Workspace root on disk.  All ``VAULT_PATHS`` entries (e.g.
         ``Vault/00_System/``) are resolved relative to this.  When omitted,
-        uses :envvar:`OPENCLAW_VAULT_PATH` if set, otherwise the project root.
+        uses :envvar:`PMBOT_VAULT_PATH` if set, otherwise the project root.
     """
 
     def __init__(self, vault_base: str | Path | None = None) -> None:

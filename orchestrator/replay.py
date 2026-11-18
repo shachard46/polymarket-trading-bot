@@ -57,7 +57,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--vault-path",
         default=None,
-        help="Override vault base path (default: OPENCLAW_VAULT_PATH or project root).",
+        help="Override vault base path (default: PMBOT_VAULT_PATH or project root).",
     )
     parser.add_argument(
         "--dry-run",

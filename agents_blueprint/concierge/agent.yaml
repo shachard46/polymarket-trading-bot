@@ -1,18 +1,6 @@
 id: concierge
-openclaw_agent_id: polymarket-concierge
-description: User-facing Discord front-end. Relays Hub outbox messages (offers, digests, directive proposals) and records yes/no votes. Never trades, never decides.
-hub_spawned: false  # runs on OpenClaw (Discord + cron/heartbeat); the Hub never calls spawn_agent for it
+description: Owner-facing Q&A front-end used by the built-in Discord bot (orchestrator/discord_bot.py). Read-only, never trades, never decides.
+hub_spawned: false  # the Hub never calls spawn_agent for it; startup validation skips it
 model: null
-channels:
-  - discord
-schedule: "cron/heartbeat every few minutes: poll Vault/06_Concierge/outbox"
-tools:
-  read:
-    - Vault/06_Concierge/outbox
-    - Vault/00_System/stats.md
-    - Vault/02_Active_Research
-    - Vault/05_Ledger
-  write:
-    - Vault/06_Concierge/inbox
 input_schema: {}
 output_schema: {}

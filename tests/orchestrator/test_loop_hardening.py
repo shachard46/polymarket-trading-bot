@@ -9,7 +9,7 @@ import pytest
 
 from orchestrator import config as orch_config
 from orchestrator import loop, phases, scraper
-from orchestrator.openclaw_cli import OpenClawCLIError
+from orchestrator.llm.base import LLMError
 from orchestrator.parse import run_agent_with_format_retries
 from orchestrator.schema_validation import AgentSchemaError
 from orchestrator.scraper import MarketRow
@@ -86,7 +86,7 @@ def test_run_forever_survives_phase6_failure(vault, monkeypatch):
 
 @pytest.mark.parametrize(
     "exc",
-    [OpenClawCLIError("gw down"), subprocess.TimeoutExpired("x", 1), ConnectionResetError()],
+    [LLMError("provider down"), subprocess.TimeoutExpired("x", 1), ConnectionResetError()],
 )
 def test_infra_error_does_not_flag_and_aborts(vault, exc):
     vault.write_filter_log(
@@ -109,9 +109,9 @@ def test_content_error_still_flags(vault):
     assert vault.is_market_inactive("m1")
 
 
-def test_phase2_gateway_outage_aborts_without_blacklisting(vault):
+def test_phase2_provider_outage_aborts_without_blacklisting(vault):
     def runner(role, payload):
-        raise OpenClawCLIError("gateway down")
+        raise LLMError("provider down")
 
     market = MarketRow(market_id="m-out", market_title="T", market_data=dict(GATE_OK))
     with pytest.raises(InfraUnavailable):

@@ -1,6 +1,6 @@
-# OpenClaw Skill Contracts
+# Skill Contracts
 
-Agents must interact with the system via these explicit OpenClaw Skills. For each skill, the system requires a `SKILL.md` defining its interface, alongside its execution logic.
+Agents and the Hub interact with the system only through these explicit skills. For each skill, the system requires a `SKILL.md` defining its interface, alongside its execution logic.
 
 ## 1. Skill: calculate_trade_allocation
 

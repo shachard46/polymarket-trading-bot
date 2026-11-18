@@ -11,7 +11,7 @@ from tests.orchestrator.test_research_redesign import World, _seed
 
 @pytest.fixture()
 def world(monkeypatch, vault):
-    monkeypatch.setenv("OPENCLAW_EVIDENCE_SOURCE", "aiq")
+    monkeypatch.setenv("PMBOT_EVIDENCE_SOURCE", "aiq")
     return World(monkeypatch, vault)
 
 
