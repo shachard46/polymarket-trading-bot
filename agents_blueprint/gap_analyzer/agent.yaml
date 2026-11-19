@@ -8,6 +8,7 @@ input_schema:
   title: string
   end_date: "string | null"
   today: string
+  assess_only: boolean
   cruxes: list[dict]
 output_schema:
   market_id: string

@@ -32,7 +32,7 @@ from orchestrator.state import (
 _ROOT = Path(__file__).resolve().parents[2]
 # crux-pipeline fields: copied from research to the ledger, never used for sizing
 _CRUX_KEYS = (
-    "pipeline", "research_depth", "cruxes_total", "crux_answered", "crux_unanswered", "crux_contradicted",
+    "pipeline", "research_depth", "cruxes_total", "crux_answered", "crux_unanswered", "crux_contradicted", "crux_rules",
     "gap_queries", "audit_dropped", "audit_unverified", "framing_gap", "source_mix", "pipeline_flags", "web_calls",
     "judge_arm", "judge_framing", "compound_type", "compound_p", "compound_stated_p", "compound_gap", "compound_corr",
     "discounted_sources", "prior", "prior_kind", "base_rate", "base_rate_n",

@@ -222,7 +222,7 @@ def _meta(statuses):
     return {"cruxes": [{"crux_id": f"c{i}", "status": s, "followed_up": False} for i, s in enumerate(statuses, 1)]}
 
 
-def test_select_judge_ids_top_k_by_tier_then_recency_and_skips_unanswered():
+def test_select_judge_ids_top_k_by_tier_then_recency_and_partial_for_unanswered():
     rows = [
         {"query": "a", "crux_id": "c1", "research_data": "\n".join([
             "- old official | https://x.gov/1 | 2026-01-01", "- blog new | https://a.blogspot.com/1 | 2026-11-18",
@@ -231,11 +231,18 @@ def test_select_judge_ids_top_k_by_tier_then_recency_and_skips_unanswered():
         {"query": "b", "crux_id": "c2", "research_data": "- hidden | https://reuters.com/3 | 2026-11-18"},
     ]
     keep = p3_research.select_judge_ids(rows, _meta(["answered", "unanswered"]), TODAY, k=4)
-    # E1 official, E3 major new, E4 major old, E5 aggregator; the unknown (E6) and blog (E2) lose; c2 is unanswered
-    assert keep == {"E1", "E3", "E4", "E5"}
+    # E1 official, E3 major new, E4 major old, E5 aggregator; the unknown (E6) and blog (E2) lose;
+    # c2 is unanswered: its (single) line is sent as partial evidence
+    assert keep == {"E1", "E3", "E4", "E5", "E7"}
     assert p3_research.select_judge_ids(rows, None, TODAY) is None
     table = p3_research.crux_table(rows, _meta(["answered", "unanswered"]), TODAY, keep)
-    assert table[0]["evidence_ids"] == ["E1", "E3", "E4", "E5"] and table[1]["evidence_ids"] == []
+    assert table[0]["evidence_ids"] == ["E1", "E3", "E4", "E5"] and table[1]["evidence_ids"] == ["E7"]
+    assert table[1]["evidence_partial"] is True and "evidence_partial" not in table[0]
+    many = rows + [{"query": "c", "crux_id": "c2", "research_data": "\n".join(
+        f"- more {i} | https://reuters.com/m{i} | 2026-11-1{i}" for i in range(5))}]
+    k2 = p3_research.select_judge_ids(many, _meta(["answered", "unanswered"]), TODAY, k=4)
+    c2_ids = {r["id"] for r in evidence.label_lines(many, TODAY) if r["crux_id"] == "c2"}
+    assert len(k2 & c2_ids) == 2  # at most 2 partial lines for the unanswered crux
 
 
 def test_label_bundle_only_ids_keeps_global_ids():
@@ -255,12 +262,12 @@ def test_judges_receive_trimmed_bundle_and_input_is_logged(fx, caplog):
         p3_research.run_judges(fx.vault, fx.runner, ROW, "d", TODAY, meta)
     msg = next(r.getMessage() for r in caplog.records if "judge input lines" in r.getMessage())
     before, after = (int(x) for x in msg.split(": ")[1].split(" -> "))
-    assert after < before
+    assert after <= before
     sent = fx.of("deep_researcher")[0]
     ids = [ln.split(" ")[0][1:] for r in sent["research_bundle"] for ln in r["research_data"].splitlines() if ln.startswith("[E")]
     assert len(ids) == after
     c5 = next(t for t in sent["crux_table"] if t["crux_id"] == "c5")
-    assert c5["status"] == "unanswered" and c5["evidence_ids"] == []
+    assert c5["status"] == "unanswered" and len(c5["evidence_ids"]) == 2 and c5["evidence_partial"] is True
 
 
 # --- 6. small fixes -----------------------------------------------------------------------------------------

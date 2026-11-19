@@ -138,6 +138,7 @@ class ResearchFrontmatter(BaseModel):
     crux_answered: Optional[int] = None
     crux_unanswered: Optional[int] = None
     crux_contradicted: Optional[int] = None
+    crux_rules: Optional[int] = None
     gap_queries: Optional[int] = None
     audit_dropped: Optional[int] = None
     audit_unverified: Optional[int] = None

@@ -103,7 +103,7 @@ def _gap_analyzer_stub(payload: dict[str, Any]) -> dict[str, Any]:
             {"crux_id": c.get("crux_id"), "status": "answered", "missing": ""}
             for c in payload.get("cruxes") or []
         ],
-        "follow_up_queries": [],
+        "follow_up_queries": [],  # also with payload["assess_only"]: assess-only calls never propose follow-ups
         "error": None,
     }
 

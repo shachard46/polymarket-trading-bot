@@ -26,6 +26,7 @@ class CruxSpec(BaseModel):
     queries: list[str]
     moves_p_if: str = ""
     component: str | None = None  # compound market: id of the component this crux is about
+    source: Literal["rules", "web"] = "web"  # "rules": answered by the market rules text itself (not searched)
     provenance_question: str = ""  # who produced the forecast/estimate this crux relies on, their stake, track record
 
     @field_validator("question", "moves_p_if", "provenance_question")

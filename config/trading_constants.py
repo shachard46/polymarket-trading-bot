@@ -129,6 +129,7 @@ CRUX_COUNT = {"full": (5, 8), "lite": (4, 5)}  # (min, max) cruxes per depth
 CRUX_MAX_QUERIES = 2                # queries per crux
 CRUX_SEARCH_WORKERS = 4             # crux searches run in parallel
 DEPTH_FULL_MIN_USD = 25.0           # potential max order below this -> RESEARCH_DEPTH "lite" (fewer cruxes, no audit)
+JUDGE_PARTIAL_LINES = 2               # judge input: lines sent for a still-unanswered crux (labelled partial)
 JUDGE_LINES_PER_CRUX = 4              # judge input: top evidence lines kept per answered/contradicted crux (quality tier, then recency)
 COMPOUND_MAX_CORR = 0.9             # judge-assumed correlation between compound components is clamped to [0, this]
 COMPOUND_MAX_COMPONENTS = 4         # components of a compound market (AND / OR); more are ignored

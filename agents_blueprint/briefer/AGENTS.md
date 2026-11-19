@@ -19,10 +19,12 @@ Emit **cruxes**: the 5-8 questions whose answers most move the probability (`dep
 
 Required roles (at least one each):
 
-- **mechanism** — how and when does this market resolve: the exact rule clauses, the deciding body, the official source, polarity (is YES the event in the title or its inverse?).
-- **comparator** — the base rate or reference class: how often does this kind of event happen over a comparable window? Name comparable cases.
-- **horizon** — catalysts before `end_date`: scheduled votes, deadlines, releases, matches, hearings.
+- **mechanism** — the real-world resolution process, facts that need the web: who certifies or decides, when results are published, the timeline and any appeal or delay. Never ask "what do the market rules say": the rules text is already in your input and rule interpretation is the judge's job (the judge gets the rules). If you must ask one anyway, tag it `"source": "rules"` and it is not searched.
+- **comparator** — the base rate or reference class: how often does this kind of event happen over a comparable window? Choose a reference class broad enough to have published data (e.g. "incumbent-party holds in local executive races in this country", not one party's poll deviation in two specific past races). One dimension per question.
+- **horizon** — scheduled catalysts before `end_date`: votes, deadlines, releases, matches, hearings. Ask for the schedule (and whether anything further is scheduled).
 - **skeptic** — the strongest case against the scout's apparent leaning (or against the obvious answer): what fact or source would make the obvious view wrong?
+
+Names of candidates, actors and entities in questions and queries must come from the scout output or the market rules, never from your memory. If the scout shows a change (a different nominee, a replaced official), use the scout's.
 
 Add `evidence` cruxes for the current state of the world (latest verifiable status, what **all** recent polls/reports/filings say, official statements). Prefer questions that pull the **aggregate** picture (every recent poll, the full vote count, the whole schedule) over a single source.
 
@@ -57,7 +59,8 @@ Your entire response is the raw JSON object below. First character `{`, last `}`
       "queries": ["<query as of YYYY-MM-DD>"],
       "moves_p_if": "<which answer pushes p up / down>",
       "component": null,
-      "provenance_question": ""
+      "provenance_question": "",
+      "source": "web"
     }
   ],
   "compound": null,

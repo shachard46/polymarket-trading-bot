@@ -156,7 +156,8 @@ def test_gap_round_is_capped_at_one_round_and_three_queries(fx):
 
     fx.gap = gap
     _, meta, _, _ = p3_research.build_evidence(fx.vault, fx.runner, ROW, TODAY, "full")
-    assert len(fx.of("gap_analyzer")) == 1  # one round only
+    assert len(fx.of("gap_analyzer")) == 2  # one search round: assess + one assess-only re-assessment
+    assert [p["assess_only"] for p in fx.of("gap_analyzer")] == [False, True]
     assert meta["gap_queries"] == GAP_MAX_QUERIES == 3
     follow = [q for q in fx.queries if q.startswith("reworded")]
     assert len(follow) == 3 and all("as of 2026-11-19" in q.lower() for q in follow)
@@ -179,6 +180,86 @@ def test_gap_only_follows_up_unanswered_cruxes_not_repeats(fx):
     fx.gap = gap
     _, meta, _, _ = p3_research.build_evidence(fx.vault, fx.runner, ROW, TODAY, "full")
     assert meta["gap_queries"] == 0
+
+
+def _unans_gap(second):
+    """Gap stub: first call marks everything unanswered and proposes follow-ups; assess_only call returns `second`."""
+    def gap(payload):
+        ids = [c["crux_id"] for c in payload["cruxes"]]
+        if payload.get("assess_only"):
+            return second(payload)
+        return {
+            "market_id": payload["market_id"],
+            "assessments": [{"crux_id": i, "status": "unanswered", "missing": "nothing"} for i in ids],
+            "follow_up_queries": [{"crux_id": i, "query": f"reworded {i}"} for i in ids],
+            "error": None,
+        }
+    return gap
+
+
+def test_reassess_updates_followed_up_cruxes_without_web_calls(fx):
+    def second(payload):
+        return {
+            "market_id": payload["market_id"],
+            "assessments": [{"crux_id": c["crux_id"], "status": "answered", "missing": ""} for c in payload["cruxes"]],
+            "follow_up_queries": [{"crux_id": "c1", "query": "ignored extra"}],
+            "error": None,
+        }
+
+    fx.gap = _unans_gap(second)
+    _, meta, _, _ = p3_research.build_evidence(fx.vault, fx.runner, ROW, TODAY, "full")
+    calls = fx.of("gap_analyzer")
+    assert len(calls) == 2 and calls[1]["assess_only"] is True
+    followed = [c for c in meta["cruxes"] if c["followed_up"]]
+    assert len(followed) == 3 and {c["crux_id"] for c in followed} == {c["crux_id"] for c in calls[1]["cruxes"]}
+    assert all(c["status"] == "answered" for c in followed)
+    assert all(c["evidence"] for c in calls[1]["cruxes"])  # follow-up lines included
+    assert not any("ignored extra" in q for q in fx.queries)
+    assert meta["gap_queries"] == 3 and "gap_reassess_failed" not in meta["flags"]
+
+
+def test_reassess_failure_keeps_statuses_and_flags(fx):
+    def second(payload):
+        raise ValueError("down")
+
+    fx.gap = _unans_gap(second)
+    _, meta, _, _ = p3_research.build_evidence(fx.vault, fx.runner, ROW, TODAY, "full")
+    assert "gap_reassess_failed" in meta["flags"] and "gap_failed" not in meta["flags"]
+    followed = [c for c in meta["cruxes"] if c["followed_up"]]
+    assert followed and all(c["status"] == "unanswered" for c in followed)
+
+
+def test_rules_crux_is_not_searched_and_counted_separately(fx):
+    fx.cruxes = [
+        {**_crux("mechanism"), "question": "Do the market rules make YES contingent on certification?"},
+        {**_crux("comparator"), "source": "rules", "question": "What does the fine print say?"},
+        _crux("horizon"), _crux("skeptic"), _crux("evidence"),
+    ]
+    _, meta, _, _ = p3_research.build_evidence(fx.vault, fx.runner, ROW, TODAY, "full")
+    rules = [c for c in meta["cruxes"] if c["status"] == "rules"]
+    assert {c["role"] for c in rules} == {"mechanism", "comparator"}
+    assert not any("mechanism" in q or "comparator" in q for q in fx.queries)
+    assert all(c["crux_id"] not in {x["crux_id"] for x in fx.of("gap_analyzer")[0]["cruxes"]} for c in rules)
+    fields = p3_research.crux_fields(meta, None, [])
+    assert fields["crux_rules"] == 2 and fields["cruxes_total"] == 5
+    assert not any("rules" in u.lower() and "certification" in u for u in meta["known_unknowns"])
+
+
+def test_followed_up_unanswered_crux_stays_in_known_unknowns(fx):
+    def second(payload):
+        return {
+            "market_id": payload["market_id"],
+            "assessments": [{"crux_id": c["crux_id"], "status": "unanswered", "missing": "still thin"}
+                            for c in payload["cruxes"]],
+            "follow_up_queries": [], "error": None,
+        }
+
+    fx.gap = _unans_gap(second)
+    _, meta, _, _ = p3_research.build_evidence(fx.vault, fx.runner, ROW, TODAY, "full")
+    followed = [c for c in meta["cruxes"] if c["followed_up"]]
+    assert followed
+    for c in followed:
+        assert any(c["question"] in u and "still thin" in u for u in meta["known_unknowns"])
 
 
 # --- audit ------------------------------------------------------------------------------------------------

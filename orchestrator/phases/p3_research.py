@@ -22,6 +22,7 @@ fetch rows and call agents.
 from __future__ import annotations
 
 import contextvars
+import re
 import tempfile
 import threading
 from collections import Counter
@@ -43,6 +44,7 @@ from config.trading_constants import (
     JUDGE_LINES_PER_CRUX,
     SOURCE_CLASSIFIER_MAX_DOMAINS,
     LIQ_FRAC,
+    JUDGE_PARTIAL_LINES,
     MAX_GAP_ROUNDS,
     MAX_ORDER_USD,
     RESEARCH_MAX_WEB_CALLS,
@@ -221,6 +223,18 @@ def _templates(title: str, end: str) -> dict[str, dict[str, Any]]:
     }
 
 
+_RULES_Q_RE = re.compile(
+    r"^\s*(?:do|does|did|is|are|what do|what does|how do|how does)\b.{0,60}?\b(?:market|resolution)\s+"
+    r"(?:rules?|criteria|description|text|terms)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_rules_question(question: Any) -> bool:
+    """Safety net: the question asks what the market rules / resolution text say (the judge reads those, no search)."""
+    return bool(_RULES_Q_RE.search(str(question or "")))
+
+
 def _normalize_cruxes(
     proposed: list[dict[str, Any]], row: dict[str, Any], today: str, depth: str,
     spec: dict[str, Any] | None = None,
@@ -239,6 +253,8 @@ def _normalize_cruxes(
     for c in cruxes:
         if c.get("component") not in comp_ids:
             c["component"] = None
+    for c in cruxes:
+        c["source"] = "rules" if (c.get("source") == "rules" or _is_rules_question(c.get("question"))) else "web"
     present = {c["role"] for c in cruxes}
     for role in REQUIRED_CRUX_ROLES:
         if role not in present:
@@ -295,8 +311,8 @@ def _normalize_cruxes(
         out.append({
             "crux_id": f"c{n}", "role": c["role"], "question": c["question"],
             "moves_p_if": c.get("moves_p_if", ""), "queries": queries,
-            "component": c.get("component"), "provenance_question": prov,
-            "status": "unanswered", "missing": "", "followed_up": False,
+            "component": c.get("component"), "provenance_question": prov, "source": c.get("source", "web"),
+            "status": "rules" if c.get("source") == "rules" else "unanswered", "missing": "", "followed_up": False,
         })
     return out
 
@@ -350,9 +366,11 @@ def _initial_jobs(cruxes: list[dict[str, Any]], budget: WebBudget) -> list[tuple
     """First query of every crux, then second queries while the gap round's reserve stays free."""
     jobs = []
     for c in cruxes:
-        if budget.take(1):
+        if c.get("source") != "rules" and budget.take(1):
             jobs.append((c, c["queries"][0]))
     for c in cruxes:
+        if c.get("source") == "rules":
+            continue
         for q in c["queries"][1:]:
             if budget.take(1, reserve=GAP_MAX_QUERIES):
                 jobs.append((c, q))
@@ -384,16 +402,17 @@ def _gap_round(
 ) -> tuple[list[dict[str, Any]], int]:
     """Assess every crux, run at most one round of follow-up searches; returns (new rows, follow-up query count)."""
     lines = _labelled_lines_by_crux(rows, today)
-    for c in cruxes:  # default by evidence presence (used when the analyzer fails or skips a crux)
+    searched = [c for c in cruxes if c.get("source") != "rules"]  # rules cruxes are read by the judge, not searched
+    for c in searched:  # default by evidence presence (used when the analyzer fails or skips a crux)
         c["status"] = "answered" if lines.get(c["crux_id"]) else "unanswered"
     md = row.get("market_data") or {}
     payload = {
         "market_id": row["market_id"], "title": row.get("market_title", ""), "end_date": md.get("end_date"),
-        "today": today,
+        "today": today, "assess_only": False,
         "cruxes": [
             {"crux_id": c["crux_id"], "role": c["role"], "question": c["question"], "moves_p_if": c["moves_p_if"],
              "evidence": lines.get(c["crux_id"], [])}
-            for c in cruxes
+            for c in searched
         ],
     }
     new_rows: list[dict[str, Any]] = []
@@ -402,12 +421,12 @@ def _gap_round(
         out = _call_agent(runner, "gap_analyzer", payload, GapOutput, flags, "gap")
         if out is None:
             return new_rows, queries_run
-        by_id = {c["crux_id"]: c for c in cruxes}
+        by_id = {c["crux_id"]: c for c in searched}
         for a in out.assessments:
             if a.crux_id in by_id:
                 by_id[a.crux_id]["status"] = a.status
                 by_id[a.crux_id]["missing"] = a.missing.strip()
-        known = {q.lower() for c in cruxes for q in c["queries"]}
+        known = {q.lower() for c in searched for q in c["queries"]}
         wanted: list[tuple[dict[str, Any], str]] = []
         proposed_for: set[str] = set()
         for f in out.follow_up_queries:
@@ -418,10 +437,10 @@ def _gap_round(
             known.add(q.lower())
             wanted.append((c, q))
             proposed_for.add(c["crux_id"])
-        for c in cruxes:
+        for c in searched:
             if c["role"] == "comparator" and c["status"] == "unanswered" and c["crux_id"] in proposed_for:
                 log.info("[PHASE 3] gap: analyzer proposed comparator follow-up for %s (%s)", row["market_id"], c["crux_id"])
-        for c in cruxes:  # history first: an unanswered comparator crux always gets a follow-up
+        for c in searched:  # history first: an unanswered comparator crux always gets a follow-up
             if c["role"] == "comparator" and c["status"] == "unanswered" and c["crux_id"] not in proposed_for:
                 q = _comparator_followup(c, today)
                 if q.lower() not in known:
@@ -440,8 +459,48 @@ def _gap_round(
             for c, q in jobs:
                 c["followed_up"] = True
                 c["queries"].append(q)
+            _reassess(runner, row, today, searched, rows + new_rows, payload, flags)
         break  # one round only (MAX_GAP_ROUNDS is capped in code)
     return new_rows, queries_run
+
+
+def _reassess(
+    runner: AgentRunner, row: dict[str, Any], today: str, searched: list[dict[str, Any]],
+    all_rows: list[dict[str, Any]], base_payload: dict[str, Any], flags: list[str],
+) -> None:
+    """Assess-only gap call for the followed-up cruxes (all their lines, follow-up included); no web calls.
+
+    Updates status and ``missing``; any returned follow-up queries are ignored. On failure the earlier statuses stay
+    and ``gap_reassess_failed`` is flagged.
+    """
+    followed = [c for c in searched if c["followed_up"]]
+    if not followed:
+        return
+    lines = _labelled_lines_by_crux(all_rows, today)
+    payload = {
+        **{k: v for k, v in base_payload.items() if k != "cruxes"},
+        "assess_only": True,
+        "cruxes": [
+            {"crux_id": c["crux_id"], "role": c["role"], "question": c["question"], "moves_p_if": c["moves_p_if"],
+             "evidence": lines.get(c["crux_id"], [])}
+            for c in followed
+        ],
+    }
+    before = sum(1 for c in followed if c["status"] == "unanswered")
+    local_flags: list[str] = []
+    out = _call_agent(runner, "gap_analyzer", payload, GapOutput, local_flags, "gap_reassess")
+    if out is None:
+        flags.extend(local_flags)
+        return
+    by_id = {c["crux_id"]: c for c in followed}
+    for a in out.assessments:
+        if a.crux_id in by_id:
+            by_id[a.crux_id]["status"] = a.status
+            by_id[a.crux_id]["missing"] = a.missing.strip()
+    after = sum(1 for c in followed if c["status"] == "unanswered")
+    log.info(
+        "[PHASE 3] gap reassess for %s: %d cruxes, %d→%d unanswered", row["market_id"], len(followed), before, after
+    )
 
 
 # ---- audit ----------------------------------------------------------------------------------------------
@@ -512,6 +571,8 @@ def _audit(
 
 def _crux_view(c: dict[str, Any]) -> dict[str, Any]:
     view = {k: c[k] for k in ("crux_id", "role", "question", "moves_p_if", "status", "missing", "followed_up")}
+    if c.get("source") == "rules":
+        view["source"] = "rules"
     if c.get("component"):
         view["component"] = c["component"]
     if c.get("provenance_question"):
@@ -602,7 +663,7 @@ def build_evidence(
     known_unknowns = [
         (c["question"] + (f" ({c['missing']})" if c["missing"] else ""))
         for c in cruxes
-        if c["status"] in ("unanswered", "contradicted") and not (c["followed_up"] and by_crux.get(c["crux_id"]))
+        if c["status"] in ("unanswered", "contradicted")
     ]
     lines = evidence.label_lines(rows, today)
     verified = {(ri, li) for ri, r in enumerate(rows) for li in r.get("verified") or []}
@@ -653,7 +714,11 @@ def crux_table(
     for rec in evidence.label_lines(bundle, today):
         if only_ids is None or rec["id"] in only_ids:
             ids.setdefault(str(rec["crux_id"]), []).append(rec["id"])
-    return [{**c, "evidence_ids": ids.get(c["crux_id"], [])} for c in crux_meta["cruxes"]]
+    out = []
+    for c in crux_meta["cruxes"]:
+        ev = ids.get(c["crux_id"], [])
+        out.append({**c, "evidence_ids": ev, **({"evidence_partial": True} if ev and c.get("status") == "unanswered" else {})})
+    return out
 
 
 def select_judge_ids(
@@ -661,9 +726,9 @@ def select_judge_ids(
 ) -> set[str] | None:
     """E-ids of the lines the judge is sent, or ``None`` for no trimming (no crux metadata: legacy bundle).
 
-    Lines behind answered / contradicted cruxes (and cruxes a follow-up query filled) count; per crux the top ``k`` by
-    source-quality tier, then recency (undated last). Lines of unanswered cruxes are not sent: the judge gets the crux
-    status and ``known_unknowns`` instead. Lines of a crux the metadata does not know are kept.
+    Per crux the top ``k`` lines by source-quality tier, then recency (undated last) behind answered / contradicted
+    cruxes; an unanswered crux sends at most ``JUDGE_PARTIAL_LINES`` (2) lines, labelled partial in the crux table
+    (``evidence_partial``), next to its ``known_unknowns`` entry. Lines of a crux the metadata does not know are kept.
     """
     if not crux_meta or not crux_meta.get("cruxes"):
         return None
@@ -674,13 +739,13 @@ def select_judge_ids(
         c = by_id.get(str(rec["crux_id"]))
         if c is None:
             keep.add(rec["id"])
-        elif c["status"] in ("answered", "contradicted") or c.get("followed_up"):
+        elif c["status"] in ("answered", "contradicted", "unanswered"):
             per.setdefault(c["crux_id"], []).append(rec)
-    for recs in per.values():
+    for cid, recs in per.items():
         recs.sort(key=lambda r: (
             _TIER_RANK.get(r["quality"], 3), r["age_days"] if r["age_days"] is not None else 10**9, int(r["id"][1:]),
         ))
-        keep.update(r["id"] for r in recs[:k])
+        keep.update(r["id"] for r in recs[: JUDGE_PARTIAL_LINES if by_id[cid]["status"] == "unanswered" else k])
     return keep
 
 
@@ -894,6 +959,7 @@ def crux_fields(
         "crux_answered": statuses.get("answered", 0),
         "crux_unanswered": statuses.get("unanswered", 0),
         "crux_contradicted": statuses.get("contradicted", 0),
+        "crux_rules": statuses.get("rules", 0),
         "gap_queries": meta.get("gap_queries", 0),
         "audit_dropped": meta.get("audit_dropped", 0),
         "audit_unverified": meta.get("audit_unverified", 0),
