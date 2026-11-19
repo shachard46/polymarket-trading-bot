@@ -35,7 +35,7 @@ _CRUX_KEYS = (
     "pipeline", "research_depth", "cruxes_total", "crux_answered", "crux_unanswered", "crux_contradicted",
     "gap_queries", "audit_dropped", "audit_unverified", "framing_gap", "source_mix", "pipeline_flags", "web_calls",
     "judge_arm", "judge_framing", "compound_type", "compound_p", "compound_stated_p", "compound_gap", "compound_corr",
-    "discounted_sources",
+    "discounted_sources", "prior", "prior_kind", "base_rate", "base_rate_n",
 )
 _ALLOCATION_SKILL_PATH = (
     _ROOT / "skills/calculate-trade-allocation/calculate_trade_allocation.py"

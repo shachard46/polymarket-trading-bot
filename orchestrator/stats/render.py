@@ -13,6 +13,8 @@ from orchestrator.stats.groups import (
     _COUNTERFACTUAL_STAGES,
     brier_by_evidence_source,
     brier_by_judge_arm,
+    brier_by_prior_kind,
+    researched_by_prior_kind,
     brier_by_model,
     brier_by_provider,
     brier_by_runner_backend,
@@ -58,6 +60,8 @@ def compute_stats(
     out["calibration"] = calibration_table(triples)
     out["brier_by_evidence_source"] = brier_by_evidence_source(rows)
     out["brier_by_judge_arm"] = brier_by_judge_arm(rows)
+    out["brier_by_prior_kind"] = brier_by_prior_kind(rows)
+    out["researched_by_prior_kind"] = researched_by_prior_kind(rows)
     out["brier_by_runner_backend"] = brier_by_runner_backend(rows)
     out["brier_by_model"] = brier_by_model(rows)
     out["brier_by_provider"] = brier_by_provider(rows)
@@ -133,6 +137,18 @@ def _render_judge_arms(s: dict[str, Any]) -> list[str]:
         n, bp, d = brier.get(arm, (0, None, None))
         nm, total, per = cost.get(arm, (0, None, None))
         L.append(f"| {arm} | {n} | {_fmt(bp)} | {_fmt(d)} | {nm} | {_fmt(total)} | {_fmt(per)} |")
+    return L
+
+
+def _render_prior_kinds(s: dict[str, Any]) -> list[str]:
+    """Judge prior (reference_class | structural | judgment): how many researched, how many scored, Brier vs market."""
+    brier = s.get("brier_by_prior_kind", {})
+    researched = s.get("researched_by_prior_kind", {})
+    L = ["", "### Prior kinds", "",
+         "| prior_kind | n researched | n scored | Brier(p) | Brier(p) - Brier(q) |", "|---|---|---|---|---|"]
+    for kind in sorted(set(brier) | set(researched)):
+        n, bp, d = brier.get(kind, (0, None, None))
+        L.append(f"| {kind} | {researched.get(kind, 0)} | {n} | {_fmt(bp)} | {_fmt(d)} |")
     return L
 
 
@@ -296,6 +312,7 @@ def render_stats(s: dict[str, Any]) -> str:
     L = _render_model_vs_market(s)
     L += _render_brier_by(s, "evidence source", "evidence_source", "brier_by_evidence_source")
     L += _render_judge_arms(s)
+    L += _render_prior_kinds(s)
     L += _render_brier_by(s, "runner backend", "runner_backend", "brier_by_runner_backend")
     L += _render_brier_by(s, "model", "model", "brier_by_model")
     L += _render_brier_by(s, "provider", "provider", "brier_by_provider")

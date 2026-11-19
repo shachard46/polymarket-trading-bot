@@ -204,13 +204,17 @@ class DeepResearcherComplete(BaseModel):
     as_of: date
     markdown: str
     error: str | None = None
-    base_rate: float | None = None  # judge mode: the comparator's base rate for the asked outcome
+    base_rate: float | None = None  # judge mode: reference-class rate for the asked outcome; only from real counts
+    base_rate_n: int | None = None  # judge mode: number of past cases behind base_rate
+    base_rate_source: str | None = None  # judge mode: evidence id (E7) holding those counts
+    prior: float | None = None  # judge mode: starting point before case evidence (normalised in p3_research.prior_fields)
+    prior_kind: str | None = None  # judge mode: reference_class | structural | judgment (anything else -> judgment)
     crux_verdicts: list[CruxVerdict] = []  # judge mode: which way each crux pushes, with cited E-ids
     components: list[ComponentP] = []  # judge mode, compound market: P(component happens) per component id
     correlation: float | None = None  # judge mode, compound market: assumed correlation between the components
     discounted_sources: list[str] = []  # judge mode: interested / unproven sources whose claims it discounted
 
-    @field_validator("estimated_p", "p_low", "p_high", "base_rate")
+    @field_validator("estimated_p", "p_low", "p_high", "base_rate", "prior")
     @classmethod
     def _p_in_unit_interval(cls, value: float | None) -> float | None:
         if value is not None and not (0.0 <= value <= 1.0):

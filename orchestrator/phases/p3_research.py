@@ -371,6 +371,12 @@ def _labelled_lines_by_crux(rows: list[dict[str, Any]], today: str) -> dict[str,
     return out
 
 
+def _comparator_followup(crux: dict[str, Any], today: str) -> str:
+    """Reworded history query for an unanswered comparator crux ("historical results / how often ...")."""
+    question = str(crux.get("question") or "").strip().rstrip("?. ")
+    return _ensure_as_of(f"historical results, how often: {question}", today)
+
+
 def _gap_round(
     runner: AgentRunner, row: dict[str, Any], today: str, cruxes: list[dict[str, Any]],
     rows: list[dict[str, Any]], budget: WebBudget, fetch: Callable[[list[str]], list[dict[str, Any]]],
@@ -402,15 +408,28 @@ def _gap_round(
                 by_id[a.crux_id]["status"] = a.status
                 by_id[a.crux_id]["missing"] = a.missing.strip()
         known = {q.lower() for c in cruxes for q in c["queries"]}
-        jobs: list[tuple[dict[str, Any], str]] = []
+        wanted: list[tuple[dict[str, Any], str]] = []
+        proposed_for: set[str] = set()
         for f in out.follow_up_queries:
             c = by_id.get(f.crux_id)
             q = _ensure_as_of(f.query.strip(), today) if f.query.strip() else ""
             if c is None or c["status"] != "unanswered" or not q or q.lower() in known:
                 continue
-            if len(jobs) >= GAP_MAX_QUERIES or not budget.take(1):
-                break
             known.add(q.lower())
+            wanted.append((c, q))
+            proposed_for.add(c["crux_id"])
+        for c in cruxes:  # history first: an unanswered comparator crux always gets a follow-up
+            if c["role"] == "comparator" and c["status"] == "unanswered" and c["crux_id"] not in proposed_for:
+                q = _comparator_followup(c, today)
+                if q.lower() not in known:
+                    known.add(q.lower())
+                    wanted.insert(0, (c, q))
+                    log.info("[PHASE 3] gap: added comparator follow-up for %s: %s", row["market_id"], q)
+                    break
+        jobs: list[tuple[dict[str, Any], str]] = []
+        for c, q in wanted[:GAP_MAX_QUERIES]:  # lowest-priority (last) analyzer queries fall off the cap
+            if not budget.take(1):
+                break
             jobs.append((c, q))
         if jobs:
             new_rows = _search_jobs(jobs, fetch, gap=True)
@@ -729,11 +748,16 @@ def run_judges(
     for (tag, _, _), res in zip(jobs, results):
         if isinstance(res, tuple):
             samples.append(res)
-            if res[0].base_rate is not None:  # how far the judge moved from the comparator's base rate (asked outcome)
+            nf = normalise_prior(res[0])
+            if nf["prior"] is not None:  # how far the judge moved from its prior (asked outcome)
                 log.info(
-                    "[PHASE 3] judge %s for %s: base_rate=%.3f estimated_p=%.3f (moved %+.3f)",
-                    tag, market_id, res[0].base_rate, res[0].estimated_p, res[0].estimated_p - res[0].base_rate,
+                    "[PHASE 3] judge %s for %s: prior=%.3f (%s) base_rate=%s estimated_p=%.3f (moved %+.3f)",
+                    tag, market_id, nf["prior"], nf["prior_kind"],
+                    "null" if nf["base_rate"] is None else f"{nf['base_rate']:.3f}",
+                    res[0].estimated_p, res[0].estimated_p - nf["prior"],
                 )
+            if nf["flags"]:
+                log.warning("[PHASE 3] judge %s for %s prior flags: %s", tag, market_id, nf["flags"])
         else:
             failed.append(tag)
     return samples, failed
@@ -776,6 +800,73 @@ def offer_evidence(
         verified, rest = sides[side]
         return verified[:limit] if verified else [f"{t} (unverified)" for t in rest][:limit]
     return {"evidence_bull": pick("yes"), "evidence_bear": pick("no")}
+
+
+# ---- prior / base rate --------------------------------------------------------------------------------------
+
+PRIOR_KINDS = ("reference_class", "structural", "judgment")
+
+
+def normalise_prior(c: DeepResearcherComplete) -> dict[str, Any]:
+    """Validated prior fields of one judge output, in the judge's own framing (asked outcome).
+
+    ``base_rate`` survives only with a positive ``base_rate_n`` and a ``base_rate_source`` (real reference-class counts);
+    otherwise it is dropped. A bad ``prior_kind`` becomes ``judgment``; ``reference_class`` without a base rate is
+    downgraded to ``judgment``; ``reference_class`` forces ``prior == base_rate``. Problems come back as ``flags``.
+    """
+    flags: list[str] = []
+    base, n, src = c.base_rate, c.base_rate_n, (c.base_rate_source or "").strip() or None
+    if base is not None and not (n and n > 0 and src):
+        flags.append("base_rate_unsupported")
+        base = n = src = None
+    if base is None:
+        n = src = None
+    kind = (c.prior_kind or "").strip().lower()
+    if kind not in PRIOR_KINDS:
+        flags.append("prior_kind_invalid" if c.prior_kind else "prior_kind_missing")
+        kind = "judgment"
+    prior = c.prior
+    if kind == "reference_class":
+        if base is None:
+            flags.append("prior_downgraded")
+            kind = "judgment"
+        else:
+            prior = base
+    if prior is None:
+        flags.append("prior_missing")
+        if kind == "judgment" and base is not None:
+            prior = base
+    return {"prior": prior, "prior_kind": kind, "base_rate": base, "base_rate_n": n, "base_rate_source": src,
+            "flags": flags}
+
+
+def prior_fields(samples: list[Sample]) -> dict[str, Any]:
+    """Prior / base-rate ledger fields (P(YES) framing) from the judges: J1's (else the lone NO judge's, flipped).
+
+    Returns ``prior``, ``prior_kind``, ``base_rate``, ``base_rate_n`` plus ``prior_flags`` (normalisation problems of every
+    judge) and ``prior_j2``/``prior_kind_j2`` when both judges ran. Empty when there are no samples.
+    """
+    if not samples:
+        return {}
+    normed = [(normalise_prior(s[0]), s[2] if len(s) > 2 else "yes") for s in samples]
+
+    def yes_view(f: dict[str, Any], framing: str) -> dict[str, Any]:
+        if framing != "no":
+            return f
+        flip = lambda v: None if v is None else round(1 - v, 6)  # noqa: E731
+        return {**f, "prior": flip(f["prior"]), "base_rate": flip(f["base_rate"])}
+
+    primary = next((x for x in normed if x[1] == "yes"), normed[0])
+    main = yes_view(*primary)
+    out: dict[str, Any] = {k: main[k] for k in ("prior", "prior_kind", "base_rate", "base_rate_n")}
+    flags = [f"{f}:{'j1' if i == 0 else 'j2'}" for i, (n, _) in enumerate(normed) for f in n["flags"]]
+    if flags:
+        out["prior_flags"] = flags
+    if len(normed) == 2:
+        other = yes_view(*next(x for x in normed if x is not primary))
+        out["prior_j2"] = other["prior"]
+        out["prior_kind_j2"] = other["prior_kind"]
+    return out
 
 
 # ---- ledger / frontmatter fields --------------------------------------------------------------------------
@@ -872,6 +963,7 @@ def backtest_research(row: dict[str, Any], today: str, search_freshness: str | N
                 judge_framing=samples[0][2] if len(samples) == 1 else None,
                 compound=compound_mod.check(samples, meta["compound"]) if meta.get("compound") else None,
             ),
+            **{k: v for k, v in prior_fields(samples).items() if k != "prior_flags"},
             **offer_evidence(bundle, today, samples),
         }
 
@@ -884,7 +976,9 @@ __all__ = [
     "crux_table",
     "failed_judges",
     "judge_plan",
+    "normalise_prior",
     "offer_evidence",
+    "prior_fields",
     "select_judge_ids",
     "potential_max_stake_usd",
     "research_depth",

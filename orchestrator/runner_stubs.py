@@ -183,6 +183,8 @@ def _deep_researcher_stub(payload: dict[str, Any]) -> dict[str, Any]:
     }
     if payload.get("mode") == "judge":
         out["base_rate"] = None
+        out["prior"] = 0.5
+        out["prior_kind"] = "judgment"
         spec = payload.get("compound")
         if spec:  # compound market: components consistent with the stated P(YES) (independent, AND/OR of equal parts)
             out["components"] = [{"id": c["id"], "p": STUB_ESTIMATED_P} for c in spec.get("components") or []]

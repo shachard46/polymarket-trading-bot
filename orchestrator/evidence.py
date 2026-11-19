@@ -27,7 +27,7 @@ from orchestrator.aiq_bundle import fetch_research_bundle_cached, normalize_quer
 from orchestrator.config import RESEARCH_DATA_MAX_CHARS
 from orchestrator.util import truncate_lines
 from orchestrator.web_filter import _URL_RE, NOT_FOUND, filter_rows, normalize_url
-from orchestrator.parse import AgentOutputParseError, parse_agent_json_or_yaml
+from orchestrator.parse import AgentOutputParseError, _role_keys, parse_agent_json_or_yaml
 from orchestrator.schema_validation import AgentSchemaError
 from orchestrator.state import InfraUnavailable
 
@@ -262,7 +262,7 @@ def _agent_rows(
     except Exception as exc:  # noqa: BLE001
         return fail(f"{role} failed: {exc}")
     try:
-        parsed = raw if isinstance(raw, dict) else parse_agent_json_or_yaml(raw)
+        parsed = raw if isinstance(raw, dict) else parse_agent_json_or_yaml(raw, expected_keys=_role_keys(role))
     except AgentOutputParseError as exc:
         return fail(f"{role} parse error: {exc}")
     results = _salvage_results(parsed, queries)

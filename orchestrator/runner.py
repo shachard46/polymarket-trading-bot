@@ -34,6 +34,7 @@ from orchestrator.parse import (
     coerce_deep_researcher_markdown,
     coerce_deep_researcher_state_machine,
     normalize_structured_output,
+    _role_keys,
     parse_agent_json_or_yaml,
     preprocess_agent_text,
 )
@@ -182,7 +183,7 @@ def _validate_structured(role: str, spec: dict[str, Any], result: Any, payload: 
         parsed = result
     else:
         try:
-            parsed = parse_agent_json_or_yaml(result)
+            parsed = parse_agent_json_or_yaml(result, expected_keys=_role_keys(role))
         except AgentOutputParseError:
             # Let the phase-level parser surface this as a normal inactive-flag event.
             return
@@ -203,9 +204,10 @@ def _validate_structured(role: str, spec: dict[str, Any], result: Any, payload: 
     except AgentSchemaError:
         if isinstance(parsed, dict):
             log.warning(
-                "%s output schema mismatch; response keys: %s",
+                "%s output schema mismatch; response keys: %s; raw[:300]=%r",
                 role,
                 sorted(parsed.keys()),
+                result[:300] if isinstance(result, str) else repr(result)[:300],
             )
         raise
 

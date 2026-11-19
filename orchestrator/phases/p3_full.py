@@ -229,6 +229,11 @@ def _research_market_body(
     discounted = _discounted_sources(samples)
     if discounted:
         fields["discounted_sources"] = discounted
+    pf = p3_research.prior_fields(samples)
+    pflags = pf.pop("prior_flags", [])
+    fields.update(pf)
+    if pflags:
+        fields["pipeline_flags"] = list(fields.get("pipeline_flags") or []) + [f"prior:{f}" for f in pflags]
     if comp and comp["compound_gap"] is not None:
         log.info(
             "[PHASE 3] compound %s for %s: combined=%.3f stated=%.3f gap=%.3f corr=%.2f",

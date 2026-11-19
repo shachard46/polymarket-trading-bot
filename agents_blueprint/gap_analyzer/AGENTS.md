@@ -15,7 +15,7 @@ For every crux return one assessment:
 - `status`: `answered` (fresh, relevant evidence answers the question), `unanswered` (nothing relevant, or only stale/undated/off-topic lines), or `contradicted` (credible lines disagree and the evidence does not settle it).
 - `missing`: one short line on what is missing or in conflict (empty string when answered).
 
-Then propose **at most 3** `follow_up_queries`, each `{"crux_id": "...", "query": "..."}`, only for `unanswered` cruxes whose answer would move the probability most (see `moves_p_if`). Reword: a different angle, named entities, the official source, a different date window. One verifiable question per query, include the date as `as of {today}`. Do not repeat a query that already failed. An empty list is fine.
+Then propose **at most 3** `follow_up_queries`. **Comparator (base-rate) cruxes come first:** if the `comparator` crux is `unanswered`, its follow-up (historical results, how often comparable cases resolved this way) is the first entry; the Hub adds one if you omit it. Each follow-up is `{"crux_id": "...", "query": "..."}`, only for `unanswered` cruxes whose answer would move the probability most (see `moves_p_if`). Reword: a different angle, named entities, the official source, a different date window. One verifiable question per query, include the date as `as of {today}`. Do not repeat a query that already failed. An empty list is fine.
 
 ## OUTPUT FORMAT (critical)
 

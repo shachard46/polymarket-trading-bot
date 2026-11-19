@@ -152,6 +152,12 @@ class ResearchFrontmatter(BaseModel):
     compound_stated_p: Optional[float] = None  # the judge's stated P(YES) for the same sample(s)
     compound_gap: Optional[float] = None
     compound_corr: Optional[float] = None
+    prior: Optional[float] = None  # judge's starting point before case evidence (P(YES), J1)
+    prior_kind: Optional[str] = None  # "reference_class" | "structural" | "judgment"
+    base_rate: Optional[float] = None  # P(YES) from real reference-class counts only, else null
+    base_rate_n: Optional[int] = None  # past cases behind base_rate
+    prior_j2: Optional[float] = None  # J2's prior converted to P(YES), when both judges ran
+    prior_kind_j2: Optional[str] = None
     discounted_sources: list[str] = []  # interested / unproven sources the judge discounted
     evidence_bull: list[str] = []  # verbatim audit-verified lines the judge cited for YES (offer evidence)
     evidence_bear: list[str] = []  # ... and for NO

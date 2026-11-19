@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, Iterable, TypeVar
 
 import yaml
 from pydantic import BaseModel, ValidationError
@@ -87,8 +87,63 @@ def _parse_body_candidates(raw: str) -> dict[str, Any] | None:
     return None
 
 
-def parse_agent_json_or_yaml(raw: str | dict[str, Any] | None) -> dict[str, Any]:
+def _garbage_keys(obj: dict[str, Any]) -> bool:
+    """True when a key looks like leaked wrapper/marker text (a fence, brace or angle bracket) rather than a field name."""
+    return any(isinstance(k, str) and re.search(r"[`{}<>]", k) for k in obj)
+
+
+def _embedded_json_objects(text: str) -> list[dict[str, Any]]:
+    """Every balanced JSON object in ``text`` (outermost first; objects nested in a decoded one are skipped)."""
+    decoder = json.JSONDecoder()
+    out: list[dict[str, Any]] = []
+    pos = text.find("{")
+    while pos != -1:
+        try:
+            obj, end = decoder.raw_decode(text, pos)
+        except json.JSONDecodeError:
+            pos = text.find("{", pos + 1)
+            continue
+        if isinstance(obj, dict):
+            out.append(obj)
+            pos = text.find("{", end)
+        else:
+            pos = text.find("{", pos + 1)
+    return out
+
+
+def _prefer_expected(
+    raw: str, parsed: dict[str, Any] | None, expected_keys: Iterable[str]
+) -> dict[str, Any] | None:
+    """Pick, among the plain parse and every embedded JSON object, the one overlapping most with ``expected_keys``.
+
+    Returns ``None`` when no candidate shares a key with ``expected_keys``. A single-key wrapper whose value is a dict
+    also offers that inner dict (one level).
+
+    Candidates with garbage keys (marker text parsed as a YAML key) score below clean ones; ties keep the earlier one.
+    """
+    wanted = set(expected_keys)
+    cands = []
+    for c in ([parsed] if parsed is not None else []) + _embedded_json_objects(raw):
+        cands.append(c)
+        if len(c) == 1 and isinstance(next(iter(c.values())), dict):  # single-key wrapper: the inner object too
+            cands.append(next(iter(c.values())))
+    if not cands:
+        return None
+
+    def score(c: dict[str, Any]) -> tuple[int, int]:
+        return (len(wanted & set(map(str, c))), 0 if _garbage_keys(c) else 1)
+
+    best = max(cands, key=score)  # max keeps the first of equals
+    return best if score(best)[0] >= 1 else None  # no overlap: caller keeps the old logic
+
+
+def parse_agent_json_or_yaml(
+    raw: str | dict[str, Any] | None, expected_keys: Iterable[str] | None = None
+) -> dict[str, Any]:
     """Parse an agent response into a dict.
+
+    ``expected_keys`` (the role's output field names) makes the parse schema-aware: leading marker text and code fences
+    are ignored and, of all JSON objects found, the one matching the schema best wins.
 
     Accepts an already-parsed mapping (passthrough), a JSON string, a YAML
     string, or either wrapped in a fenced code block. Raises
@@ -107,6 +162,12 @@ def parse_agent_json_or_yaml(raw: str | dict[str, Any] | None) -> dict[str, Any]
         raise AgentOutputParseError("agent returned empty output", raw=raw)
 
     parsed = _parse_body_candidates(raw)
+    if parsed is not None and _garbage_keys(parsed):
+        parsed = None  # marker text such as '>>x}```json' parsed as a YAML key: never a real payload
+    if expected_keys:
+        picked = _prefer_expected(raw, parsed, expected_keys)
+        if picked is not None:
+            return picked
     if parsed is not None:
         structured_start = raw.lstrip().startswith(("{", "---", "```"))
         single_key_wrapper = len(parsed) == 1 and isinstance(
@@ -239,6 +300,17 @@ def preprocess_agent_text(raw: str) -> str:
     return text
 
 
+def _role_keys(role: str) -> list[str]:
+    """Output field names declared by the role's ``output_schema`` (empty when unknown)."""
+    try:
+        import agents_blueprint  # noqa: PLC0415 - lazy: avoids an import cycle
+
+        schema = agents_blueprint.AGENTS[role].get("output_schema")
+    except Exception:  # noqa: BLE001
+        return []
+    return list(schema) if isinstance(schema, dict) else []
+
+
 def run_agent_with_format_retries(
     runner: Callable[[str, dict[str, Any]], Any],
     role: str,
@@ -276,7 +348,7 @@ def run_agent_with_format_retries(
                 parsed = raw
             else:
                 text = raw if isinstance(raw, str) else str(raw)
-                parsed = parse_agent_json_or_yaml(preprocess_agent_text(text))
+                parsed = parse_agent_json_or_yaml(preprocess_agent_text(text), expected_keys=_role_keys(role))
             return validate_fn(parsed)
         except AgentOutputParseError as exc:
             if attempt >= max_retries:

@@ -110,6 +110,20 @@ def brier_by_judge_arm(rows: list[dict[str, Any]]) -> dict[str, tuple[int, float
     return _brier_by_field(rows, "judge_arm")
 
 
+def brier_by_prior_kind(rows: list[dict[str, Any]]) -> dict[str, tuple[int, float, float]]:
+    """``{prior_kind: (n, brier_p, brier_p - brier_q)}`` over resolved scored markets (absent: ``unknown``)."""
+    return _brier_by_field(rows, "prior_kind")
+
+
+def researched_by_prior_kind(rows: list[dict[str, Any]]) -> dict[str, int]:
+    """``{prior_kind: n researched markets}``: distinct markets whose latest decision-type row carries a prior kind."""
+    out: dict[str, int] = defaultdict(int)
+    for r in _latest_by_market(rows, None).values():
+        if r.get("prior_kind"):
+            out[str(r["prior_kind"])] += 1
+    return dict(out)
+
+
 def brier_by_runner_backend(rows: list[dict[str, Any]]) -> dict[str, tuple[int, float, float]]:
     """``{runner_backend: (n, brier_p, brier_p - brier_q)}`` over resolved scored markets."""
     return _brier_by_field(rows, "runner_backend")

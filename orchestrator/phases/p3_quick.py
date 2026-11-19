@@ -44,6 +44,21 @@ def quick_decision(
     return "escalate"
 
 
+def _fmt(x: float | None) -> str:
+    return "n/a" if x is None else f"{x:.3f}"
+
+
+def _log_quick(market_id: str, out: Any, q: float | None, result: str) -> None:
+    """One INFO line per market: the quick estimate, its range, the market price and the Hub decision."""
+    if out is None:
+        log.info("[QUICK] %s: p=n/a range=n/a q=%s → %s", market_id[:10], _fmt(q), result)
+        return
+    log.info(
+        "[QUICK] %s: p=%s range=%s-%s q=%s → %s",
+        market_id[:10], _fmt(out.estimated_p), _fmt(out.p_low), _fmt(out.p_high), _fmt(q), result,
+    )
+
+
 def _quick_stage(
     vault: ObsidianManager,
     runner: AgentRunner,
@@ -69,14 +84,17 @@ def _quick_stage(
             vault, market_id, "phase3",
             f"deep researcher quick-stage output validation failed: {exc}", dr_in,
         )
+        _log_quick(market_id, None, q, "failed:output_validation")
         return QuickResult("failed")
     if isinstance(out, DeepResearcherNeedsMore):
         flag_inactive(
             vault, market_id, "phase3",
             "deep researcher disobeyed quick-stage override", out.model_dump(),
         )
+        _log_quick(market_id, None, q, "failed:ignored_override")
         return QuickResult("failed")
     if check_complete(vault, market_id, out) is None:
+        _log_quick(market_id, None, q, "failed:incomplete_output")
         return QuickResult("failed")
 
     values = {
@@ -86,8 +104,10 @@ def _quick_stage(
     knobs = extract_filter_directives(directives)
     if quick_decision(out.p_low, out.p_high, q, knobs["research_max_quick_width"], out.confidence) == "no_divergence":
         _skip_research(vault, row, "quick", "no_divergence", **values)
+        _log_quick(market_id, out, q, "skip:no_divergence")
         return QuickResult("skip", out.estimated_p, out.p_low, out.p_high)
     _record_attempt(vault, row, "quick", "escalate", **values)
+    _log_quick(market_id, out, q, "escalate_full")
     return QuickResult("escalate", out.estimated_p, out.p_low, out.p_high)
 
 

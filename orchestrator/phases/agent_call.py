@@ -16,6 +16,7 @@ from orchestrator.parse import (
     agent_error_reason,
     coerce_deep_researcher_state_machine,
     normalize_structured_output,
+    _role_keys,
     parse_agent_json_or_yaml,
     preprocess_agent_text,
     run_agent_with_format_retries,
@@ -38,7 +39,7 @@ def run_structured_agent(
     except AgentSchemaError as exc:
         return None, f"{role} output schema mismatch: {exc.cause}"
     try:
-        parsed = parse_agent_json_or_yaml(raw)
+        parsed = parse_agent_json_or_yaml(raw, expected_keys=_role_keys(role))
     except AgentOutputParseError as exc:
         return None, f"{role} parse error: {exc}"
     spec = agents_blueprint.AGENTS[role]

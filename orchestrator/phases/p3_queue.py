@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from collections import Counter
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -281,6 +282,7 @@ def phase3_qualitative_pipeline(
     quick_left = quick_research_budget()
     to_full: list[_Job] = []
     shadow_jobs: list[_Job] = []
+    quick_counts: Counter[str] = Counter()
 
     for candidate in queue:
         market_id = candidate.market_id
@@ -311,6 +313,7 @@ def phase3_qualitative_pipeline(
                     log.info("[PHASE 3] skip refresh of %s: %s", market_id, why)
                     continue
                 to_full.append(_Job(candidate, market_row))
+                quick_counts["refresh"] += 1
                 continue
             state = candidate.filter_record.get("research_state")
             if (
@@ -320,11 +323,16 @@ def phase3_qualitative_pipeline(
                 and _attempt_cooldown_active(state, q, now)
             ):
                 to_full.append(_Job(candidate, market_row))  # quick already escalated it
+                log.info("[QUICK] %s: reuse earlier quick escalate → escalate_full", market_id[:10])
+                quick_counts["cached_escalate"] += 1
                 continue
             if quick_left <= 0:
+                log.info("[QUICK] %s: no quick estimate → skip:quick_budget", market_id[:10])
+                quick_counts["skip_quick_budget"] += 1
                 continue
             quick_left -= 1
             quick = _quick_stage(vault, runner, market_row, directives, today)
+            quick_counts[quick.outcome] += 1
             if quick.outcome == "escalate":
                 to_full.append(_Job(candidate, market_row))
             elif (
@@ -337,6 +345,11 @@ def phase3_qualitative_pipeline(
                     quick={"p": quick.p, "p_low": quick.p_low, "p_high": quick.p_high},
                 ))
 
+    log.info(
+        "[PHASE 3] quick outcomes: %s",
+        ", ".join(f"{k}={quick_counts.get(k, 0)}" for k in
+                  ("escalate", "skip", "failed", "cached_escalate", "refresh", "skip_quick_budget")),
+    )
     selected = to_full[: full_research_budget()]
     if len(to_full) > len(selected):
         log.info(

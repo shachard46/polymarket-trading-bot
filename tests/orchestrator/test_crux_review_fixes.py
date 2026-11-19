@@ -409,9 +409,11 @@ def test_stub_tick_end_to_end_default_ab_arm_and_stats(tmp_path, monkeypatch):
     loop.run_pipeline_tick(vault)
     traded = [r for r in ledger.iter_rows(vault) if r["market_id"] == "ok1" and r["stage"] == "traded"][0]
     assert traded["judge_arm"] == evidence.judge_arm("ok1")
+    assert traded["prior_kind"] == "judgment" and traded["prior"] == 0.5 and traded.get("base_rate") is None
     assert traded.get("judge_framing") == (evidence.judge_framing("ok1") if traded["judge_arm"] == "one" else None)
     write_stats(vault)
-    assert "Judge arms (1 vs 2 judges)" in (vault._dirs["system"] / "stats.md").read_text()
+    stats_text = (vault._dirs["system"] / "stats.md").read_text()
+    assert "Judge arms (1 vs 2 judges)" in stats_text and "### Prior kinds" in stats_text
 
 
 # --- 1. prompt rules ----------------------------------------------------------------------------------------
