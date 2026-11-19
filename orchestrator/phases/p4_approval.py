@@ -51,7 +51,7 @@ def _park_offer(
         "lam": allocation.get("lam"),
         "min_edge": allocation.get("min_edge"),
     }
-    offer = notify.emit_offer(vault, trade, market_data, mode="approval", resume=resume)
+    offer = notify.emit_offer(vault, trade, _offer_market_data(row, market_data), mode="approval", resume=resume)
     if offer is None:
         log.warning("[PHASE 4] %s: offer could not be written; not parked, retried next tick", market_id)
         return
@@ -61,6 +61,15 @@ def _park_offer(
     )
     _ledger_safe(vault, market_id, "offer_pending", **_offer_row_fields(offer))
     log.info("[PHASE 4] offer pending for %s (%s)", market_id, offer["offer_id"])
+
+
+def _offer_market_data(row: dict[str, Any], market_data: dict[str, Any]) -> dict[str, Any]:
+    """market_data plus the market title (kept on the row, not in the snapshot) for the offer text."""
+    return {
+        **market_data,
+        "question": market_data.get("question") or row.get("market_title"),
+        "description": market_data.get("description") or row.get("market_description"),
+    }
 
 
 def _offer_row_fields(offer: dict[str, Any], **override: Any) -> dict[str, Any]:

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -132,6 +133,56 @@ def _evidence_summary(vault: ObsidianManager, market_id: str, limit: int = 500) 
         return None
 
 
+def _thesis_bullets(body: str, heading: str, max_items: int = 3, limit: int = 300) -> list[str]:
+    """Bullets under ``## <heading>`` of the research markdown (each cut at a word boundary)."""
+    m = re.search(rf"^##\s*{re.escape(heading)}\s*$(.*?)(?=^##\s|\Z)", body, re.M | re.S)
+    if not m:
+        return []
+    out: list[str] = []
+    for line in m.group(1).splitlines():
+        line = line.strip()
+        if line[:1] in ("-", "*"):
+            text = " ".join(line.lstrip("-* ").split())
+            if text:
+                out.append(_cut_words(text, limit))
+        if len(out) >= max_items:
+            break
+    return out
+
+
+def _cut_words(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    if text[limit] != " ":
+        cut = cut.rsplit(" ", 1)[0] if " " in cut else cut
+    return cut.rstrip(" ,;:-") + "…"
+
+
+def _evidence_theses(vault: ObsidianManager, market_id: str) -> dict[str, list[str]]:
+    try:
+        path = vault.market_file(market_id, "active")
+        if path is None:
+            return {}
+        from orchestrator.research import split_yaml_frontmatter_markdown
+
+        _, body = split_yaml_frontmatter_markdown(path.read_text(encoding="utf-8"))
+        return {"evidence_bull": _thesis_bullets(body, "Bull Thesis"), "evidence_bear": _thesis_bullets(body, "Bear Thesis")}
+    except Exception:  # noqa: BLE001 - optional
+        return {}
+
+
+def _market_url(market_data: dict[str, Any]) -> str | None:
+    if market_data.get("url"):
+        return market_data["url"]
+    slug, ev = market_data.get("slug"), market_data.get("event_slug")
+    if slug and ev:
+        return f"https://polymarket.com/event/{ev}/{slug}"
+    if slug or ev:
+        return f"https://polymarket.com/{'market' if slug else 'event'}/{slug or ev}"
+    return None
+
+
 def offer_path(vault: ObsidianManager, offer_id: str) -> Path:
     return outbox_dir(vault) / f"offer-{offer_id}.json"
 
@@ -149,14 +200,15 @@ def build_offer(
     now = now or _utc_now()
     market_id = trade["market_id"]
     offer_id = f"{market_id}-{current_tick()}"
-    slug = market_data.get("slug")
     offer: dict[str, Any] = {
         "offer_id": offer_id,
         "market_id": market_id,
         "mode": mode,  # informational (already executed / flag 0) | approval (pending a vote)
         "status": "pending" if mode == "approval" else "informational",
         "question": market_data.get("question") or market_data.get("title"),
-        "url": market_data.get("url") or (f"https://polymarket.com/market/{slug}" if slug else None),
+        "url": _market_url(market_data),
+        "end_date": market_data.get("end_date"),
+        "description": " ".join(str(market_data.get("description") or "").split())[:1500] or None,
         "side": trade.get("side"),
         "p": trade.get("p"),
         "p_low": trade.get("p_low"),
@@ -169,6 +221,7 @@ def build_offer(
         "ask": trade.get("ask"),
         "depth_usd": trade.get("depth_usd"),
         "evidence_summary": _evidence_summary(vault, market_id),
+        **_evidence_theses(vault, market_id),
         "manipulation_risk": market_data.get("manipulation_risk") or "unknown",
         "integ_score": market_data.get("integ_score"),
         "integ_flags": market_data.get("integ_flags"),

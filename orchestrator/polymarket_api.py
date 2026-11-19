@@ -289,6 +289,8 @@ def market_row_from_gamma(raw: dict[str, Any], now: datetime | None = None) -> d
         "days_to_resolution": _days_to_resolution(end, now) if end else None,
         "category": raw.get("category") or (events[0].get("category") if events else None),
         "event_id": str(event_id) if event_id is not None else None,
+        "slug": raw.get("slug") or None,
+        "event_slug": (events[0].get("slug") or None) if events else None,
         "resolution_source": raw.get("resolutionSource") or (events[0].get("resolutionSource") if events else None) or None,
         "yes_token_id": tokens[yes_i],
         "no_token_id": tokens[no_i],

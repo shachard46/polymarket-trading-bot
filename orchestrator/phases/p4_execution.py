@@ -392,7 +392,14 @@ def _execute_market(
         return
     _persist_trade(vault, row, q, trade, allocation, size_usd, below, bought)
     if not below:
-        notify.emit_offer(vault, trade, market_data, mode="informational")
+        notify.emit_offer(
+            vault, trade, {
+                **market_data,
+                "question": market_data.get("question") or row.get("market_title"),
+                "description": market_data.get("description") or row.get("market_description"),
+            },
+            mode="informational",
+        )
 
 
 def phase4_execution(

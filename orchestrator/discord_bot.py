@@ -86,36 +86,207 @@ def in_quiet_hours(spec: str | None, now: datetime | None = None, tz: str | None
     return start <= h < end if start < end else (h >= start or h < end)
 
 
-def render_offer(offer: dict[str, Any]) -> str:
+_FLAG_WORDS = {
+    "ramp": "price ramped up recently",
+    "top1_wallet": "one wallet holds a large share",
+    "two_sided_wash": "possible wash trading",
+    "stale": "few recent trades",
+    "vol_spike": "unusual volume spike",
+    "liq_to_depth": "thin order book relative to liquidity",
+    "ask_wall": "large sell wall",
+    "young": "very new market",
+    "ramp_thin": "thin-volume price ramp",
+    "wallet_dominated": "dominated by a single wallet",
+    "rules_changed": "rules were changed",
+    "disputed_before": "disputed before",
+}
+
+
+def _humanize(code: Any) -> str:
+    code = str(code).strip()
+    return _FLAG_WORDS.get(code) or code.replace("_", " ").replace("-", " ").lower()
+
+
+def _num(value: Any) -> float | None:
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return f if f == f else None
+
+
+def _trim(x: float, nd: int = 1) -> str:
+    s = f"{x:.{nd}f}"
+    return s.rstrip("0").rstrip(".") if "." in s else s
+
+
+def _pct(value: Any) -> str | None:
+    v = _num(value)
+    return None if v is None else f"{_trim(v * 100)}%"
+
+
+def _cents(value: Any) -> str | None:
+    v = _num(value)
+    return None if v is None else f"{_trim(v * 100)}¢"
+
+
+def _usd(value: Any) -> str | None:
+    v = _num(value)
+    return None if v is None else f"${v:,.2f}"
+
+
+def _short(text: Any, limit: int = 220) -> str:
+    """Cut at a sentence end if one fits, else at a word boundary; never mid-word."""
+    text = " ".join(str(text).split())
+    if len(text) <= limit:
+        return text
+    head = text[:limit]
+    ends = [m.end() for m in re.finditer(r"[.!?](?=\s)", head)]
+    if ends and ends[-1] >= limit * 0.4:
+        return head[: ends[-1]]
+    if text[limit] != " " and " " in head:
+        head = head.rsplit(" ", 1)[0]
+    return head.rstrip(" ,;:-–") + "…"
+
+
+def _background(text: Any, limit: int = 300) -> str:
+    """First 1-2 whole sentences of the stored market description (verbatim), at most ``limit`` chars."""
+    text = " ".join(str(text or "").split())
+    if not text:
+        return ""
+    sentences = re.findall(r".+?(?:[.!?](?=\s|$)|$)", text)
+    out = ""
+    for s in (x.strip() for x in sentences[:2]):
+        if len(out) + len(s) + 1 <= limit:
+            out = (out + " " + s).strip()
+        else:
+            break
+    return out or _short(text, limit)
+
+
+def _tz(tz: str | None = None):
+    name = tz or os.environ.get("CONCIERGE_TZ") or None
+    try:
+        from zoneinfo import ZoneInfo
+
+        return ZoneInfo(name) if name else timezone.utc
+    except Exception:  # noqa: BLE001 - bad tz name: UTC
+        return timezone.utc
+
+
+def _fmt_date(value: Any) -> str | None:
+    ts = notify.parse_ts(value) if value else None
+    return None if ts is None else f"{ts.strftime('%b')} {ts.day}"
+
+
+def _fmt_expiry(value: Any, now: datetime | None = None, tz: str | None = None) -> str | None:
+    exp = notify.parse_ts(value) if value else None
+    if exp is None:
+        return None
+    now = now or datetime.now(tz=timezone.utc)
+    local = exp.astimezone(_tz(tz))
+    clock = f"{local.strftime('%H:%M')} {local.tzname() or 'UTC'}"
+    secs = (exp - now).total_seconds()
+    if secs <= 0:
+        return f"expired ({clock})"
+    mins = int(secs // 60)
+    rel = f"{mins // 60}h" if mins >= 60 else f"{max(mins, 1)}m"
+    return f"expires in {rel} ({clock})"
+
+
+def render_offer(offer: dict[str, Any], now: datetime | None = None, tz: str | None = None) -> str:
     approval = offer.get("mode") == "approval"
-    lines = [
-        f"BUY OFFER {_s(offer.get('offer_id'))}",
-        f"Market: {_s(offer.get('question'))} ({_s(offer.get('url'))})",
-        f"Side: {_s(offer.get('side'))} | Size: ${_s(offer.get('allocation_usd'))} ({_s(offer.get('shares'))} shares) @ ask {_s(offer.get('ask'))}",
-        f"p: {_s(offer.get('p_low'))}-{_s(offer.get('p_high'))} (point {_s(offer.get('p'))}) vs q: {_s(offer.get('q_entry'))} | edge: {_s(offer.get('edge'))}",
-        f"Integrity: manipulation_risk={_s(offer.get('manipulation_risk'))}, integ_score={_s(offer.get('integ_score'))}, flags={_s(offer.get('integ_flags'))}",
-        f"Evidence: {_s(offer.get('evidence_summary'))}",
-        f"Expires: {_s(offer.get('expires_at'))}",
-        f"Mode: {_s(offer.get('mode'))}   (approval = needs your vote; informational = already placed)",
-    ]
+    side = str(offer.get("side") or "").upper() or "?"
+    title = offer.get("question") or offer.get("title") or offer.get("market_id") or offer.get("offer_id") or "unknown market"
+    head = f'**Paper trade: {side} on "{_short(title, 200)}"**'
+    if offer.get("url"):
+        head += f" <{offer['url']}>"
+    lines = [head]
+    bg = _background(offer.get("description"))
+    if bg:
+        lines.append(bg)
+
+    bits = []
+    cents = _cents(offer.get("ask") if offer.get("ask") is not None else offer.get("price"))
+    bits.append(f"Buy {side} at {cents}" if cents else f"Buy {side}")
+    size = _usd(offer.get("allocation_usd"))
+    shares = _num(offer.get("shares"))
+    if size:
+        bits.append(size + (f" ({shares:,.0f} shares)" if shares is not None else ""))
+    closes = _fmt_date(offer.get("end_date"))
+    if closes:
+        bits.append(f"closes {closes}")
+    lines.append(" · ".join(bits))
+
+    p, q, edge = _pct(offer.get("p")), _pct(offer.get("q_entry")), _num(offer.get("edge"))
+    if p:
+        est = f"Our estimate: {p} YES"
+        lo, hi = _num(offer.get("p_low")), _num(offer.get("p_high"))
+        if lo is not None and hi is not None:
+            est += f" (range {_trim(lo * 100, 0)}–{_trim(hi * 100, 0)}%)"
+        if q:
+            est += f" · Market: {q} YES"
+        if edge is not None and edge > 0:
+            word = "overpriced" if side == "NO" else "underpriced"
+            est += f" → we think YES is {word} by ~{_trim(edge * 100, 0)} points after costs"
+        lines.append(est)
+
+    bull = [_short(x) for x in (offer.get("evidence_bull") or []) if x]
+    bear = [_short(x) for x in (offer.get("evidence_bear") or []) if x]
+    why = [f"• For: {x}" for x in bull[:1]] + [f"• Against: {x}" for x in bear[:1]]
+    if len(why) < 3:
+        why += [f"• For: {x}" for x in bull[1:2]] + [f"• Against: {x}" for x in bear[1:2]]
+    if not why and offer.get("evidence_summary"):
+        why = [f"• {_short(offer['evidence_summary'], 300)}"]
+    if why:
+        lines.append("Why:\n" + "\n".join(why[:3]))
+
+    risk = str(offer.get("manipulation_risk") or "").strip().lower()
+    risk = "" if risk in ("unknown", "none", "n/a") else risk
+    flags = offer.get("integ_flags") or []
+    if isinstance(flags, str):
+        flags = [flags]
+    if risk or flags:
+        txt = f"Risk check: {risk} manipulation risk" if risk else "Risk check"
+        if flags:
+            txt += "; notes: " + ", ".join(_humanize(f) for f in flags)
+        lines.append(txt)
+
     if approval:
-        lines.append("Vote with the buttons below.")
+        exp = _fmt_expiry(offer.get("expires_at"), now, tz)
+        lines.append("**Approve this paper trade? Tap Yes or No**" + (f" · {exp}" if exp else ""))
+    else:
+        lines.append("Already placed as a paper trade — no action needed.")
+    ref = str(offer.get("offer_id") or offer.get("market_id") or "")
+    if ref:
+        lines.append(f"-# ref {ref[:6]}…" if len(ref) > 6 else f"-# ref {ref}")
     return _clip("\n".join(lines))
 
 
 def render_digest(d: dict[str, Any]) -> str:
     rejects = d.get("integrity_rejects") or {}
-    rej = ", ".join(f"{k}={v}" for k, v in sorted(rejects.items())) or "none"
-    return _clip("\n".join([
-        f"DAILY DIGEST {_s(d.get('date'))}",
-        f"Realised P&L (after tax): {_s(d.get('realised_pnl_after_tax'))}",
-        f"Counterfactual P&L: {_s(d.get('counterfactual_pnl_after_tax'))}",
-        f"Brier p: {_s(d.get('brier_p'))} vs q: {_s(d.get('brier_q'))}",
-        f"Resolved: {_s(d.get('n_resolved'))} (this week {_s(d.get('resolved_this_week'))})",
-        f"New trades: {_s(d.get('new_trades'))} | New offers: {_s(d.get('new_offers'))}",
-        f"Integrity rejects: {rej}",
-        f"Pending directive proposal: {_s(d.get('pending_directive_proposal'))}",
-    ]))
+    rej = ", ".join(f"{_humanize(k)}: {v}" for k, v in sorted(rejects.items())) or "none"
+    day = _fmt_date(d.get("date")) or _s(d.get("date"))
+    lines = [f"**Daily update · {day}**"]
+    pnl = _usd(d.get("realised_pnl_after_tax"))
+    cf = _usd(d.get("counterfactual_pnl_after_tax"))
+    if pnl:
+        lines.append(f"Profit/loss so far (paper, after tax): {pnl}")
+    if cf:
+        lines.append(f"If we had taken every skipped opportunity too: {cf}")
+    bp, bq = _num(d.get("brier_p")), _num(d.get("brier_q"))
+    if bp is not None and bq is not None:
+        lines.append(f"Forecast accuracy (lower is better): ours {bp:.3f} vs market {bq:.3f}")
+    if d.get("n_resolved") is not None:
+        week = d.get("resolved_this_week")
+        lines.append(f"Markets settled: {_s(d.get('n_resolved'))}" + (f" ({_s(week)} this week)" if week is not None else ""))
+    counts = [f"{label}: {d[k]}" for k, label in (("new_trades", "New paper trades"), ("new_offers", "new offers")) if d.get(k) is not None]
+    if counts:
+        lines.append(" · ".join(counts))
+    lines.append(f"Markets skipped for integrity concerns: {rej}")
+    if d.get("pending_directive_proposal"):
+        lines.append(f"Waiting on your vote: strategy change {_s(d.get('pending_directive_proposal'))}")
+    return _clip("\n".join(lines))
 
 
 def parse_directive(text: str) -> tuple[dict[str, str], str]:
@@ -135,11 +306,9 @@ def parse_directive(text: str) -> tuple[dict[str, str], str]:
 
 def render_directive(text: str) -> str:
     meta, body = parse_directive(text)
-    head = (
-        f"DIRECTIVE PROPOSAL {_s(meta.get('proposal_id'))}\n"
-        f"Expires: {_s(meta.get('expires_at'))}\n"
-    )
-    return _clip(head + body + "\nVote with the buttons below.")
+    exp = _fmt_expiry(meta.get("expires_at")) or f"expires {_s(meta.get('expires_at'))}"
+    head = f"**Proposed strategy change** (ref {_s(meta.get('proposal_id'))}) · {exp}\n"
+    return _clip(head + body + "\n**Approve this change? Tap Yes or No**")
 
 
 def load_posted(outbox: Path) -> set[str]:

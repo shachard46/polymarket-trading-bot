@@ -31,24 +31,105 @@ OFFER = {
 }
 
 
-def test_render_offer_fields_and_na():
-    text = db.render_offer(OFFER)
-    for s in ("BUY OFFER 0xabc-T1", "Will X?", "https://p/x", "p: 0.5-0.7 (point 0.6) vs q: 0.4", "edge: 0.1", "buttons"):
-        assert s in text
-    assert "n/a" in db.render_offer({"offer_id": "o", "mode": "informational"})
-    assert "buttons" not in db.render_offer({**OFFER, "mode": "informational"})
-    assert len(db.render_offer({**OFFER, "evidence_summary": "x" * 5000})) <= db.MAX_MSG
+NOW = datetime(2026, 11, 19, 10, 2, 40, tzinfo=timezone.utc)
+REAL = {
+    "offer_id": "0x8a41abcdef-20261119T095915", "market_id": "0x8a41abcdef", "mode": "approval",
+    "question": "Will the Fed hike in December?", "url": "https://polymarket.com/event/fed/fed-dec",
+    "end_date": "2026-12-10T00:00:00+00:00", "side": "NO", "p": 0.75, "p_low": 0.6, "p_high": 0.86,
+    "q_entry": 0.915, "edge": 0.030800000000000022, "allocation_usd": 8.461538461538472,
+    "shares": 94.01709401709414, "ask": 0.09, "manipulation_risk": "low", "integ_score": 0.6584,
+    "integ_flags": ["vol_spike", "ask_wall", "weird_new_flag"],
+    "description": "This market resolves YES if the Fed raises rates at its December meeting. It resolves NO otherwise. Extra third sentence here.",
+    "evidence_bull": ["Futures price in a hold. Officials signalled patience at the last meeting."],
+    "evidence_bear": ["Inflation re-accelerated in the latest print " + "and " * 80 + "more"],
+    "expires_at": "2026-11-19T14:02:40.730925+00:00",
+}
+
+
+def test_render_offer_approval_plain_english():
+    text = db.render_offer(REAL, now=NOW, tz="UTC")
+    assert text.startswith('**Paper trade: NO on "Will the Fed hike in December?"**')
+    assert "https://polymarket.com/event/fed/fed-dec" in text
+    assert "Buy NO at 9¢ · $8.46 (94 shares) · closes Dec 10" in text
+    assert "Our estimate: 75% YES (range 60–86%) · Market: 91.5% YES" in text
+    assert "overpriced by ~3 points after costs" in text
+    assert "For: Futures price in a hold." in text and "Against: Inflation" in text
+    assert "low manipulation risk; notes: unusual volume spike, large sell wall, weird new flag" in text
+    assert "Approve this paper trade? Tap Yes or No** · expires in 4h (14:02 UTC)" in text
+    assert "ref 0x8a41…" in text
+    for bad in ("0.0308", "8.4615", "vol_spike", "integ_", "n/a", "BUY OFFER", "20261119T"):
+        assert bad not in text
+
+
+def test_render_offer_background_and_verbatim():
+    text = db.render_offer(REAL, now=NOW, tz="UTC")
+    assert "This market resolves YES if the Fed raises rates at its December meeting. It resolves NO otherwise." in text
+    assert "third sentence" not in text
+    lines = text.splitlines()
+    assert lines[1] == db._background(REAL["description"])
+    assert lines[1] in REAL["description"]
+    for line in lines:
+        if line.startswith("• "):
+            body = line.split(": ", 1)[1].rstrip("…").rstrip()
+            assert any(body in src for src in REAL["evidence_bull"] + REAL["evidence_bear"])
+    assert db._background("word " * 200).rstrip("…").rstrip() in "word " * 200
+    assert db._background(None) == "" and "description" not in db.render_offer({**REAL, "description": None})
+
+
+def test_render_offer_informational():
+    text = db.render_offer({**REAL, "mode": "informational"}, now=NOW, tz="UTC")
+    assert "Already placed as a paper trade — no action needed." in text
+    assert "Approve" not in text and "Tap" not in text
+
+
+def test_render_offer_missing_title_falls_back_to_market_id():
+    text = db.render_offer({"market_id": "0xabc", "mode": "informational", "side": "YES"})
+    assert 'YES on "0xabc"' in text and "n/a" not in text
+    assert "None" not in db.render_offer({"offer_id": "o", "mode": "approval"})
+
+
+def test_render_offer_no_mid_word_cut_and_length():
+    long = "word " * 400
+    text = db.render_offer({**REAL, "evidence_bull": [long], "evidence_bear": [long], "question": long})
+    assert len(text) < 2000
+    for line in text.splitlines():
+        if line.startswith("• "):
+            assert line.endswith("…") and not line[:-1].endswith("wor")
+    assert db._short("Alpha beta gamma. Delta epsilon zeta eta", 30) == "Alpha beta gamma."
+    assert db._short("supercalifragilistic word", 10) == "supercalifragilistic…" or db._short("supercalifragilistic word", 10).endswith("…")
+    assert len(db.render_offer({**REAL, "evidence_summary": "x" * 5000, "evidence_bull": []})) < 2000
+
+
+def test_render_offer_evidence_summary_fallback():
+    text = db.render_offer({**REAL, "evidence_bull": [], "evidence_bear": [], "evidence_summary": "Some summary."})
+    assert "• Some summary." in text
+
+
+def test_build_offer_title_url_end_date_and_theses(vault):
+    md = {"slug": "fed-dec", "event_slug": "fed", "end_date": "2026-12-10T00:00:00+00:00", "question": "Q?"}
+    offer = notify.build_offer(vault, {"market_id": "0xabc", "side": "NO"}, md, mode="approval")
+    assert offer["question"] == "Q?" and offer["url"] == "https://polymarket.com/event/fed/fed-dec"
+    assert offer["end_date"] == "2026-12-10T00:00:00+00:00"
+    offer2 = notify.build_offer(vault, {"market_id": "0xabc"}, {**md, "description": "A  b."}, mode="approval")
+    assert offer2["description"] == "A b."
+
+
+def test_thesis_bullets():
+    body = "## Bull Thesis\n\n- one\n- two **x**\n\n## Bear Thesis\n\n- bad\n\n## Post-Mortem\n"
+    assert notify._thesis_bullets(body, "Bull Thesis") == ["one", "two **x**"]
+    assert notify._thesis_bullets(body, "Bear Thesis") == ["bad"]
+    assert notify._thesis_bullets("none", "Bull Thesis") == []
 
 
 def test_render_digest():
     text = db.render_digest({"date": "2026-05-01", "realised_pnl_after_tax": 1.5, "integrity_rejects": {"ramp_thin": 2}})
-    assert "2026-05-01" in text and "ramp_thin=2" in text and "n/a" in text
+    assert "May 1" in text and "thin-volume price ramp: 2" in text and "$1.50" in text and "n/a" not in text
 
 
 def test_render_directive_and_parse():
     md = "---\nproposal_id: directive-v3\nexpires_at: 2026-05-03\n---\n\n# Proposal\nchange x\n"
     text = db.render_directive(md)
-    assert "directive-v3" in text and "change x" in text and "2026-05-03" in text
+    assert "directive-v3" in text and "change x" in text and "Tap Yes or No" in text
     assert db.parse_directive(md)[0]["proposal_id"] == "directive-v3"
 
 
