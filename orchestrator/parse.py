@@ -311,6 +311,22 @@ def _role_keys(role: str) -> list[str]:
     return list(schema) if isinstance(schema, dict) else []
 
 
+def junk_payload_reason(parsed: Any) -> str | None:
+    """Why a parsed agent mapping is a degenerate model output (junk keys / empty), else ``None``.
+
+    Some models emit valid JSON with punctuation-only keys (e.g. ``{": ": null, ...}``) that the schema may
+    still tolerate (extra keys are allowed); such output is a format failure, not an answer.
+    """
+    if not isinstance(parsed, dict):
+        return None
+    if not parsed:
+        return "empty JSON object"
+    junk = [k for k in parsed if not isinstance(k, str) or not any(ch.isalnum() for ch in k)]
+    if junk:
+        return f"junk keys {junk!r} (keys must be the schema field names)"
+    return None
+
+
 def run_agent_with_format_retries(
     runner: Callable[[str, dict[str, Any]], Any],
     role: str,
@@ -396,5 +412,6 @@ __all__ = [
     "coerce_deep_researcher_markdown",
     "coerce_deep_researcher_state_machine",
     "run_agent_with_format_retries",
+    "junk_payload_reason",
     "agent_error_reason",
 ]

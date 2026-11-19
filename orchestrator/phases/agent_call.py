@@ -21,6 +21,7 @@ from orchestrator.parse import (
     preprocess_agent_text,
     run_agent_with_format_retries,
 )
+from orchestrator.config import MAX_FORMAT_RETRIES
 from orchestrator.phases.common import log
 from orchestrator.research import parse_deep_researcher
 from orchestrator.runner import AgentRunner
@@ -34,14 +35,25 @@ def run_structured_agent(
     payload: dict[str, Any],
 ) -> tuple[dict[str, Any] | None, str | None]:
     """Spawn a JSON/YAML agent. Returns ``(parsed, error_reason)``."""
-    try:
-        raw = runner(role, payload)
-    except AgentSchemaError as exc:
-        return None, f"{role} output schema mismatch: {exc.cause}"
-    try:
-        parsed = parse_agent_json_or_yaml(raw, expected_keys=_role_keys(role))
-    except AgentOutputParseError as exc:
-        return None, f"{role} parse error: {exc}"
+    attempt_payload = payload
+    parsed: dict[str, Any] | None = None
+    for attempt in range(MAX_FORMAT_RETRIES + 1):
+        last = attempt >= MAX_FORMAT_RETRIES
+        try:
+            raw = runner(role, attempt_payload)
+        except AgentSchemaError as exc:
+            if exc.direction != "output" or last:
+                return None, f"{role} output schema mismatch: {exc.cause}"
+            attempt_payload = {**payload, "format_validation_error": str(exc)}
+            continue
+        try:
+            parsed = parse_agent_json_or_yaml(raw, expected_keys=_role_keys(role))
+            break
+        except AgentOutputParseError as exc:
+            if last:
+                return None, f"{role} parse error: {exc}"
+            attempt_payload = {**payload, "format_validation_error": str(exc)}
+    assert parsed is not None
     spec = agents_blueprint.AGENTS[role]
     parsed = normalize_structured_output(
         role,

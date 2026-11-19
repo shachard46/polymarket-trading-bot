@@ -14,6 +14,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
+from urllib.parse import urlsplit
 from typing import Any, Callable
 
 from config.trading_constants import (
@@ -24,7 +25,7 @@ from config.trading_constants import (
 )
 from orchestrator import brave_search, config
 from orchestrator.aiq_bundle import fetch_research_bundle_cached, normalize_query
-from orchestrator.config import RESEARCH_DATA_MAX_CHARS
+from orchestrator.config import MAX_FORMAT_RETRIES, RESEARCH_DATA_MAX_CHARS
 from orchestrator.util import truncate_lines
 from orchestrator.web_filter import _URL_RE, NOT_FOUND, filter_rows, normalize_url
 from orchestrator.parse import AgentOutputParseError, _role_keys, parse_agent_json_or_yaml
@@ -253,18 +254,29 @@ def _agent_rows(
     def fail(msg: str) -> list[dict[str, Any]]:
         return [{"query": q, "research_data": "", "error": msg} for q in queries]
 
-    try:
-        raw = runner(role, payload)
-    except AgentSchemaError as exc:
-        return fail(f"{role} schema mismatch: {exc.cause}")
-    except InfraUnavailable:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        return fail(f"{role} failed: {exc}")
-    try:
-        parsed = raw if isinstance(raw, dict) else parse_agent_json_or_yaml(raw, expected_keys=_role_keys(role))
-    except AgentOutputParseError as exc:
-        return fail(f"{role} parse error: {exc}")
+    parsed: dict[str, Any] | None = None
+    attempt_payload = payload
+    for attempt in range(MAX_FORMAT_RETRIES + 1):
+        last = attempt >= MAX_FORMAT_RETRIES
+        try:
+            raw = runner(role, attempt_payload)
+        except AgentSchemaError as exc:
+            if exc.direction != "output" or last:
+                return fail(f"{role} schema mismatch: {exc.cause}")
+            attempt_payload = {**payload, "format_validation_error": str(exc)}
+            continue
+        except InfraUnavailable:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            return fail(f"{role} failed: {exc}")
+        try:
+            parsed = raw if isinstance(raw, dict) else parse_agent_json_or_yaml(raw, expected_keys=_role_keys(role))
+            break
+        except AgentOutputParseError as exc:
+            if last:
+                return fail(f"{role} parse error: {exc}")
+            attempt_payload = {**payload, "format_validation_error": str(exc)}
+    assert parsed is not None
     results = _salvage_results(parsed, queries)
     if results is None:
         if parsed.get("error"):
@@ -290,15 +302,14 @@ def _agent_rows(
 
 def _record_filter(market_id: str, model: str, counts: Any) -> None:
     log.info(
-        "[WEB-FILTER] %s model=%s kept=%d dropped_no_url=%d dropped_unretrieved=%d dropped_unverifiable=%d",
-        market_id, model, counts.kept, counts.dropped_no_url, counts.dropped_unretrieved,
-        counts.dropped_unverifiable,
+        "[WEB-FILTER] %s model=%s kept=%d %s", market_id, model, counts.kept, counts.reason(),
     )
     from orchestrator.llm import usage  # noqa: PLC0415
 
     usage.record_web_filter(
         model, counts.kept, counts.dropped_no_url, counts.dropped_unretrieved, market_id=market_id,
-        dropped_unverifiable=counts.dropped_unverifiable,
+        dropped_unverifiable=counts.dropped_unverifiable, not_found=counts.not_found,
+        dropped_blank=counts.dropped_blank,
     )
 
 
@@ -340,6 +351,20 @@ def _fill_dates(text: str, ages: dict[str, str]) -> str:
     return "\n".join(out)
 
 
+def _log_page_diagnostics(market_id: str, query: str, pages: list[Any]) -> None:
+    """Why the extractor may have found nothing: per page host, fetched-or-snippet-only, text size, text head."""
+    log.warning(
+        "[WEB-DIAG] %s query_sent=%r pages=%s", market_id, brave_search.keyword_query(query),
+        [
+            {
+                "host": (urlsplit(p.url).hostname or "")[:60], "fetched": bool(getattr(p, "fetched", None)),
+                "chars": len(p.text), "head": " ".join(p.text.split())[:80],
+            }
+            for p in pages
+        ],
+    )
+
+
 def _brave_one(
     runner: Callable[[str, dict[str, Any]], Any], market_id: str, query: str, today: str
 ) -> dict[str, Any]:
@@ -369,9 +394,11 @@ def _brave_one(
     (row,), counts = filter_rows([row], [p.url for p in pages], strict=True)
     _record_filter(market_id, BRAVE_MODEL, counts)
     if counts.kept == 0:
+        _log_page_diagnostics(market_id, query, pages)
+        # NOT_FOUND is the extractor finding nothing relevant on the pages (not a guard drop): say so.
         log.warning(
-            "[WEB-GUARD] %s: extractor lines all dropped for %r (%d pages; dropped_no_url=%d dropped_unretrieved=%d)",
-            market_id, query, len(pages), counts.dropped_no_url, counts.dropped_unretrieved,
+            "[WEB-GUARD] %s: no extractor line kept for %r (%d pages): %s",
+            market_id, query, len(pages), counts.reason(),
         )
     return {**row, PAGES_KEY: page_texts}
 

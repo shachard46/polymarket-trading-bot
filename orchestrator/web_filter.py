@@ -24,12 +24,24 @@ class FilterCounts:
     dropped_no_url: int = 0
     dropped_unretrieved: int = 0
     dropped_unverifiable: int = 0  # web call without any citations: lines cannot be checked
+    not_found: int = 0  # the model answered NOT_FOUND (nothing relevant on the pages); nothing was dropped
+    dropped_blank: int = 0  # blank / NOT_FOUND filler lines mixed in with fact lines
 
     def add(self, other: "FilterCounts") -> None:
         self.kept += other.kept
         self.dropped_no_url += other.dropped_no_url
         self.dropped_unretrieved += other.dropped_unretrieved
         self.dropped_unverifiable += other.dropped_unverifiable
+        self.not_found += other.not_found
+        self.dropped_blank += other.dropped_blank
+
+    def reason(self) -> str:
+        """Compact "why nothing was kept" for logs: every path has a named counter."""
+        return (
+            f"not_found={self.not_found} dropped_no_url={self.dropped_no_url} "
+            f"dropped_unretrieved={self.dropped_unretrieved} dropped_unverifiable={self.dropped_unverifiable} "
+            f"dropped_blank={self.dropped_blank}"
+        )
 
 
 def normalize_url(url: str) -> str:
@@ -62,14 +74,19 @@ def filter_research_data(
     """
     counts = FilterCounts()
     stripped = str(text or "").strip()
-    if not stripped or stripped == NOT_FOUND:
+    if not stripped:
+        counts.dropped_blank += 1
+        return stripped, counts
+    if stripped == NOT_FOUND:
+        counts.not_found += 1
         return stripped, counts
     cites = citations or []
     allowed = {normalize_url(c) for c in cites if "//" in c}
     domains = {normalize_url(c) for c in cites if "//" not in c and "." in c and " " not in c}
     kept: list[str] = []
     for line in stripped.splitlines():
-        if not line.strip():
+        if not line.strip() or line.strip() == NOT_FOUND:
+            counts.dropped_blank += 1
             continue
         url = _line_url(line)
         if url is None:

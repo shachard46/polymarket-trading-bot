@@ -348,6 +348,27 @@ def _persist_trade(
         )
 
 
+def _edge_sign_side(
+    allocation: dict[str, Any], p: float, q: float, p_low: Any, p_high: Any, quotes: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Allocation with a truthful side for records that are below the edge gate (never for a traded one).
+
+    The skill picks YES on a tie, so a no-edge market (e.g. a wide range shrinking the estimate onto q) showed
+    "YES" even when p < q. For a below-edge record the side is the sign of p - q, with that side's real ask;
+    ``None`` when no side is favoured (p == q, or q inside [p_low, p_high]). A row skipped for another reason
+    (min order / Kelly cap) keeps the skill's side: that side did have edge.
+    """
+    if allocation.get("binding_cap") != "min_edge":
+        return allocation
+    try:
+        inside = p_low is not None and p_high is not None and float(p_low) <= q <= float(p_high)
+    except (TypeError, ValueError):
+        inside = False
+    side = None if inside or p == q else ("YES" if p > q else "NO")
+    price = (quotes.get(side) or {}).get("ask") if side else None
+    return {**allocation, "side": side, "price": price}
+
+
 def _execute_market(
     vault: ObsidianManager, row: dict[str, Any], from_research: bool, bankroll: float | None = None
 ) -> None:
@@ -385,6 +406,8 @@ def _execute_market(
 
     size_usd = float(allocation["allocation_usd"])
     below = bool(allocation["below_edge_threshold"]) or not size_usd > 0
+    if below:
+        allocation = _edge_sign_side(allocation, row["p_value"], q, p_low, p_high, quotes)
     bought = quotes.get(allocation.get("side") or "") or {}
     trade = _trade_record(vault, market_id, market_data, q, row, allocation, size_usd, below, bought)
 

@@ -33,6 +33,7 @@ from orchestrator.parse import (
     AgentOutputParseError,
     coerce_deep_researcher_markdown,
     coerce_deep_researcher_state_machine,
+    junk_payload_reason,
     normalize_structured_output,
     _role_keys,
     parse_agent_json_or_yaml,
@@ -187,6 +188,11 @@ def _validate_structured(role: str, spec: dict[str, Any], result: Any, payload: 
         except AgentOutputParseError:
             # Let the phase-level parser surface this as a normal inactive-flag event.
             return
+
+    junk = junk_payload_reason(parsed)
+    if junk:
+        log.warning("%s output is junk: %s; raw[:300]=%r", role, junk, str(result)[:300])
+        raise AgentSchemaError(role, "output", f"junk payload: {junk}")
 
     # Don't re-validate explicit error responses — the agent is reporting a
     # tool failure, not a schema violation.

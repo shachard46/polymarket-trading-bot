@@ -121,6 +121,7 @@ WEB_FILTER_FILE = "web_filter.jsonl"
 def record_web_filter(
     model: str | None, kept: int, dropped_no_url: int, dropped_unretrieved: int,
     *, market_id: str | None = None, dropped_unverifiable: int = 0,
+    not_found: int = 0, dropped_blank: int = 0,
 ) -> None:
     """Append one web-evidence-filter row (own file, so llm_usage call counts stay untouched); never raises."""
     try:
@@ -132,6 +133,8 @@ def record_web_filter(
             "dropped_no_url": dropped_no_url,
             "dropped_unretrieved": dropped_unretrieved,
             "dropped_unverifiable": dropped_unverifiable,
+            "not_found": not_found,
+            "dropped_blank": dropped_blank,
         }
         path = usage_path().with_name(WEB_FILTER_FILE)
         path.parent.mkdir(parents=True, exist_ok=True)

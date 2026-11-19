@@ -418,6 +418,9 @@ def _gap_round(
             known.add(q.lower())
             wanted.append((c, q))
             proposed_for.add(c["crux_id"])
+        for c in cruxes:
+            if c["role"] == "comparator" and c["status"] == "unanswered" and c["crux_id"] in proposed_for:
+                log.info("[PHASE 3] gap: analyzer proposed comparator follow-up for %s (%s)", row["market_id"], c["crux_id"])
         for c in cruxes:  # history first: an unanswered comparator crux always gets a follow-up
             if c["role"] == "comparator" and c["status"] == "unanswered" and c["crux_id"] not in proposed_for:
                 q = _comparator_followup(c, today)

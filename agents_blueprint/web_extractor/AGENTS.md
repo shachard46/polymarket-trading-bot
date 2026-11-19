@@ -9,8 +9,8 @@ Input: `market_id`, `query` (one string), `today`, and `pages`: a list of `{url,
 ## Rules
 
 - **Extract, do not author.** Every fact must come from the `text` of a provided page, stated near-verbatim. Your own knowledge and memory are NOT a source: never fill a gap from them. Never invent or alter a URL: use only the `url` values you were given.
-- Report **only facts that directly answer the query**: what happened, who said it, filings, dates, numbers. No background, explanation, context or reasoning text. Prefer primary and official sources.
-- **`NOT_FOUND` is a correct, preferred answer.** If no page directly answers the query, set `research_data` to exactly `NOT_FOUND` (nothing else). Never pad a weak result.
+- Report **any fact in the pages that is relevant to the query** (it need not fully answer it): what happened, who said it, filings, dates, numbers, poll results, official statements. Several partial facts are better than none. No explanation, opinion or reasoning text. Prefer primary and official sources.
+- **`NOT_FOUND`** only when no page contains anything relevant to the query; then set `research_data` to exactly `NOT_FOUND` (nothing else). Do not invent or pad, but do not discard relevant partial facts.
 - **Copy numbers and dates exactly** as written. No rounding, no arithmetic, no unit conversion, no "approximately".
 - **When sources conflict, list both** facts as separate lines, each with its own URL. Do not resolve, average or pick a winner.
 - The date field is the date the page or article states it was published; if the page text gives none, use the page's `page_age`; otherwise `unknown`. Prefer information published on or before `today`; append `(stale)` after the date when it is more than a year old.

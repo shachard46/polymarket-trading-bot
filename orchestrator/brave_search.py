@@ -240,9 +240,33 @@ def _build_page(result: dict[str, Any]) -> Page | None:
     )
 
 
+_AS_OF_RE = re.compile(r"[\(,]?\s*\bas of\s+\d{4}-\d{2}-\d{2}\s*[\),]?", re.IGNORECASE)
+_QUESTION_LEAD_RE = re.compile(
+    r"^(?:(?:what|which|who|whom|whose|when|where|why|how(?:\s+(?:many|much|often|long|large))?)\b\s*"
+    r"(?:(?:is|are|was|were|did|do|does|has|have|had|will|would|can|could|should)\b\s*)?"
+    r"|(?:is|are|was|were|did|do|does|has|have|had|will|would|can|could|should)\b\s*)",
+    re.IGNORECASE,
+)
+KEYWORD_QUERY_MAX_WORDS = 24
+
+
+def keyword_query(question: str) -> str:
+    """Search-engine form of a crux question: no "as of <date>" clause, no leading question words, no ``?``.
+
+    Brave works on keywords; a full question plus a date suffix ranks poorly. The extractor still gets the full
+    question. Falls back to the original text when stripping leaves nothing.
+    """
+    q = _AS_OF_RE.sub(" ", str(question or ""))
+    q = _QUESTION_LEAD_RE.sub("", q.strip())
+    q = re.sub(r"[?]+", " ", q)
+    words = q.split()[:KEYWORD_QUERY_MAX_WORDS]
+    out = " ".join(words).strip(" ,;:")
+    return out or str(question or "").strip()
+
+
 def search_pages(query: str, fetch_pages: int = BRAVE_FETCH_PAGES, freshness: str | None = None) -> list[Page]:
     """Search ``query`` and read the top ``fetch_pages`` results; raises :class:`BraveError` on a failed search."""
-    results = search(query, freshness=freshness)[: max(0, fetch_pages)]
+    results = search(keyword_query(query), freshness=freshness)[: max(0, fetch_pages)]
     if not results:
         return []
     with ThreadPoolExecutor(max_workers=len(results)) as pool:
@@ -250,4 +274,4 @@ def search_pages(query: str, fetch_pages: int = BRAVE_FETCH_PAGES, freshness: st
     return [p for p in pages if p is not None]
 
 
-__all__ = ["BraveError", "Page", "fetch_page_text", "freshness_override", "html_to_text", "search", "search_pages"]
+__all__ = ["BraveError", "keyword_query", "Page", "fetch_page_text", "freshness_override", "html_to_text", "search", "search_pages"]
