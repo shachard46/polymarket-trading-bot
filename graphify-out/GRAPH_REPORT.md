@@ -5,12 +5,12 @@
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 3345 nodes · 8287 edges · 169 communities (143 shown, 26 thin omitted)
-- Extraction: 91% EXTRACTED · 9% INFERRED · 0% AMBIGUOUS · INFERRED: 774 edges (avg confidence: 0.52)
+- 3326 nodes · 8257 edges · 154 communities (129 shown, 25 thin omitted)
+- Extraction: 91% EXTRACTED · 9% INFERRED · 0% AMBIGUOUS · INFERRED: 763 edges (avg confidence: 0.53)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `1501a1c8`
+- Built from commit: `7215a2b8`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -79,7 +79,6 @@
 - [[_COMMUNITY_Community 79|Community 79]]
 - [[_COMMUNITY_Community 71|Community 71]]
 - [[_COMMUNITY_Community 63|Community 63]]
-- [[_COMMUNITY_Community 44|Community 44]]
 - [[_COMMUNITY_Community 65|Community 65]]
 - [[_COMMUNITY_Community 22|Community 22]]
 - [[_COMMUNITY_Community 54|Community 54]]
@@ -148,48 +147,34 @@
 - [[_COMMUNITY_Community 134|Community 134]]
 - [[_COMMUNITY_Community 135|Community 135]]
 - [[_COMMUNITY_Community 136|Community 136]]
-- [[_COMMUNITY_Community 137|Community 137]]
 - [[_COMMUNITY_Community 138|Community 138]]
 - [[_COMMUNITY_Community 139|Community 139]]
 - [[_COMMUNITY_Community 140|Community 140]]
 - [[_COMMUNITY_Community 141|Community 141]]
 - [[_COMMUNITY_Community 142|Community 142]]
-- [[_COMMUNITY_Community 143|Community 143]]
 - [[_COMMUNITY_Community 144|Community 144]]
 - [[_COMMUNITY_Community 145|Community 145]]
 - [[_COMMUNITY_Community 146|Community 146]]
 - [[_COMMUNITY_Community 147|Community 147]]
 - [[_COMMUNITY_Community 148|Community 148]]
-- [[_COMMUNITY_Community 149|Community 149]]
 - [[_COMMUNITY_Community 150|Community 150]]
 - [[_COMMUNITY_Community 151|Community 151]]
-- [[_COMMUNITY_Community 152|Community 152]]
-- [[_COMMUNITY_Community 153|Community 153]]
-- [[_COMMUNITY_Community 154|Community 154]]
 - [[_COMMUNITY_Community 155|Community 155]]
 - [[_COMMUNITY_Community 156|Community 156]]
-- [[_COMMUNITY_Community 157|Community 157]]
-- [[_COMMUNITY_Community 158|Community 158]]
-- [[_COMMUNITY_Community 159|Community 159]]
 - [[_COMMUNITY_Community 160|Community 160]]
 - [[_COMMUNITY_Community 161|Community 161]]
 - [[_COMMUNITY_Community 162|Community 162]]
-- [[_COMMUNITY_Community 163|Community 163]]
-- [[_COMMUNITY_Community 164|Community 164]]
 - [[_COMMUNITY_Community 165|Community 165]]
-- [[_COMMUNITY_Community 166|Community 166]]
-- [[_COMMUNITY_Community 167|Community 167]]
-- [[_COMMUNITY_Community 168|Community 168]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `ObsidianManager` - 102 edges
-2. `LLMError` - 101 edges
+2. `LLMError` - 97 edges
 3. `MarketRow` - 94 edges
-4. `AgentRunner` - 92 edges
-5. `LLMResponse` - 88 edges
+4. `AgentRunner` - 88 edges
+5. `LLMResponse` - 84 edges
 6. `LLM` - 58 edges
-7. `InfraUnavailable` - 58 edges
-8. `LLMRequest` - 56 edges
+7. `InfraUnavailable` - 54 edges
+8. `LLMRequest` - 52 edges
 9. `AgentSchemaError` - 46 edges
 10. `DeepResearcherComplete` - 44 edges
 
@@ -206,22 +191,22 @@
   tests/orchestrator/test_research_pipeline_integration.py → orchestrator/scraper.py
 
 ## Import Cycles
+- 1-file cycle: `orchestrator/phases/p3_queue.py -> orchestrator/phases/p3_queue.py`
+- 1-file cycle: `orchestrator/scraper.py -> orchestrator/scraper.py`
 - 1-file cycle: `orchestrator/gate.py -> orchestrator/gate.py`
 - 1-file cycle: `orchestrator/polymarket_api.py -> orchestrator/polymarket_api.py`
 - 1-file cycle: `orchestrator/phases/p2_routing.py -> orchestrator/phases/p2_routing.py`
-- 1-file cycle: `orchestrator/phases/p3_queue.py -> orchestrator/phases/p3_queue.py`
 - 1-file cycle: `orchestrator/phases/p4_approval.py -> orchestrator/phases/p4_approval.py`
 - 1-file cycle: `orchestrator/phases/p4_execution.py -> orchestrator/phases/p4_execution.py`
 - 1-file cycle: `orchestrator/phases/p6_overseer.py -> orchestrator/phases/p6_overseer.py`
 - 1-file cycle: `orchestrator/phases/research_state.py -> orchestrator/phases/research_state.py`
-- 1-file cycle: `orchestrator/scraper.py -> orchestrator/scraper.py`
 - 1-file cycle: `orchestrator/discord_bot.py -> orchestrator/discord_bot.py`
 - 1-file cycle: `orchestrator/util.py -> orchestrator/util.py`
 - 1-file cycle: `orchestrator/notify.py -> orchestrator/notify.py`
 - 1-file cycle: `orchestrator/stats/groups.py -> orchestrator/stats/groups.py`
 - 1-file cycle: `orchestrator/stats/cost.py -> orchestrator/stats/cost.py`
 
-## Communities (169 total, 26 thin omitted)
+## Communities (154 total, 25 thin omitted)
 
 ### Community 0 - "Atomic Vault Writes"
 Cohesion: 0.12
@@ -240,24 +225,24 @@ Cohesion: 0.12
 Nodes (35): _keys(), Wave 3: price-blind two-stage research (QUICK -> Hub decision -> FULL), refresh,, The QUICK scan fits the budget, but FULL markets queued behind a slow one do not, The QUICK scan fits the budget, but FULL markets queued behind a slow one do not, _research(), _seed(), _skips(), test_aggregate_samples_median_and_conservative_confidence() (+27 more)
 
 ### Community 4 - "Research-Edge Gate"
-Cohesion: 0.07
-Nodes (38): _entry(), _fake_anthropic(), FakeBatch, FakeBatches, FakeSync, GemHttp, _gresp(), _mk() (+30 more)
+Cohesion: 0.06
+Nodes (38): LLMResponse, _entry(), _fake_anthropic(), FakeBatch, FakeBatches, FakeSync, FakeTriageLLM, GemHttp (+30 more)
 
 ### Community 5 - "Market Scraper Client"
-Cohesion: 0.09
-Nodes (27): normalize_structured_output(), parse_agent_json_or_yaml(), Backfill known output fields from the orchestrator payload when missing., Backfill known output fields from the orchestrator payload when missing., Parse an agent response into a dict.      Accepts an already-parsed mapping (pas, Parse an agent response into a dict.      Accepts an already-parsed mapping (pas, Regression tests for agent response parsing and normalization., Some models return the JSON object as a JSON-encoded string. (+19 more)
+Cohesion: 0.16
+Nodes (15): DirectiveBoundsError, The proposed directives violate the Overseer guard-rails (BOUNDS, step, count, c, add_resolutions(), Overseer, _scored_rows(), test_phase6_min_new_resolved_env(), test_phase6_needs_min_new_resolved(), test_phase6_payload_has_stats_failure_classes_bounds_and_15_post_mortems() (+7 more)
 
 ### Community 6 - "Community 36"
 Cohesion: 0.08
 Nodes (54): _book_handler(), _candidates_handler(), FakeResponse, FakeSession, gamma_market(), _holders(), install(), load() (+46 more)
 
 ### Community 7 - "Scraper ORM & Scanner"
-Cohesion: 0.12
-Nodes (30): doc(), fm_of(), knobs_for(), Wave 4: the learning loop (failure classes, gated/bounded/versioned Overseer, ro, A complete directives doc with every knob at its default unless overridden., A complete directives doc with every knob at its default unless overridden., _runner(), _seed_traded_market() (+22 more)
+Cohesion: 0.14
+Nodes (27): doc(), fm_of(), knobs_for(), Wave 4: the learning loop (failure classes, gated/bounded/versioned Overseer, ro, A complete directives doc with every knob at its default unless overridden., A complete directives doc with every knob at its default unless overridden., _runner(), _seed_traded_market() (+19 more)
 
 ### Community 8 - "Community 59"
-Cohesion: 0.10
-Nodes (32): coerce_deep_researcher_markdown(), coerce_deep_researcher_state_machine(), extract_fenced_block(), _find_embedded_json_object(), _legacy_markdown_to_complete(), _parse_body_candidates(), preprocess_agent_text(), Any (+24 more)
+Cohesion: 0.05
+Nodes (72): agent_error_reason(), coerce_deep_researcher_markdown(), coerce_deep_researcher_state_machine(), extract_fenced_block(), _find_embedded_json_object(), _legacy_markdown_to_complete(), normalize_structured_output(), parse_agent_json_or_yaml() (+64 more)
 
 ### Community 9 - "Scraper Query Tools"
 Cohesion: 0.12
@@ -268,24 +253,24 @@ Cohesion: 0.06
 Nodes (71): Any, bool, int, Path, Return parsed JSON from ``path``, or ``None`` if missing or unreadable., Write ``obj`` as JSON to ``path`` atomically, creating the parent directory., read_json(), write_json_atomic() (+63 more)
 
 ### Community 11 - "Community 41"
-Cohesion: 0.20
-Nodes (17): _optional_prob(), parse_deep_researcher_frontmatter(), _parse_estimated_p(), parse_estimated_p_from_deep_researcher_frontmatter(), Any, float, str, Deep Researcher markdown parsing — frontmatter split + ``estimated_p`` extractio (+9 more)
+Cohesion: 0.29
+Nodes (12): clear_inactive(), is_inactive(), bool, Strip inactive state keys. Returns ``cleared``, ``skipped``, or ``missing``., replay_inactive(), Tests for in-place inactive flagging and replay., test_flag_inactive_on_filter(), test_phase3_cascade_inactive_to_filter_when_active_exists() (+4 more)
 
 ### Community 12 - "Community 106"
-Cohesion: 0.06
-Nodes (29): Any, Path, str, Write raw content to any path inside the Vault.          Parent directories are, Validate a Phase 2 filter payload and write it to ``01_Filters/``.          The, True when the market artifact exists and frontmatter has ``status: inactive``., Return the YAML frontmatter from ``01_Filters/{market_id}.md`` if present., Validate a Deep Researcher payload and write to ``02_Active_Research/``. (+21 more)
+Cohesion: 0.07
+Nodes (28): _archive_timestamp(), Any, Path, str, Write raw content to any path inside the Vault.          Parent directories are, True when the market artifact exists and frontmatter has ``status: inactive``., Return the YAML frontmatter from ``01_Filters/{market_id}.md`` if present., Return the on-disk path for ``market_id`` in ``dir_key``, if it exists. (+20 more)
 
 ### Community 13 - "Community 50"
-Cohesion: 0.15
-Nodes (36): agent_error_reason(), Return the error string from an agent payload, if any.      Treats missing key,, Return the error string from an agent payload, if any.      Treats missing key,, AgentRunner, Any, bool, ObsidianManager, str (+28 more)
+Cohesion: 0.14
+Nodes (43): BrieferOutput, AgentRunner, Any, bool, DeepResearcherComplete, float, ObsidianManager, Sample (+35 more)
 
 ### Community 15 - "Community 15"
-Cohesion: 0.18
-Nodes (21): bounds_table_text(), changed_knobs(), _coerce_override(), directive_version(), effective_knobs(), extract_filter_directives(), _frontmatter(), parse_filters_block() (+13 more)
+Cohesion: 0.09
+Nodes (35): bounds_table_text(), _coerce_override(), directive_version(), effective_knobs(), extract_filter_directives(), _frontmatter(), parse_filters_block(), Any (+27 more)
 
 ### Community 16 - "Ledger Stats & Calibration"
-Cohesion: 0.15
-Nodes (19): _build_seed_directives(), DirectivesMixin, Any, bool, int, Path, str, Merge ``updates`` into the live directives frontmatter (no version bump). (+11 more)
+Cohesion: 0.14
+Nodes (22): _build_seed_directives(), DirectivesMixin, Any, bool, int, Path, str, Directives versioning, seeding and migration: a mixin for ObsidianManager. (+14 more)
 
 ### Community 17 - "Payload Models & Errors"
 Cohesion: 0.17
@@ -293,35 +278,35 @@ Nodes (27): test_integ_score_carried_to_later_rows(), mk(), Phase 2 end to end: 
 
 ### Community 18 - "Community 27"
 Cohesion: 0.08
-Nodes (26): _APIConnectionError, _APIStatusError, _Block, _call(), _FakeClient, _Msg, _ok(), _payload() (+18 more)
+Nodes (27): Exception, _APIConnectionError, _APIStatusError, _Block, _call(), _FakeClient, _Msg, _ok() (+19 more)
 
 ### Community 19 - "Community 68"
-Cohesion: 0.08
-Nodes (45): AgentRunner, Any, bool, datetime, float, int, ObsidianManager, str (+37 more)
+Cohesion: 0.13
+Nodes (24): AgentRunner, float, ObsidianManager, Any, bool, int, str, test_full_stage_prefetches_briefers_in_one_batch() (+16 more)
 
 ### Community 20 - "Community 35"
 Cohesion: 0.20
 Nodes (28): Any, int, ObsidianManager, str, _fmt(), compute_stats, stats.md rendering (one renderer per section) and write_stats., Render ``00_System/stats.md``; pass ``rows`` to reuse an already-scanned ledger., Render ``00_System/stats.md``; pass ``rows`` to reuse an already-scanned ledger. (+20 more)
 
 ### Community 21 - "Community 26"
-Cohesion: 0.07
-Nodes (31): Path, str, Vault workspace path resolution (env + defaults)., Resolve vault workspace root: explicit arg, then env, then project default., resolve_vault_base(), ObsidianManager, Create all vault subdirectories if they do not already exist., Return the path where active research for ``market_id`` lives. (+23 more)
+Cohesion: 0.08
+Nodes (29): Path, str, Vault workspace path resolution (env + defaults)., Resolve vault workspace root: explicit arg, then env, then project default., resolve_vault_base(), ObsidianManager, Create all vault subdirectories if they do not already exist., Return the path where the post-mortem report for ``market_id`` lives. (+21 more)
 
 ### Community 22 - "Community 22"
-Cohesion: 0.14
-Nodes (33): _assert_trade_log_ok(), _build_researched_row(), _configure_logging(), _log_status(), _make_vault(), phase4_live_env(), _phase4_live_requested(), phase4_vault() (+25 more)
+Cohesion: 0.07
+Nodes (62): _assert_trade_log_ok(), _build_researched_row(), _configure_logging(), _log_status(), _make_vault(), phase4_live_env(), _phase4_live_requested(), phase4_vault() (+54 more)
 
 ### Community 23 - "Community 31"
 Cohesion: 0.11
 Nodes (26): Per-role agent definitions: ``agents_blueprint/<role>/`` (system prompt in AGENT, load_agents_from_dir(), Any, Path, str, Discover per-role agent workspaces under ``agents/<role>/`` and build ``AGENTS``, Load all agent workspaces; return orchestrator ``AGENTS`` dict keyed by role., Load all agent workspaces; return orchestrator ``AGENTS`` dict keyed by role. (+18 more)
 
 ### Community 24 - "Constants & Inactive State"
-Cohesion: 0.14
-Nodes (20): DeepResearcherOutput, parse_deep_researcher_json(), Any, str, ValidationError, Validate a Deep Researcher state-machine payload by ``status``.      A non-empty, Validate a Deep Researcher state-machine payload by ``status``., _validation_error() (+12 more)
+Cohesion: 0.08
+Nodes (34): DeepResearcherOutput, parse_deep_researcher_json(), Any, str, ValidationError, Validate a Deep Researcher state-machine payload by ``status``.      A non-empty, Validate a Deep Researcher state-machine payload by ``status``., _validation_error() (+26 more)
 
 ### Community 25 - "A-IQ Research Bundle"
-Cohesion: 0.10
-Nodes (27): build_live_response_hint(), Any, Build response instructions from ``agent.yaml`` ``output_schema``., Build response instructions from ``agent.yaml`` ``output_schema``., _build_live_prompt(), Serialize the orchestrator payload into the user message for the agent., Serialize the orchestrator payload for the target OpenClaw workspace., Serialize the orchestrator payload into the user message for the agent. (+19 more)
+Cohesion: 0.22
+Nodes (9): evidence_source(), overseer_min_new_resolved(), ``aiq`` | ``web`` | ``ab`` (default ``ab``); read at call time. Unknown values r, ``aiq`` | ``web`` | ``ab`` (default ``ab``); read at call time. Unknown values r, New ledger resolution rows required since the last Overseer run (default 30)., ``aiq`` | ``web`` | ``ab`` (default ``ab``); read at call time. Unknown values r, New ledger resolution rows required since the last Overseer run (default 30)., New ledger resolution rows required since the last Overseer run (default 30). (+1 more)
 
 ### Community 26 - "Community 26"
 Cohesion: 0.09
@@ -329,35 +314,35 @@ Nodes (53): Any, bool, datetime, float, int, ObsidianManager, Path, str (+45 mor
 
 ### Community 27 - "Agent Blueprint Loader"
 Cohesion: 0.15
-Nodes (30): effective_min_edge(), PAPER_MIN_EDGE iff PAPER_TRADE_MODE (read at call time), else MIN_EDGE., PAPER_MIN_EDGE iff PAPER_TRADE_MODE (read at call time), else MIN_EDGE., Any, bool, datetime, float, int (+22 more)
+Nodes (29): ObsidianManager, Any, bool, datetime, float, int, ObsidianManager, Path (+21 more)
 
 ### Community 28 - "Scraper DB Pruning"
-Cohesion: 0.50
-Nodes (3): Validate a Post-Mortem Analyst payload and append it to the report.          The, Place ``analysis`` under the ``## Post-Mortem`` header (replace the section, or, _render_post_mortem_entry()
+Cohesion: 0.25
+Nodes (8): web_searcher agent (polymarket-web-searcher), 2. The Surgical Query Planner (briefer), 3. The Forensic Fact Verifier (deep_researcher), 4. Trade execution (no agent), 5. The Post-Mortem Analyst, 6. The Overseer (Strategy Optimizer), Agent Personas and I/O Schemas, Rollout checklist (breaking changes)
 
 ### Community 29 - "Skill Contracts Doc"
-Cohesion: 0.19
-Nodes (21): AgentRunner, AgentRunner, Any, bool, datetime, ObsidianManager, str, _auto_revert_if_worse() (+13 more)
+Cohesion: 0.20
+Nodes (21): changed_knobs(), AgentRunner, Any, bool, datetime, ObsidianManager, str, _auto_revert_if_worse() (+13 more)
 
 ### Community 30 - "Vault Paths & Trade Records"
 Cohesion: 0.20
 Nodes (26): _append(), current_directive_version(), _from_prices(), _from_scalar(), iter_rows(), latest_decision_by_market(), ledger_path(), outcome_yes_from_resolution() (+18 more)
 
 ### Community 31 - "Community 48"
-Cohesion: 0.19
-Nodes (27): _active_frontmatter(), _build_error_log(), build_inactive_filter_payload(), _cascade_phase3_filter_inactive(), clear_inactive(), _flag_payload(), has_pending_edge_refresh(), _inactive_keys() (+19 more)
+Cohesion: 0.18
+Nodes (28): _active_frontmatter(), _build_error_log(), build_inactive_filter_payload(), _cascade_phase3_filter_inactive(), _filter_confidence(), _flag_payload(), has_pending_edge_refresh(), _inactive_keys() (+20 more)
 
 ### Community 32 - "Community 32"
 Cohesion: 0.14
-Nodes (24): AgentRunner, Any, ObsidianManager, str, _filter_integrity_fields(), ``integ_score``/``integ_flags`` from a filter record's integrity dict (None when, ``integ_score``/``integ_flags`` from a filter record's integrity dict (None when, ``integ_score``/``integ_flags`` from a filter record's integrity dict (None when (+16 more)
+Nodes (23): AgentRunner, Any, ObsidianManager, str, _ledger_model_fields(), Runner backend plus, when the caller names the agent ``role``, the model that pr, Six pipeline phases, split into one module per phase (or phase stage).  A phase:, phase5_resolution_and_post_mortem() (+15 more)
 
 ### Community 33 - "Community 58"
-Cohesion: 0.11
-Nodes (25): direct_max_tokens(), direct_web_max_uses(), full_research_budget(), gate_budget(), _int_env(), int, Max researchable markets promoted to Phase 3 per tick (default 8)., Max markets given full research per tick (default 3). (+17 more)
+Cohesion: 0.09
+Nodes (31): direct_max_tokens(), full_research_budget(), gate_budget(), _int_env(), int, quick_research_budget(), Max markets given a quick research pass per tick (default 8)., Max researchable markets promoted to Phase 3 per tick (default 8). (+23 more)
 
 ### Community 34 - "Community 34"
-Cohesion: 0.10
-Nodes (34): Return the active runner mode, defaulting to ``stub``.      Raises :class:`Value, Return the active runner mode, defaulting to ``stub``.      Raises :class:`Value, Return the active runner mode, defaulting to ``stub``.      Raises :class:`Value, runner_mode(), Any, bool, float, str (+26 more)
+Cohesion: 0.09
+Nodes (35): Any, bool, float, str, test_ledger_fields_backend_and_model(), test_ledger_fields_provider_and_model(), _carry_filter_signals(), _filter_integrity_fields() (+27 more)
 
 ### Community 35 - "Phase 3 Output Models"
 Cohesion: 0.09
@@ -372,16 +357,16 @@ Cohesion: 0.19
 Nodes (13): _ids(), Triage shadow: stable selection, pending marker at reject time, measure-only qui, _retired(), _rows(), test_content_error_ledgered_marked_done_never_inactive(), test_high_manipulation_reason_and_cap_per_tick(), test_never_displaces_real_quick_work(), test_non_pending_retired_stays_ignored() (+5 more)
 
 ### Community 38 - "Community 38"
-Cohesion: 0.12
-Nodes (22): LLMRequest, One single-shot call for :meth:`LLM.complete_many`., One single-shot call for :meth:`LLM.complete_many`., _citations(), OpenRouterLLM, OpenRouter provider: POST /chat/completions (response_format json_object, ``web`, URLs of the web plugin's ``url_citation`` annotations (None when the field is ab, URLs of the web plugin's ``url_citation`` annotations (None when the field is ab (+14 more)
+Cohesion: 0.25
+Nodes (6): HttpStatusError, _citations(), URLs of the web plugin's ``url_citation`` annotations (None when the field is ab, openrouter_base_url(), Any, str
 
 ### Community 39 - "Community 39"
-Cohesion: 0.14
-Nodes (30): NamedTuple, Any, bool, datetime, float, ObsidianManager, str, _as_float() (+22 more)
+Cohesion: 0.16
+Nodes (28): datetime, Any, bool, datetime, float, ObsidianManager, str, _as_float() (+20 more)
 
 ### Community 40 - "Community 120"
-Cohesion: 0.12
-Nodes (31): PolymarketAPIError, Transport-level failure (network, timeout, retries exhausted, bad JSON). Infra,, Transport-level failure (network, timeout, retries exhausted, bad JSON). Infra,, _days_to_resolution(), fetch_market_row(), fetch_resolution(), fetch_target_markets(), _ingest_limit() (+23 more)
+Cohesion: 0.05
+Nodes (82): arbitrage_combined(), backoff_delay(), _data(), eligibility(), _integrity_reject(), is_due(), is_retired(), _knob() (+74 more)
 
 ### Community 41 - "Community 37"
 Cohesion: 0.20
@@ -400,12 +385,12 @@ Cohesion: 0.21
 Nodes (23): Any, float, int, str, _latest_by_market(), Measurement: calibration, Brier / log-loss, P&L and λ fit over the decision ledg, bet_pnl(), _group() (+15 more)
 
 ### Community 45 - "Learning Loop Tests"
-Cohesion: 0.11
-Nodes (36): _briefer_stub(), _deep_researcher_stub(), get_run_nonce(), _live_session_key(), _overseer_stub(), _post_mortem_stub(), prefetch_runner(), Any (+28 more)
+Cohesion: 0.06
+Nodes (67): build_live_response_hint(), Any, Build response instructions from ``agent.yaml`` ``output_schema``., Build response instructions from ``agent.yaml`` ``output_schema``., _briefer_stub(), _build_live_prompt(), _deep_researcher_stub(), get_run_nonce() (+59 more)
 
 ### Community 46 - "Community 38"
-Cohesion: 0.08
-Nodes (33): Exception, LLMResponse, HttpStatusError, A provider answered with an error status (or an upstream error inside a 200 body, int, bool, _APIConnectionError, _APIStatusError (+25 more)
+Cohesion: 0.09
+Nodes (27): HttpLLM, AnthropicLLM, OpenRouterLLM, Provider registry: a new provider = one LLM subclass + one entry here., _Block, _Client, _Fake, _Msg (+19 more)
 
 ### Community 47 - "Community 47"
 Cohesion: 0.16
@@ -421,11 +406,11 @@ Nodes (25): LLM, _market_scope(), Provider-agnostic LLM base: one instance = one
 
 ### Community 50 - "Community 28"
 Cohesion: 0.25
-Nodes (8): web_searcher agent (polymarket-web-searcher), 2. The Surgical Query Planner (briefer), 3. The Forensic Fact Verifier (deep_researcher), 4. Trade execution (no agent), 5. The Post-Mortem Analyst, 6. The Overseer (Strategy Optimizer), Agent Personas and I/O Schemas, Rollout checklist (breaking changes)
+Nodes (8): complete(), Fail fast unless every Hub-spawned role resolves and its provider key is set., Fail fast unless every Hub-spawned role resolves and its provider key is set., Fail fast unless every Hub-spawned role resolves and its provider key is set., Raise a clear error unless the SDK is installed and ANTHROPIC_API_KEY is set., One-shot text completion for ``role``: no tools, no JSON mode, same retries., One-shot text completion for ``role``: no tools, no JSON mode, same retries., require_api_key()
 
 ### Community 51 - "Community 29"
-Cohesion: 0.15
-Nodes (17): A-IQ Fetch (execute_aiq_query), Forensic Pipeline, Four Fixed-Slot Query Plan, Price-Blind Principle, Surgical Query Planner (briefer), Analytical Mission (Finding the Edge):, Calibrated Probability Range (estimated_p, p_low, p_high), Calibration (+9 more)
+Cohesion: 0.14
+Nodes (19): briefer agent.yaml, A-IQ Fetch (execute_aiq_query), Forensic Pipeline, Four Fixed-Slot Query Plan, Price-Blind Principle, Surgical Query Planner (briefer), deep_researcher agent.yaml, Analytical Mission (Finding the Edge): (+11 more)
 
 ### Community 52 - "Pipeline Hardening Tests"
 Cohesion: 0.27
@@ -440,16 +425,16 @@ Cohesion: 0.31
 Nodes (17): offers(), pending_offer(), quotes(), Concierge approval flag: offers, votes, expiry, Phase 5 skipping, stats section., run(), stages(), test_expired_offer_ignores_yes_vote_and_sweeps_unvoted(), test_flag0_executes_and_writes_informational_offer() (+9 more)
 
 ### Community 55 - "Community 55"
-Cohesion: 0.18
-Nodes (10): _pnl_rows(), Decision ledger, resolution mapping, stats math, stats.md tick, live prompt date, _row(), test_brier_and_calibration(), test_directive_version(), test_false_negative_proxy(), test_fit_lambda_recovers_known_value(), test_pnl_annual_offset_and_counterfactual() (+2 more)
+Cohesion: 0.17
+Nodes (11): _pnl_rows(), Decision ledger, resolution mapping, stats math, stats.md tick, live prompt date, _row(), test_brier_and_calibration(), test_directive_version(), test_false_negative_proxy(), test_fit_lambda_recovers_known_value(), test_live_prompt_has_date_line() (+3 more)
 
 ### Community 56 - "Community 56"
-Cohesion: 0.13
-Nodes (28): LLMError, A provider is unavailable or a call failed (after retries where retryable)., A provider is unavailable or a call failed (after retries where retryable)., Raise :class:`LLMError` unless this provider's API key env var is set., Raise :class:`LLMError` unless this provider's API key env var is set., Raise :class:`LLMError` unless this provider's API key env var is set., _check_provider(), _known_roles() (+20 more)
+Cohesion: 0.18
+Nodes (23): LLMError, A provider is unavailable or a call failed (after retries where retryable)., A provider is unavailable or a call failed (after retries where retryable)., Raise :class:`LLMError` unless this provider's API key env var is set., Raise :class:`LLMError` unless this provider's API key env var is set., Raise :class:`LLMError` unless this provider's API key env var is set., _check_provider(), _known_roles() (+15 more)
 
 ### Community 57 - "Community 57"
-Cohesion: 0.06
-Nodes (71): arbitrage_combined(), backoff_delay(), _data(), eligibility(), _integrity_reject(), is_due(), is_retired(), _knob() (+63 more)
+Cohesion: 0.13
+Nodes (36): _book_features(), _clip(), features(), flags(), _levels(), _mid(), _n_disputes(), _num() (+28 more)
 
 ### Community 58 - "Community 103"
 Cohesion: 0.24
@@ -460,28 +445,24 @@ Cohesion: 0.18
 Nodes (12): _can_import_skill_module(), CLI regression tests for execute-aiq-query/run.py., Prefer the deployed config layout; fall back to repo config for local CI., run.py must import config from hardcoded deployed root without PYTHONPATH., Smoke: CLI prints ExecuteAiqQueryOutput JSON when A-IQ is mocked., _run_py_env(), test_run_py_imports_without_pythonpath(), test_run_py_invalid_json_exits_1() (+4 more)
 
 ### Community 60 - "Signal Bundle Test Fixtures"
-Cohesion: 0.25
-Nodes (9): briefer agent.yaml, Architecture, Commands, Deploy, Knowledge graph (graphify), Purpose and direction, Testing notes, Why each phase looks the way it does (+1 more)
+Cohesion: 0.30
+Nodes (7): Architecture, Commands, Deploy, Knowledge graph (graphify), Purpose and direction, Testing notes, Why each phase looks the way it does
 
 ### Community 61 - "Community 79"
-Cohesion: 0.13
-Nodes (34): complete(), _create_with_retry(), DirectRunnerError, _import_anthropic(), _json_mode(), last_citations(), last_model(), _live_prompt() (+26 more)
+Cohesion: 0.16
+Nodes (28): direct_web_max_uses(), Cap on server-side web_search/web_fetch uses per web_searcher call (default 8)., Cap on server-side web_search/web_fetch uses per web_searcher call (default 8)., _create_with_retry(), DirectRunnerError, _import_anthropic(), _json_mode(), last_citations() (+20 more)
 
 ### Community 62 - "Community 71"
 Cohesion: 0.17
 Nodes (3): Evidence source (A-IQ vs web searcher, A/B), sanitizer, fallback, stats and pape, _row(), test_web_path_end_to_end_in_stub_mode()
 
 ### Community 63 - "Community 63"
-Cohesion: 0.15
-Nodes (16): AnthropicLLM, _import_anthropic(), Anthropic Messages API provider (prompt caching, server-side web tools, pause_tu, URLs from web_search_tool_result blocks and text-block citations across ``messag, _text_of(), _tokens(), _urls_of(), Provider registry: a new provider = one LLM subclass + one entry here. (+8 more)
-
-### Community 64 - "Community 44"
-Cohesion: 0.15
-Nodes (17): DirectiveBoundsError, The proposed directives violate the Overseer guard-rails (BOUNDS, step, count, c, add_resolutions(), Overseer, _scored_rows(), test_phase6_applies_valid_change_and_noop_does_not_bump(), test_phase6_min_new_resolved_env(), test_phase6_needs_min_new_resolved() (+9 more)
+Cohesion: 0.10
+Nodes (25): _import_anthropic(), Anthropic Messages API provider (prompt caching, server-side web tools, pause_tu, URLs from web_search_tool_result blocks and text-block citations across ``messag, _text_of(), _tokens(), _urls_of(), LLMRequest, One single-shot call for :meth:`LLM.complete_many`. (+17 more)
 
 ### Community 65 - "Community 65"
 Cohesion: 0.09
-Nodes (29): main(), Orchestrator entry point.  Lifecycle: Orchestrator builds JSON input → calls the, auto_replay(), bool, Return OpenClaw CLI binary name/path., Return whether the orchestrator should clear inactive flags at startup., Return whether the orchestrator should clear inactive flags at startup., Return whether the orchestrator should clear inactive flags at startup. (+21 more)
+Nodes (30): main(), Orchestrator entry point.  Lifecycle: Orchestrator builds JSON input → calls the, auto_replay(), bool, Return whether the orchestrator should clear inactive flags at startup., Return whether the orchestrator should clear inactive flags at startup., Return whether the orchestrator should clear inactive flags at startup., Return whether the orchestrator should clear inactive flags at startup. (+22 more)
 
 ### Community 66 - "Community 22"
 Cohesion: 0.10
@@ -520,8 +501,8 @@ Cohesion: 0.18
 Nodes (10): Analytical Mission (Guarding the Sunk Cost), EXECUTION FLOW, OUTPUT SCHEMA, OUTPUT SCHEMA (Critical Infrastructure), Re-Evaluator — operating instructions, `review_kind: "edge_research_refresh"`, `review_kind: "quantitative"`, SHARED RULES (All `review_kind` values) (+2 more)
 
 ### Community 75 - "Community 56"
-Cohesion: 0.22
-Nodes (10): Configuration constants for the Polymarket Trading Pipeline., execute_polymarket_trade(), ExecutePolymarketTradeInput, ExecutePolymarketTradeOutput, execute_polymarket_trade — skill execution module.  Contract: docs/04_skills_con, main(), CLI entrypoint for execute_polymarket_trade.  Usage:     python3 run.py '{"marke, float (+2 more)
+Cohesion: 0.25
+Nodes (9): execute_polymarket_trade(), ExecutePolymarketTradeInput, ExecutePolymarketTradeOutput, execute_polymarket_trade — skill execution module.  Contract: docs/04_skills_con, main(), CLI entrypoint for execute_polymarket_trade.  Usage:     python3 run.py '{"marke, float, str (+1 more)
 
 ### Community 76 - "Community 76"
 Cohesion: 0.20
@@ -548,16 +529,16 @@ Cohesion: 0.25
 Nodes (7): Analytical Mission (The First Filter), Evaluator — operating instructions, EXECUTION FLOW, OPERATIONAL RULES, OUTPUT FORMAT (Critical Infrastructure), Turn 1 — Data Gathering, Turn 2 — Evaluation
 
 ### Community 82 - "Community 82"
-Cohesion: 0.24
-Nodes (10): Any, Path, str, Write or merge A-IQ results under ``research_bundles/{market_id}.json``., Delete the saved bundle so the next write starts from fresh data., Hub-persisted A-IQ query results (``research_bundles/``)., Directory for Hub-persisted A-IQ query results (``research_bundles/``)., Return the ``queries`` list from a saved bundle, or ``None`` if missing. (+2 more)
+Cohesion: 0.17
+Nodes (17): _has_usable_research_data(), _merge_research_bundle_queries(), Any, bool, Path, str, Research-bundle persistence: merge helpers and a mixin for ObsidianManager., Write or merge A-IQ results under ``research_bundles/{market_id}.json``. (+9 more)
 
 ### Community 83 - "Community 107"
 Cohesion: 0.25
 Nodes (7): Analytical Mission (The Autopsy), Failure classes (`failure_class`, exactly one), INPUT MAPPING, Open failure tags, OPERATIONAL RULES, OUTPUT SCHEMA, Post-Mortem Analyst — operating instructions
 
 ### Community 84 - "Community 84"
-Cohesion: 0.13
-Nodes (44): DeepResearcherNeedsMore, DeepResearcherNeedsMore, bool, Path, AgentOutputParseError, int, Invoke ``runner`` until ``validate_fn`` accepts the parsed JSON mapping.      On, Invoke ``runner`` until ``validate_fn`` accepts the parsed JSON mapping.      On (+36 more)
+Cohesion: 0.09
+Nodes (68): DeepResearcherNeedsMore, NamedTuple, DeepResearcherComplete, DeepResearcherNeedsMore, float, Pydantic models for Phase 3 agent JSON contracts., Complete Forensic Fact Verifier payload (price-blind: the model never sees q)., bool (+60 more)
 
 ### Community 85 - "Community 85"
 Cohesion: 0.33
@@ -576,8 +557,8 @@ Cohesion: 0.29
 Nodes (6): 1. Relay the outbox, 2. Votes, 3. Questions, 4. Hard limits, Concierge - operating instructions, Q&A mode
 
 ### Community 90 - "Community 90"
-Cohesion: 0.20
-Nodes (11): HttpLLM, Shared HTTP plumbing for providers that speak JSON over ``requests``., Template: ``_send`` = ``_body`` -> POST ``_url`` -> ``_parse``; subclasses suppl, Optionally return a modified body to retry once after ``err``; None means raise., llm_timeout(), Return per-call LLM HTTP timeout in seconds., Return per-call LLM HTTP timeout in seconds., Any (+3 more)
+Cohesion: 0.13
+Nodes (27): Exception, LLMResponse, HttpLLM, HttpStatusError, Shared HTTP plumbing for providers that speak JSON over ``requests``., A provider answered with an error status (or an upstream error inside a 200 body, Template: ``_send`` = ``_body`` -> POST ``_url`` -> ``_parse``; subclasses suppl, Optionally return a modified body to retry once after ``err``; None means raise. (+19 more)
 
 ### Community 91 - "Community 91"
 Cohesion: 0.27
@@ -600,16 +581,16 @@ Cohesion: 0.33
 Nodes (5): Fact line format (strict), OUTPUT FORMAT (critical), Rules, Task, Web Searcher (web_searcher) - operating instructions
 
 ### Community 96 - "Community 96"
-Cohesion: 0.48
-Nodes (6): 1. Core Infrastructure, 2. File System Memory & The Pydantic Gatekeeper, 3. Obsidian Vault Directory Schemas, 4. The Cold Start Protocol, Polymarket Hub-and-Spoke Trading Architecture, Polymarket Hub + LLM Agents Trading Architecture
+Cohesion: 0.33
+Nodes (5): 1. Core Infrastructure, 2. File System Memory & The Pydantic Gatekeeper, 3. Obsidian Vault Directory Schemas, 4. The Cold Start Protocol, Polymarket Hub + LLM Agents Trading Architecture
 
 ### Community 97 - "Community 97"
-Cohesion: 0.21
-Nodes (16): Schema-valid response that propagates an explicit ``error`` field.      Drives t, Schema-valid response that propagates an explicit ``error`` field.      Drives t, Schema-valid response that propagates an explicit ``error`` field.      Drives t, Schema-valid response that propagates an explicit ``error`` field.      Drives t, _spawn_stub_error(), _briefer_stub(), _deep_researcher_stub(), _overseer_stub() (+8 more)
+Cohesion: 0.31
+Nodes (12): _briefer_stub(), _deep_researcher_stub(), _overseer_stub(), _post_mortem_stub(), Any, float, str, Deterministic, schema-valid stub responses (success path) keyed by agent role. (+4 more)
 
 ### Community 100 - "Community 100"
-Cohesion: 0.16
-Nodes (22): AgentRunner, Any, datetime, MarketRow, _integrity_state(), _rank_and_triage(), Phase 2 - Gate + Triage: deterministic gate, rank, price-blind Triage, persist t, Back off + persist + ledger a gate rejection. (+14 more)
+Cohesion: 0.05
+Nodes (96): Coverage, _Eligible, Any, bool, Coverage, float, int, MarketRow (+88 more)
 
 ### Community 101 - "Obsidian Vault Manager"
 Cohesion: 0.18
@@ -620,12 +601,12 @@ Cohesion: 0.25
 Nodes (7): _cov(), Signal coverage: per-tick ledger row, alert logging, stats rendering and exclusi, test_coverage_row_counts_and_alert(), test_holders_counted_only_when_attempted(), test_no_row_without_gated_markets(), test_stats_coverage_latest_week_flag_and_exclusion(), _tick()
 
 ### Community 118 - "Community 76"
-Cohesion: 0.14
-Nodes (17): GeminiLLM, _grounding_urls(), Gemini via Google AI Studio (generativelanguage.googleapis.com, generateContent), JSON mode may be rejected together with a tool: retry once without JSON mode (40, JSON mode may be rejected together with a tool: retry once without JSON mode (40, JSON mode may be rejected together with a tool: retry once without JSON mode (40, Inline responses from either documented shape (`dest.inlinedResponses` / `respon, Inline responses from either documented shape (`dest.inlinedResponses` / `respon (+9 more)
+Cohesion: 0.17
+Nodes (13): GeminiLLM, _grounding_urls(), Gemini via Google AI Studio (generativelanguage.googleapis.com, generateContent), JSON mode may be rejected together with a tool: retry once without JSON mode (40, JSON mode may be rejected together with a tool: retry once without JSON mode (40, JSON mode may be rejected together with a tool: retry once without JSON mode (40, Inline responses from either documented shape (`dest.inlinedResponses` / `respon, Inline responses from either documented shape (`dest.inlinedResponses` / `respon (+5 more)
 
 ### Community 121 - "Community 98"
 Cohesion: 0.13
-Nodes (20): _float_env(), llm_batch_max_wait_sec(), llm_batch_poll_sec(), llm_retry_backoff(), openclaw_agent_max_attempts(), openclaw_agent_retry_backoff(), openclaw_agent_timeout(), float (+12 more)
+Nodes (21): direct_model(), _float_env(), llm_batch_max_wait_sec(), llm_batch_poll_sec(), llm_max_attempts(), llm_retry_backoff(), openclaw_agent_max_attempts(), openclaw_bin() (+13 more)
 
 ### Community 125 - "Community 125"
 Cohesion: 0.33
@@ -656,16 +637,12 @@ Cohesion: 0.16
 Nodes (6): _cfg(), models.yaml loading, env overrides and startup validation., The shipped models.yaml parses and every role resolves to a registered provider., test_bad_config_raises(), test_shipped_config_is_valid(), test_yaml_override_and_default()
 
 ### Community 135 - "Community 135"
-Cohesion: 0.18
-Nodes (4): LLM, _empty_cfg(), _Rec, FakeTriageLLM
+Cohesion: 0.40
+Nodes (3): LLM, _empty_cfg(), _Rec
 
 ### Community 136 - "Community 136"
 Cohesion: 0.10
 Nodes (26): Web evidence hallucination guard: filter, citations parsing, request bodies, sta, _runner(), test_all_dropped_becomes_not_found(), test_anthropic_urls_extraction(), test_citations_none_only_url_rule(), test_fetch_web_rows_filters_and_records(), test_gemini_citations_and_body(), test_last_citations_is_last_call() (+18 more)
-
-### Community 137 - "Community 137"
-Cohesion: 0.10
-Nodes (37): BrieferOutput, DeepResearcherComplete, float, Pydantic models for Phase 3 agent JSON contracts., Complete Forensic Fact Verifier payload (price-blind: the model never sees q)., DeepResearcherComplete, float, Sample (+29 more)
 
 ### Community 138 - "Community 138"
 Cohesion: 0.29
@@ -680,32 +657,24 @@ Cohesion: 0.53
 Nodes (5): 1. Skill: calculate_trade_allocation, 2. Skill: execute_polymarket_trade, 3. Skill: execute_aiq_query, OpenClaw Skill Contracts, Skill Contracts
 
 ### Community 141 - "Community 141"
-Cohesion: 0.12
-Nodes (27): Directives versioning, seeding and migration: a mixin for ObsidianManager., _archive_timestamp(), bool, ObsidianManager — Pydantic-gated file system layer for the Obsidian Vault.  The, Return a filesystem-safe UTC timestamp suffix for archived trade filenames., _has_usable_research_data(), _merge_research_bundle_queries(), bool (+19 more)
+Cohesion: 0.14
+Nodes (16): bool, ObsidianManager — Pydantic-gated file system layer for the Obsidian Vault.  The, True when an execution intent record exists for ``market_id``., Place ``analysis`` under the ``## Post-Mortem`` header (replace the section, or, _render_post_mortem_entry(), FilterLogPayload, PostMortemPayload, float (+8 more)
 
 ### Community 142 - "Community 142"
 Cohesion: 0.40
 Nodes (5): Max markets promoted from quantitative gate to qualitative pipeline (default 20), Max markets promoted from quantitative gate to qualitative pipeline (default 20), Max markets promoted from quantitative gate to qualitative pipeline (default 20), Max markets promoted from quantitative gate to qualitative pipeline (default 20), top_qualitative_markets()
 
-### Community 143 - "Community 143"
-Cohesion: 0.20
-Nodes (11): evidence_source(), openclaw_bin(), overseer_min_new_resolved(), str, ``aiq`` | ``web`` | ``ab`` (default ``ab``); read at call time. Unknown values r, ``aiq`` | ``web`` | ``ab`` (default ``ab``); read at call time. Unknown values r, New ledger resolution rows required since the last Overseer run (default 30)., ``aiq`` | ``web`` | ``ab`` (default ``ab``); read at call time. Unknown values r (+3 more)
-
 ### Community 144 - "Community 144"
-Cohesion: 0.11
-Nodes (29): _configure_logging(), _log_status(), _make_vault(), phase3_vault(), Live Phase 3 smoke: one DB market → Briefer → A-IQ → Deep Researcher.  Opt-in on, Execute single-market Phase 3 and log progress., Execute single-market Phase 3 and log progress., Execute single-market Phase 3 and log progress. (+21 more)
+Cohesion: 0.18
+Nodes (11): openclaw_agent_retry_backoff(), openclaw_agent_timeout(), Return the active runner mode, defaulting to ``stub``.      Raises :class:`Value, Return the active runner mode, defaulting to ``stub``.      Raises :class:`Value, Return the active runner mode, defaulting to ``stub``.      Raises :class:`Value, Return the active runner mode, defaulting to ``stub``.      Raises :class:`Value, Return per-agent OpenClaw CLI timeout in seconds., Return per-agent OpenClaw CLI timeout in seconds. (+3 more)
 
 ### Community 145 - "Community 145"
-Cohesion: 0.50
-Nodes (4): effective_lambda(), float, PAPER_LAMBDA iff PAPER_TRADE_MODE (read at call time), else LAMBDA., PAPER_LAMBDA iff PAPER_TRADE_MODE (read at call time), else LAMBDA.
+Cohesion: 0.25
+Nodes (8): effective_lambda(), effective_min_edge(), float, Configuration constants for the Polymarket Trading Pipeline., PAPER_LAMBDA iff PAPER_TRADE_MODE (read at call time), else LAMBDA., PAPER_LAMBDA iff PAPER_TRADE_MODE (read at call time), else LAMBDA., PAPER_MIN_EDGE iff PAPER_TRADE_MODE (read at call time), else MIN_EDGE., PAPER_MIN_EDGE iff PAPER_TRADE_MODE (read at call time), else MIN_EDGE.
 
 ### Community 146 - "Community 146"
 Cohesion: 0.50
 Nodes (3): Repo-wide test fixtures., Default vault base is a tmp dir, so code that resolves it (e.g. LLM usage rows), _tmp_vault_env()
-
-### Community 149 - "Community 149"
-Cohesion: 0.12
-Nodes (16): market_quarantine(), Flag the market inactive if any unhandled exception escapes the block., Flag the market inactive if a *content* exception escapes the block.      Infras, Clear ``status: inactive`` and ``error_log`` from native vault directories., Loop resilience, infra circuit breaker, idempotent phases, format retries., _resolved(), test_content_error_still_flags(), test_flag_inactive_corrupt_file_logs_loudly() (+8 more)
 
 ### Community 150 - "Community 150"
 Cohesion: 0.14
@@ -715,89 +684,49 @@ Nodes (23): ab_arm(), fetch_web_bundle(), fetch_web_rows(), intended_source(), i
 Cohesion: 0.16
 Nodes (21): str, Schema-driven live prompts for LLM agent invocations., UTC date as ``YYYY-MM-DD`` (the ``today`` field of price-blind agent payloads)., today_date(), today_line(), AgentRunner, Any, bool (+13 more)
 
-### Community 152 - "Community 152"
-Cohesion: 0.25
-Nodes (13): _filter_confidence(), is_inactive(), iter_inactive_market_ids(), float, Return market IDs with ``status: inactive`` in ``dir_key``., replay_inactive(), Tests for in-place inactive flagging and replay., test_flag_inactive_on_filter() (+5 more)
-
-### Community 153 - "Community 153"
-Cohesion: 0.20
-Nodes (16): Any, bool, Coverage, MarketRow, ObsidianManager, str, _apply_integrity(), _count_gate_signals() (+8 more)
-
-### Community 154 - "Community 154"
-Cohesion: 0.14
-Nodes (17): ObsidianManager, _event_triage_cache(), _make_ledger_once(), _new_coverage(), phase2_quantitative_routing(), One `signal_coverage` ledger row per tick; log.error for a signal missing too of, ``event_id -> cached triage verdict`` from every filter record on disk., Ledger a decision stage once per state change (skips when it is already the late (+9 more)
-
 ### Community 155 - "Community 155"
-Cohesion: 0.19
-Nodes (14): float, int, float, int, MarketRow, Hub-validated row carrying every field downstream spokes need.      Built from a, Two full ticks in stub mode with a faked scraper / A-IQ must not crash., _row() (+6 more)
+Cohesion: 0.10
+Nodes (22): flag_inactive(), is_infra_error(), market_quarantine(), BaseException, Stamp ``status: inactive`` on the most relevant artifact for ``phase``., Flag the market inactive if any unhandled exception escapes the block., Flag the market inactive if a *content* exception escapes the block.      Infras, Clear ``status: inactive`` and ``error_log`` from native vault directories. (+14 more)
 
 ### Community 156 - "Community 156"
 Cohesion: 0.14
 Nodes (4): FakeAiqOutput, Unit tests for Hub-side parallel A-IQ bundle fetching., Isolate dynamic import cache between tests., _reset_aiq_cache()
 
-### Community 157 - "Community 157"
-Cohesion: 0.27
-Nodes (11): Coverage, bool, str, _apply_integrity(), _count_gate_signals(), _count_signal(), is_triage_shadow(), Stable ~TRIAGE_SHADOW_RATE selection of triage rejects for the measure-only quic (+3 more)
-
-### Community 158 - "Community 158"
-Cohesion: 0.18
-Nodes (11): ObsidianManager, Merge ``updates`` over the prior filter record and persist (keeps backoff/triage, Merge ``updates`` over the prior filter record and persist (keeps backoff/triage, Merge ``updates`` over the prior filter record and persist (keeps backoff/triage, _write_filter_state(), _promote_researchable(), Stage 3: the top ``OPENCLAW_TRIAGE_BUDGET`` researchable markets get ``passed: t, Stage 3: the top ``PMBOT_TRIAGE_BUDGET`` researchable markets get ``passed: true (+3 more)
-
-### Community 159 - "Community 159"
-Cohesion: 0.27
-Nodes (10): _Eligible, Coverage, _eligible_markets(), _gate_market(), Stage-1 verdict for one market: ``(score, market, prior)`` when eligible, else `, Stage-1 verdict for one market: ``(score, market, prior)`` when eligible, else `, Stage 1: skip retired/inactive/backed-off/held markets, ledger rejects, keep the, Stage 1: skip retired/inactive/backed-off/held markets, ledger rejects, keep the (+2 more)
-
 ### Community 160 - "Community 160"
-Cohesion: 0.13
-Nodes (15): DirectivesPayload, str, ValidationError, Overseer output — used to overwrite 00_System/active_directives.md.      The ``n, F3 regression: Overseer output is structurally validated before overwriting dire, test_directive_coercion(), test_directives_payload_accepts_valid_doc(), test_directives_payload_rejects_missing_frontmatter() (+7 more)
+Cohesion: 0.14
+Nodes (13): Validate a Phase 2 filter payload and write it to ``01_Filters/``.          The, Validate a Deep Researcher payload and write to ``02_Active_Research/``., Validate a trade payload and write to ``03_Trades/``.          The file is writt, Validate a Post-Mortem Analyst payload and append it to the report.          The, _atomic_write_text(), _check_market_id(), _dump_frontmatter(), str (+5 more)
 
 ### Community 161 - "Community 161"
-Cohesion: 0.17
-Nodes (20): _fake_trade(), _p4row(), quotes(), Phase 4 sizes on the real CLOB asks and caps the order by ask depth; Phase 5 res, run(), test_phase4_below_edge_skips_the_skill_and_ledgers(), test_phase4_buys_no_at_the_real_no_ask(), test_phase4_caps_the_order_at_ask_depth_within_2c() (+12 more)
+Cohesion: 0.15
+Nodes (22): _fake_trade(), _p4row(), quotes(), Phase 4 sizes on the real CLOB asks and caps the order by ask depth; Phase 5 res, Spy around the real (paper) ``execute_polymarket_trade`` skill., run(), test_phase4_below_edge_skips_the_skill_and_ledgers(), test_phase4_buys_no_at_the_real_no_ask() (+14 more)
 
 ### Community 162 - "Community 162"
 Cohesion: 0.15
 Nodes (18): Deterministic Phase 2 gate: eligibility, ranking score, backoff, arbitrage.  Pur, Deterministic Phase 2 gate: eligibility, score, backoff, arbitrage., row(), test_arbitrage_detection(), test_arbitrage_uses_real_asks_when_present(), test_backoff_schedule_and_cap(), test_concentrated_rejected_only_on_supply_basis(), test_eligibility_boundaries_inclusive() (+10 more)
 
-### Community 163 - "Community 163"
-Cohesion: 0.40
-Nodes (5): direct_model(), llm_max_attempts(), Return max LLM call attempts before surfacing failure., Model id for a role in direct mode: ``DIRECT_MODEL_<ROLE>`` env, else the role d, Return max LLM call attempts before surfacing failure.
-
-### Community 164 - "Community 164"
-Cohesion: 0.17
-Nodes (15): market_data_hydration_error(), _market_row_from_scraper(), Return a reason when snapshot is unusable for execution (phase 4), else ``None``, Project a ``polymarket_api`` row dict into a validated :class:`MarketRow`., F2 regression: real market_title/market_description/market_data flow end-to-end., test_market_data_hydration_error(), test_market_data_hydration_error_ok_with_q_and_liquidity_fields(), test_market_data_hydration_error_when_liquidity_nonpositive() (+7 more)
-
 ### Community 165 - "Community 165"
 Cohesion: 0.67
 Nodes (3): Clear the cached skill callable (for tests)., Clear the cached skill callable (for tests)., reset_execute_aiq_query_cache()
 
-### Community 166 - "Community 166"
-Cohesion: 0.22
-Nodes (9): quick_research_budget(), Max markets given a quick research pass per tick (default 8)., Max markets given a quick research pass per tick (default 8)., Wall-clock seconds after which Phase 3 starts no new FULL-stage market (default, Max markets given a quick research pass per tick (default 8)., Wall-clock seconds after which Phase 3 starts no new FULL-stage market (default, Wall-clock seconds after which Phase 3 starts no new FULL-stage market (default, Wall-clock seconds after which Phase 3 starts no new FULL-stage market (default (+1 more)
-
-### Community 167 - "Community 167"
-Cohesion: 0.67
-Nodes (3): is_infra_error(), BaseException, True for transient infrastructure failures that must not flag a market.
-
 ## Knowledge Gaps
-- **375 isolated node(s):** `PreToolUse`, `Path`, `str`, `Any`, `str` (+370 more)
+- **380 isolated node(s):** `Deploy`, `Knowledge graph (graphify)`, `1. Core Infrastructure`, `2. File System Memory & The Pydantic Gatekeeper`, `3. Obsidian Vault Directory Schemas` (+375 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **26 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **25 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `ObsidianManager` connect `Community 26` to `Community 131`, `Research-Edge Gate`, `Scraper ORM & Scanner`, `Scraper Query Tools`, `Gamma Price Correction`, `Community 137`, `Community 106`, `Community 141`, `Community 50`, `Ledger Stats & Calibration`, `Community 144`, `Community 68`, `Community 35`, `Community 22`, `Community 151`, `Community 152`, `Community 153`, `Community 26`, `Community 155`, `Scraper DB Pruning`, `Agent Blueprint Loader`, `Vault Paths & Trade Records`, `Community 48`, `Community 160`, `Community 32`, `Community 34`, `Skill Contracts Doc`, `Community 164`, `Community 39`, `Community 42`, `Community 54`, `Community 65`, `Community 22`, `Community 72`, `Community 78`, `Community 82`, `Community 84`, `Community 65`, `Community 100`, `Community 91`, `Community 125`?**
-  _High betweenness centrality (0.197) - this node is a cross-community bridge._
-- **Why does `LLMError` connect `Community 56` to `Signal Bundle Fixture`, `Research-Edge Gate`, `Community 132`, `Community 135`, `Community 137`, `Community 27`, `Community 149`, `Community 22`, `Community 152`, `Community 48`, `Community 161`, `Community 38`, `Community 167`, `Community 38`, `Community 49`, `Community 53`, `Community 79`, `Community 63`, `Community 44`, `Community 76`?**
+- **Why does `ObsidianManager` connect `Community 26` to `Community 131`, `Research-Edge Gate`, `Scraper ORM & Scanner`, `Scraper Query Tools`, `Gamma Price Correction`, `Community 41`, `Community 106`, `Community 141`, `Community 50`, `Community 15`, `Ledger Stats & Calibration`, `Community 68`, `Community 35`, `Community 22`, `Community 151`, `Community 26`, `Agent Blueprint Loader`, `Skill Contracts Doc`, `Vault Paths & Trade Records`, `Community 48`, `Community 160`, `Community 32`, `Community 34`, `Community 39`, `Community 120`, `Community 42`, `Community 54`, `Community 65`, `Community 22`, `Community 72`, `Community 78`, `Community 82`, `Community 84`, `Community 65`, `Community 100`, `Community 91`, `Community 125`?**
+  _High betweenness centrality (0.198) - this node is a cross-community bridge._
+- **Why does `LLMError` connect `Community 56` to `Signal Bundle Fixture`, `Research-Edge Gate`, `Community 132`, `Market Scraper Client`, `Community 135`, `Community 41`, `Community 50`, `Community 27`, `Community 22`, `Community 155`, `Community 48`, `Community 161`, `Community 38`, `Community 38`, `Community 49`, `Community 53`, `Community 79`, `Community 63`, `Community 90`, `Community 76`?**
+  _High betweenness centrality (0.073) - this node is a cross-community bridge._
+- **Why does `MarketRow` connect `Community 100` to `Community 128`, `Community 65`, `Community 161`, `Signal Bundle Fixture`, `Research-Edge Gate`, `Market Scraper Client`, `Scraper ORM & Scanner`, `Community 120`, `Community 37`, `Community 72`, `Community 141`, `Learning Loop Tests`, `Payload Models & Errors`, `Community 84`, `Community 22`, `Community 155`?**
   _High betweenness centrality (0.056) - this node is a cross-community bridge._
-- **Why does `MarketRow` connect `Community 155` to `Community 128`, `Signal Bundle Fixture`, `Research-Edge Gate`, `Scraper ORM & Scanner`, `Community 135`, `Community 137`, `Community 141`, `Community 144`, `Payload Models & Errors`, `Community 149`, `Community 22`, `Community 153`, `Community 154`, `A-IQ Research Bundle`, `Community 157`, `Community 158`, `Community 159`, `Community 161`, `Community 164`, `Community 120`, `Community 37`, `Community 44`, `Community 65`, `Community 72`, `Community 84`, `Community 100`?**
-  _High betweenness centrality (0.051) - this node is a cross-community bridge._
 - **Are the 7 inferred relationships involving `ObsidianManager` (e.g. with `DirectivesMixin` and `ResearchBundleMixin`) actually correct?**
   _`ObsidianManager` has 7 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 64 inferred relationships involving `LLMError` (e.g. with `AnthropicLLM` and `GeminiLLM`) actually correct?**
-  _`LLMError` has 64 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 60 inferred relationships involving `LLMError` (e.g. with `AnthropicLLM` and `GeminiLLM`) actually correct?**
+  _`LLMError` has 60 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 58 inferred relationships involving `MarketRow` (e.g. with `Coverage` and `DeepResearcherNeedsMore`) actually correct?**
   _`MarketRow` has 58 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 76 inferred relationships involving `AgentRunner` (e.g. with `AgentRunner` and `Coverage`) actually correct?**
-  _`AgentRunner` has 76 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 72 inferred relationships involving `AgentRunner` (e.g. with `AgentRunner` and `Coverage`) actually correct?**
+  _`AgentRunner` has 72 INFERRED edges - model-reasoned connections that need verification._

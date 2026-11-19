@@ -210,8 +210,8 @@
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/docs/01_architecture.md": {
-    "mtime": 1795015850.04797,
-    "ast_hash": "beb282f4464e0a33d495033b95a22e02",
+    "mtime": 1795075787.7521396,
+    "ast_hash": "352b51288b66ca4c5efbb7f35fd15872",
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/docs/02_orchestrator_pipeline.md": {
@@ -365,8 +365,8 @@
     "semantic_hash": "3acbf8aa2796c05ccbfeee6442eb48d5"
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/CLAUDE.md": {
-    "mtime": 1795018568.6377988,
-    "ast_hash": "999a8e7b7cf50c31bbd95f1c14f344d3",
+    "mtime": 1795075864.6944065,
+    "ast_hash": "beb53ac600592d0850ec28220c8973c6",
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/agents_blueprint/triage/AGENTS.md": {
@@ -475,8 +475,8 @@
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/orchestrator/phases/p3_queue.py": {
-    "mtime": 1795015850.4083376,
-    "ast_hash": "fdce276082ba06c76ff79e069dc9e10e",
+    "mtime": 1795075864.6307254,
+    "ast_hash": "c11808f12832d5713e0fc0345ba7725e",
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/orchestrator/phases/p3_quick.py": {
@@ -740,8 +740,8 @@
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/orchestrator/llm/openrouter_llm.py": {
-    "mtime": 1795018442.1611078,
-    "ast_hash": "81d83b121236971dbc24cab5c9bdbb9c",
+    "mtime": 1795075787.5727189,
+    "ast_hash": "81f24dc79f9a920bb4855a4ad6e0f727",
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/orchestrator/llm/registry.py": {
@@ -750,8 +750,8 @@
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/orchestrator/llm/routing.py": {
-    "mtime": 1795018442.5069683,
-    "ast_hash": "58f24bf39e50d1092b9eb0dcd984d488",
+    "mtime": 1795075864.6674514,
+    "ast_hash": "51bfb1f985b85aee6a17f98c637e7bee",
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/tests/orchestrator/test_discord_bot.py": {
@@ -775,8 +775,8 @@
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/config/models.yaml": {
-    "mtime": 1795018442.5362074,
-    "ast_hash": "b122f997fde4ae0d732eee6f376f9a3e",
+    "mtime": 1795075759.4325018,
+    "ast_hash": "8956ccd0d5882e6499c3430ca5b79c4f",
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/deploy/backup.sh": {
@@ -805,8 +805,8 @@
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/tests/orchestrator/test_llm_batch.py": {
-    "mtime": 1795015850.4436557,
-    "ast_hash": "3260f9ab6469f076be258112d581af99",
+    "mtime": 1795075864.7325864,
+    "ast_hash": "315070e2f737d4fe94aaf3fd2696c18c",
     "semantic_hash": ""
   },
   "/Users/shachardavid/projects/polymarket-trading-bot/tests/orchestrator/test_llm_usage.py": {
@@ -837,6 +837,566 @@
   "/Users/shachardavid/projects/polymarket-trading-bot/tests/orchestrator/test_web_filter.py": {
     "mtime": 1795018530.3599482,
     "ast_hash": "cf309d968fb6a6309496bb6259557cf8",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/tests/orchestrator/test_openrouter_batch.py": {
+    "mtime": 1795075787.7771187,
+    "ast_hash": "462950e51038f7bf1ff9b34ea8378fb3",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/02_Active_Research/research_bundles/0x989e60030a12b3b8c3014ca744df34fce5bc014a803f5a0c717557e11a0a04b8.json": {
+    "mtime": 1795075968.8306866,
+    "ast_hash": "11b51e76f6b6171ae517daea1b001d82",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/02_Active_Research/research_bundles/0x9b786700f51dc9540f016267a69245616f53e93563de3fc5a1ac3a16f66310c4.json": {
+    "mtime": 1795075968.8267648,
+    "ast_hash": "c0557f71e53165f23674a987dcd26b34",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/02_Active_Research/research_bundles/0xbf7a9da08326512f76129d4accf9f7d852dbf1cb7dd2c512479ff40c872f5659.json": {
+    "mtime": 1795075968.8284364,
+    "ast_hash": "50aaaed78004c6b14bb8ac070985a400",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/02_Active_Research/web_cache.json": {
+    "mtime": 1795075968.8285303,
+    "ast_hash": "dab82f9e3137a05edc5f6ec8fffb684b",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/03_Trades/0x989e60030a12b3b8c3014ca744df34fce5bc014a803f5a0c717557e11a0a04b8.json": {
+    "mtime": 1795075969.2938442,
+    "ast_hash": "b46beca0789ada0c9bc4ba39cbe9d9c1",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/03_Trades/0xbf7a9da08326512f76129d4accf9f7d852dbf1cb7dd2c512479ff40c872f5659.json": {
+    "mtime": 1795075969.4770355,
+    "ast_hash": "441321b5332eb98b449c8837cf24dcbf",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/06_Concierge/outbox/digest-2026-11-19.json": {
+    "mtime": 1795075987.3898106,
+    "ast_hash": "96532c211d827e30024496efd150963f",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/06_Concierge/outbox/offer-0x989e60030a12b3b8c3014ca744df34fce5bc014a803f5a0c717557e11a0a04b8-20261119T081232.json": {
+    "mtime": 1795075969.2984192,
+    "ast_hash": "e7f82cb260641be02c473499742c9658",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/00_System/stats.md": {
+    "mtime": 1795075987.3874009,
+    "ast_hash": "9dbcb42427ff615733c1ce7b6ccaf690",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x024b68f77bfc019341ee3db8f57c103334e4b9430bba4746d8c94aafd8b36fee.md": {
+    "mtime": 1795075967.714467,
+    "ast_hash": "2eecd67f97f4a96dbec1ea74b426e90e",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x0b4cc3b739e1dfe5d73274740e7308b6fb389c5af040c3a174923d928d134bee.md": {
+    "mtime": 1795075953.4276178,
+    "ast_hash": "a7f3edf277fba639988a2084b75a19ff",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x1198bf982483cc6f0a3d3de63d7703117ed19c5b5a9474541a2a3b6b0b5e51f3.md": {
+    "mtime": 1795075953.7218382,
+    "ast_hash": "fb4f5fa99b954a54efd17f11c32fe5f8",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x18076e7d0f58a52d3d4f311d0456306edf16d1873cf5eef27d3ff044153e9576.md": {
+    "mtime": 1795075953.487937,
+    "ast_hash": "9febb3a387b385ac188cc8a71afc3a36",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x1adf074e048fa613f4ddbc0766088748a48d120a3a713b0183e219032a411ae3.md": {
+    "mtime": 1795075953.4441712,
+    "ast_hash": "e6152c9c922e934d69c5305911f2c72a",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x1c5722c325bc563b74e5f07a92d7a1f89b435676f9296006c718511d6c638575.md": {
+    "mtime": 1795075953.5262694,
+    "ast_hash": "39a207859077f08cf0f13b56059522f7",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x1cfe69633994ad8c4e41177ad43e0a9fd02d057b43edfc11f2966a22af3d38e6.md": {
+    "mtime": 1795075953.6772106,
+    "ast_hash": "526f76a673261582af2cb61b22d795d9",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x1dd7704a6d05cca078564bc0bac541261425bc9252acc5634639f5161daf45f9.md": {
+    "mtime": 1795075953.519081,
+    "ast_hash": "33192f2265b79430c68ac0f032704fb8",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x1f403ffb53e114cbc81c5f07a0f3971886c67b67af7c260f0117d3f63ba54af4.md": {
+    "mtime": 1795075953.6316383,
+    "ast_hash": "8b4a425991638737f83a4a7b50d01019",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x201f51d2d892c41c5bfa6568a0a2f93ab2ea426e87dddfd5fb0191f7ec34a441.md": {
+    "mtime": 1795075953.6922956,
+    "ast_hash": "1ea306d0d955e60f8048561e4d3a0b67",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x2073548754879c64346bbe17313bb8abc871505b224560e98b276ce7d8187179.md": {
+    "mtime": 1795075953.7926552,
+    "ast_hash": "5949cb1264e4fc314880f34e44105e55",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x221aaa62fed17db56fbc7983f88110a9c34861c3262154ee3315425378e3ae12.md": {
+    "mtime": 1795075953.4974005,
+    "ast_hash": "7291873f99921501cf527fcf6c61c4cf",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x2368d2604c9c2b95bc98c51bd50c66e5351caebf05b9fe79d3398c387fe29a89.md": {
+    "mtime": 1795075953.6648622,
+    "ast_hash": "ceb26a65ccf3d6376e1bf43d8567284d",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x242d251e7e804f79e1f237896b0f5e73caea72375dcb84e5a60d1cd0d2f80ef5.md": {
+    "mtime": 1795075953.5106623,
+    "ast_hash": "e140a85cf6e8b9e434a9905de6a05f68",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x261c26c492bc9452493b3e1c792f26b2e90ed7c1cd6f49f0cb7330b40145bde0.md": {
+    "mtime": 1795075953.6140137,
+    "ast_hash": "4f59d090bc5b7239d0975214f20e0ba8",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x27748e74503ff93d998d1e857980c43eca77c38efd61f642dd43d41a18525250.md": {
+    "mtime": 1795075953.5161843,
+    "ast_hash": "f986a08d6ea07829b49d50968a9bbf82",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x2b9931e13d436ee68b2870d31400f5bed8f5f13ad321355d0fd1048f706bba6a.md": {
+    "mtime": 1795075953.6072526,
+    "ast_hash": "61afc006dbf1ac27124118b538440d2d",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x2d858f0a25a61dfde6485f3d8e75aed397bed616c3e458b66e10e642fb2f9759.md": {
+    "mtime": 1795075953.805281,
+    "ast_hash": "e2ac7561945d853218b8e361f3658c3c",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x3b72e782571fb9b02e12f63cd94ff816febb227cbd92559e4cf6572096304003.md": {
+    "mtime": 1795075953.7459285,
+    "ast_hash": "1fac91cf587069b89981ff766b9e28ab",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x3be183812fb3f109c4f45135639b657a7d28f3e02a5b0d3e077ddc0684ab9b64.md": {
+    "mtime": 1795075953.7967997,
+    "ast_hash": "e4e02539d3fd41660f9e294c6645f48d",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x4197bf7e572f1dd731669d33d05532c6d3b8cba71fb83dc69d789110e39c41b4.md": {
+    "mtime": 1795075953.5658395,
+    "ast_hash": "30c337f256a1def097c7cc7058c2e2a7",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x4248508fad0cd0d078eed21736ebbefeef5ef8d296a2962a00d9b2e37a71208d.md": {
+    "mtime": 1795075953.4366975,
+    "ast_hash": "11b6a5b4e20a7a2a15557c57da9ac04f",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x46ca741da4abd7ffa993f59ac65bfe83de43ae027accac71d263a493e44064e7.md": {
+    "mtime": 1795075967.7708764,
+    "ast_hash": "4e241b250f46b579604d3ae4965328e7",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x48b0b0bca515f68fccf95af4793dbd0edbfec1f8ec6e8df2c0f69ba74f8c4722.md": {
+    "mtime": 1795075953.5021749,
+    "ast_hash": "1a47c41a1542c90f13c8bd3d3d9412fb",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x48e2b67721830dd1a9e187827b6ec4dc8d3f41732f12ce9f44717b187001bb3a.md": {
+    "mtime": 1795075953.7142892,
+    "ast_hash": "7a2bca883f76cd7cd9be86b716c4f90e",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x4914bfdd892a48c341b5e0f41ec10475a815f2277273110b16f95e21084bfe75.md": {
+    "mtime": 1795075953.6880276,
+    "ast_hash": "de2295640ce530413f480022e5072f6c",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x4c04cc7094bf35bd682eb4f0e492836b97392c213087a2b891d0b5d897a81eb2.md": {
+    "mtime": 1795075953.6434681,
+    "ast_hash": "25a043b9ed3609b635c5aaca83660ecf",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x4ec6fcb43fe1a32163c7da09d54a99ab9bf6abdc6fd49939d7ad67d696a3248b.md": {
+    "mtime": 1795075953.4478567,
+    "ast_hash": "70693f16241ded243fae5c1f32995315",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x51d057952ea481efcbadf8d96afbc6781b9295e0932bcaf3380e2f58ce15d39d.md": {
+    "mtime": 1795075953.682937,
+    "ast_hash": "2eb69cc0bb8cb0e272627265ccf868d5",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x5c79dfde05559b79a9cb9f7c4187e4d49632dd042572ae676952f812732591cc.md": {
+    "mtime": 1795075953.4678164,
+    "ast_hash": "26fb33276815a8d7d26637d2c5c64672",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x5db999fad322cea2914535aae5517060c3f80ad6d8c0231cde2124a434d16846.md": {
+    "mtime": 1795075967.7203207,
+    "ast_hash": "9a8bf4e316447a248e656fee09d3fa91",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x625d0091f4c647e5497bd9b03f8526bd486d6c339380b8046e4dd5b3373046b7.md": {
+    "mtime": 1795075953.4810636,
+    "ast_hash": "71bd2ce33d939c75e7cd8c8d24730a7b",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x6368d1c0daed920fb7cb4444636b605e8b02d700dfdf70bba2758a7c0c4054cb.md": {
+    "mtime": 1795075953.5439289,
+    "ast_hash": "3095ebd677fe1e6aace64f8145512eb0",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x664f36528d54361c2579fd5ddc8072a831e7039ac849615d6aafcafd256aa9ec.md": {
+    "mtime": 1795075954.505581,
+    "ast_hash": "e734d0c7b2679a654f821c4af206846a",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x67adc22bcf8c1c7ff1a96cfa71d4221f5cc2ae6dc746989741d58bc8f3aa46f8.md": {
+    "mtime": 1795075953.7039483,
+    "ast_hash": "4a91fc57a73feabecbe7933322328aef",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x6bd56627aa21311850825edb27e53434a0e17a4f782be0086bc07f71eee00d0d.md": {
+    "mtime": 1795075953.4630134,
+    "ast_hash": "5ddfeef0590e6f3313525b173de938f6",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x6fefc0438c7598b23531457c8c60541990d0786bd4bd9dfc3eabc8d95c291092.md": {
+    "mtime": 1795075953.505843,
+    "ast_hash": "f65955d2e81a1fd6fe13f97746c4e099",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x70187b4770796788b9d1f3fc6652c596870a9a837b96c832441652588f26029d.md": {
+    "mtime": 1795075953.7355497,
+    "ast_hash": "1432f87af2ad09cdfe7d9278fe2cb760",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x705aef63167b27a2ab5a9b4a59869b9d792a561fc1151642a2290909f7c055ed.md": {
+    "mtime": 1795075953.5803452,
+    "ast_hash": "7ec51f39f122938d652bf9efd812452e",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x723822eb2b143cee54c0bd7c1efba322b21f0051984c266df8879c394f1011c0.md": {
+    "mtime": 1795075953.4515572,
+    "ast_hash": "08b460521b90835eb32484a9262665ae",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x746481a9f7ac20a4959a11ea5d535522040b0dfd7c21b920d5fe134a93c2c26c.md": {
+    "mtime": 1795075953.7503316,
+    "ast_hash": "69ee81f77409495de4b793bfc19cc470",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x747dc809fb79e1b05be09c42d6179459a58de2ef3e40f02484a4e1260f741f75.md": {
+    "mtime": 1795075953.4166367,
+    "ast_hash": "50437e9efda2a40cac9bf23f119a86df",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x75546dcfa25f2cdd0edb5730ed2dc6f4b03940c2b1cb27eaefba47bfe434345d.md": {
+    "mtime": 1795075953.4727554,
+    "ast_hash": "4eed20e6ddd1e8f29b1805ccb872c16d",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x757c144993b3cb831e04c42bfcff8c18864c7da4f4688a5939d2f62e031cbc87.md": {
+    "mtime": 1795075953.4400344,
+    "ast_hash": "bc5ab28e8c59a149f2811272b0af751e",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x781b27ccb5dc3c36250b33124b922d984b9ed8180b4620fd8630ea8306ed2dbf.md": {
+    "mtime": 1795075953.7295651,
+    "ast_hash": "0f999e00b1d3624029a20a4dedae4a84",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x784beb8f89bcbc448a281050de26a227a258e535eee33e578ef10f25440c4731.md": {
+    "mtime": 1795075953.659726,
+    "ast_hash": "1491a84a4df13514c0f19a0f58332808",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x7978663d03b5c053dcea87b39e06fad5bcdd036b0c7febfa4309502c02f70c2c.md": {
+    "mtime": 1795075954.2328014,
+    "ast_hash": "be122070630109f6d69e21a9ddd80d41",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x7ee722a07e0f84405f1267bc1c84eb95bd6348454453abf445618e778af8fd18.md": {
+    "mtime": 1795075953.5701578,
+    "ast_hash": "fc8f6321445cc094e7eac89657871842",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x8063a2c9fa21c4a1470b33fee132d6d61fb5b7dcd667dcac3bb82ae15ad70c0d.md": {
+    "mtime": 1795075953.602325,
+    "ast_hash": "13f66ffeec7725596fc0f65280c6d58e",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x831493dce463d9adcad78c492f2cbec6ecdac31f4e8c5a894fdac68c130549d4.md": {
+    "mtime": 1795075953.7786758,
+    "ast_hash": "600fe293cd043b505deacc0c419270e7",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x857398c4502bc725fef7efb3cd503a30d3e18e486ab8173fdf505a76cf83b168.md": {
+    "mtime": 1795075968.8075953,
+    "ast_hash": "1d3334e19cf969b453c46cb7ed6b8fef",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x86a2f168603fae962d925c91b23fba47c0c7436a240056785de25e998bc30811.md": {
+    "mtime": 1795075953.7096279,
+    "ast_hash": "247e20606bf8ebe77f76517f0c085ad2",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x894a61a2baa777adf1d03a263a4b2d8faa7e1ebc7bf6694a37701fae8add01d9.md": {
+    "mtime": 1795075953.5558257,
+    "ast_hash": "db969312d45c73a37e1f48488cf49399",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x899f8c70dae5b6d09a19ebe324e248ce8bf48002f06216fa7d937b935f4c1734.md": {
+    "mtime": 1795075953.5614064,
+    "ast_hash": "d8acaf444926adb41ce9e2158b090659",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x8a4196617dcb703e49d9bb36d3847bf6a75fd364dbd19f8d408ac944bf1a03d8.md": {
+    "mtime": 1795075968.6838324,
+    "ast_hash": "67ede067d887ba1e6a450df55042c761",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x8a5c0b5fc339f2dbaf584def66bcf8bff94d91f0250562e452782fed3d18f821.md": {
+    "mtime": 1795075953.5353255,
+    "ast_hash": "68dd5129be325863091591b6a5775713",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x8d2ef61db7529c08ae6defba6e0c3cf7b1c90a9905c248b4a901f4b51a2615e1.md": {
+    "mtime": 1795075953.7834039,
+    "ast_hash": "45310149a72c9413e374d4394d40307c",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x8d4966e84ae80f24b2e14643fdd45364e354229e11e2c17903b4b1763cfbe67c.md": {
+    "mtime": 1795075953.5397093,
+    "ast_hash": "d2adc532d6382c19b7029e27c7c2a61c",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x910aabbfae28b3569929c31fb5461f4db13f7ddd427bdee1e696d313125838e3.md": {
+    "mtime": 1795075968.4032001,
+    "ast_hash": "9d1fc44d2220bf9198a0c58caf0ceee4",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x91e20860241f7c90fcff5ec348a68f953bd66a02d5662ac26cab32ac1f904be6.md": {
+    "mtime": 1795075968.7208536,
+    "ast_hash": "667fe10b68d6b98306a4f3848eb5597a",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x94863fef07e2101b8008f3994fe9fb79da69bede7f02f976d62797cf73e6d22f.md": {
+    "mtime": 1795075953.755034,
+    "ast_hash": "01011dc07d9a3a6378d7301be654e469",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x97c0b1316b8d9ba677414e8a682948e7560c1af60fc239b085a68cc467c21f23.md": {
+    "mtime": 1795075968.4884083,
+    "ast_hash": "81bc3c5326c6aa3858b305b129239370",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x989e60030a12b3b8c3014ca744df34fce5bc014a803f5a0c717557e11a0a04b8.md": {
+    "mtime": 1795075968.8734834,
+    "ast_hash": "9b01222b685332b1a796572923ae5237",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x9b1a03b41a1a68c209e9c3caf3d8af3f878420d6dbe8cb8afffd66049e73b114.md": {
+    "mtime": 1795075953.4784954,
+    "ast_hash": "51d06b85c70f15579e203593cf6692d8",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x9b786700f51dc9540f016267a69245616f53e93563de3fc5a1ac3a16f66310c4.md": {
+    "mtime": 1795075968.8631215,
+    "ast_hash": "ac451cf62dde54fbabf6a33d4b282630",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x9cb23d04b2ded06147482076688b69b487a8d982c63ebdda2ab3678cf27cf390.md": {
+    "mtime": 1795075953.8079097,
+    "ast_hash": "c936bb7919dfdcdde1d74edbe219717c",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0x9db8905bffc0df478b336591504245614c631976329df65efd7609f32167a693.md": {
+    "mtime": 1795075953.5912786,
+    "ast_hash": "f6aa54a0357a9d08814a6fb8866ecdaf",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xa0bc0c7db051defd2425c4d79fbfa1a0252cec4a987572562038a090922d412e.md": {
+    "mtime": 1795075953.5744498,
+    "ast_hash": "fd956f7143a17a22ef4c4a61afc391a5",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xa226daf1b12a3c4f7ff6c71c4cf6cd1e51d31833ff49a67210ed81db5a813574.md": {
+    "mtime": 1795075953.7613719,
+    "ast_hash": "72c14db1e730f183f91a8ba2e6f3991b",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xa467b14d51f01b957109d9cbb1d6c124fab2a089d52ed8f471d23c2812e743b7.md": {
+    "mtime": 1795075953.470387,
+    "ast_hash": "e515309f3c7ac5971deff111f0c3cd2e",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xa5f8a44504de30fa36fff2406b2b27b3d15476ed50448e4fc3ead4861d8a5e3e.md": {
+    "mtime": 1795075967.766079,
+    "ast_hash": "094a747faf7213c13ce61a7d3ee8428b",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xa692ca8cf219fc5c2da62cfd53d52d9db0e3aa956508e803185c5e4c3f95e5c0.md": {
+    "mtime": 1795075953.7879655,
+    "ast_hash": "494e143ca386065994f037232164c02b",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xa7d7ed69cfd6107e5e005556730dcf45727c1cdd1001f0378f5e471526181c47.md": {
+    "mtime": 1795075953.4653046,
+    "ast_hash": "c21505d536e79a898e0da5a248277cba",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xac32e73aa9e0dae801d88d4f81efd2ef3fa0f04b815f3a0e74426f0762e668cd.md": {
+    "mtime": 1795075953.6979682,
+    "ast_hash": "4ce31c174a7bd0968151f74c056e66d5",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xacec7e5b90ccb1ac4c950e3aff18156d6ce1bb7b0c87c001a281279412dca784.md": {
+    "mtime": 1795075953.7407207,
+    "ast_hash": "84188e8ad64efe15521e4d40e6e6c2bd",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xaece8d6062d3e3eb9845b32441a4ab06eb2ef332c0228bc6a36add450647c7c4.md": {
+    "mtime": 1795075953.6247063,
+    "ast_hash": "a63234bbcd5dfb5ce38614d9b9dc3627",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xb9aee520bf51ac5f00b5c43e54ef9245bc9fcdef866ce8a33025f9a441cc651d.md": {
+    "mtime": 1795075953.4542913,
+    "ast_hash": "eebff209fb06669a599ff546b0d07d45",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xbb379a14cd03f68c35c279ddbd928a6326f4fd2e21827f8cdaaf59715d6df50e.md": {
+    "mtime": 1795075966.6606255,
+    "ast_hash": "9cde229cf5b29f130e0ff0c8c6acb7d2",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xbb4d51e6364066d92eb6f9b8413dd7193de70966736044463b205834805a1f3b.md": {
+    "mtime": 1795075953.456771,
+    "ast_hash": "a0f3f609ccb107fa527192776032cbee",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xbf7a9da08326512f76129d4accf9f7d852dbf1cb7dd2c512479ff40c872f5659.md": {
+    "mtime": 1795075968.8632402,
+    "ast_hash": "ccd4e4db5804876a76a886fef407a8fe",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xc574bd2c370e346f31f9138a6466ea9ca9398dfc7c14f9ff14e4bae1b5ad36b0.md": {
+    "mtime": 1795075953.6546752,
+    "ast_hash": "9a72020b5b84fcf732887bb77cd60b2b",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xc9b9f89ac915385c8d77edb73872c49e5bf76e510b74b9609e74e7f8d0339df2.md": {
+    "mtime": 1795075953.4920752,
+    "ast_hash": "aaf56a4e7805e101e54024b22b06c7d1",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xcd57f3ad3bbbdaa96aacabd35f50c2d6e30f777e4a33876a4ab2dcd9f0b8c170.md": {
+    "mtime": 1795075953.6497738,
+    "ast_hash": "d452ed114afc498dec1544efd48f86f5",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xcf8a237df51a51511c4f96bb4390480ad72b898ca8ec7e9a3c16c47c8e5e468a.md": {
+    "mtime": 1795075953.4834204,
+    "ast_hash": "b74dc370790ff01b705063909d4aa805",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xd4e77ba6f29fc093509d24f508631abd445ecf506bbdc9c4c80e60256a318527.md": {
+    "mtime": 1795075953.6373956,
+    "ast_hash": "57354234a88809152c7c57ff85c24014",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xd595eb9b81885ff018738300c79047e3ec89e87294424f57a29a7fa9162bf116.md": {
+    "mtime": 1795075953.596787,
+    "ast_hash": "7f01dbc41b3cd67c2d44d1edc9ca44fd",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xd64b917e1f7cdf1ad3f51326cf8985ce80e140291d2eaf2bf62821ef02231550.md": {
+    "mtime": 1795075953.4595222,
+    "ast_hash": "52c77eb8df747688c4b3b69d2d9f0546",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xd8659b58a90d0d69fb1170f25b2b896871a1328115fd11c6f4cfe2b01a2a8ba0.md": {
+    "mtime": 1795075963.2942233,
+    "ast_hash": "6dd899f3cde8eb1d954c1c47bcd005f1",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xd8c72c47641fae7e1517f40489d242714724ae408d4c744b88ff775709362a37.md": {
+    "mtime": 1795075953.7677116,
+    "ast_hash": "599afb1558e7ba509c7074bbcd883ac1",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xd9fb1184af0064e5e34b129f5b79afa5a17b7e32f2953ab05efed82315fee6d4.md": {
+    "mtime": 1795075953.5503657,
+    "ast_hash": "5db291ae893b2e58b4f8e4ef77b46ba1",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xde9f827cb2d568db7801439693645a941a38fe6feaeb08b86087ad367d991704.md": {
+    "mtime": 1795075953.5852048,
+    "ast_hash": "23ec528e0ea48334033f9f0ec4babc74",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xe4f4b614a6c2b4ecd8eb700d19c0e6533d3fbd1bc28193b2255394ef74006e6f.md": {
+    "mtime": 1795075967.7609627,
+    "ast_hash": "14152cf3afd00ebfbde3d508e0f52f41",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xe681a6326237f3b17ce8622728b6cd104281dfe4d2b38f4520fd7f1734cf3469.md": {
+    "mtime": 1795075953.7997763,
+    "ast_hash": "27b4ed1ba7dba0a6c3da651e46dac079",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xeab5e759a35d841c311bd90ca8c3e58d960927ef2af53143e49e8293e8b5258d.md": {
+    "mtime": 1795075953.802446,
+    "ast_hash": "e6d4e89a0e1e378cf1d318c771016794",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xec181db4470b152493b58229862af3f6335b77cc719f5a0e7ed58c9f9848b992.md": {
+    "mtime": 1795075953.5310075,
+    "ast_hash": "654db7d66ca54958d58cc968af4be806",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xf17ad24eb4ad57926495b114149c765b9b95bc286eadc91cbbfa901ceb10d0b8.md": {
+    "mtime": 1795075953.4330778,
+    "ast_hash": "f530326bc2f038c56e9c7957ca64fe3e",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xf3519e50e99fa353443d45060813453b1b717e463b5b76c306e85e8f5b026116.md": {
+    "mtime": 1795075953.6198726,
+    "ast_hash": "160887a4c534c1260996754c27bca0eb",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xf9b6b5c3c6e07afe4aad6ed9ce4fa7545f9c2baa9f1dc632cd81a085c99acfe4.md": {
+    "mtime": 1795075953.6696005,
+    "ast_hash": "3d2aa0135d73be2a966f6126dd5a9798",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xfd029ab3d6d27b6e1f3480dce858c97fb12e5bebd6fb50be7520102c56ba8ce1.md": {
+    "mtime": 1795075953.5220366,
+    "ast_hash": "2208e3a0636021e27a0df6de909e2c53",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/01_Filters/0xfe28cb84a714b1a964290d7fd2587e71d57e905678c8ab64488449b24be78e52.md": {
+    "mtime": 1795075953.4754798,
+    "ast_hash": "507c1c735b57f8c4e0c82b6f41fe30fe",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/02_Active_Research/0x989e60030a12b3b8c3014ca744df34fce5bc014a803f5a0c717557e11a0a04b8.md": {
+    "mtime": 1795075968.8435516,
+    "ast_hash": "0e03eda0bb1e9853c58ccf0e882eae77",
+    "semantic_hash": ""
+  },
+  "/Users/shachardavid/projects/polymarket-trading-bot/Vault/02_Active_Research/0xbf7a9da08326512f76129d4accf9f7d852dbf1cb7dd2c512479ff40c872f5659.md": {
+    "mtime": 1795075968.841154,
+    "ast_hash": "5fb8f2fda312ac4a5916a5b9a4ac040b",
     "semantic_hash": ""
   }
 }
