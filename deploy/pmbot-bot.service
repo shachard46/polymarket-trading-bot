@@ -7,6 +7,7 @@ Wants=network-online.target
 Type=simple
 User=pmbot
 Group=pmbot
+UMask=0002
 WorkingDirectory=/opt/pmbot
 EnvironmentFile=/etc/pmbot/pmbot.env
 ExecStart=/opt/pmbot/.venv/bin/python -m orchestrator.discord_bot

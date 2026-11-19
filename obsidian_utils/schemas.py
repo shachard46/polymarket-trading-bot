@@ -47,11 +47,18 @@ def _check_market_id(market_id: str) -> str:
     return market_id
 
 
+# Process umask, read once (os.umask can only be read by setting it). mkstemp always creates 0600;
+# atomic writes re-apply the normal 0666 & ~umask mode so the vault stays group-readable.
+_UMASK = os.umask(0)
+os.umask(_UMASK)
+
+
 def _atomic_write_text(path: Path, text: str) -> None:
     """Write ``text`` to ``path`` via a same-dir temp file, fsync, and ``os.replace``."""
     path = Path(path)
     fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
     try:
+        os.fchmod(fd, 0o666 & ~_UMASK)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
             fh.flush()

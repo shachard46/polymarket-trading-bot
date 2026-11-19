@@ -5,6 +5,7 @@ Description=pmbot Vault backup
 Type=oneshot
 User=pmbot
 Group=pmbot
+UMask=0002
 WorkingDirectory=/opt/pmbot
 EnvironmentFile=/etc/pmbot/pmbot.env
 ExecStart=/opt/pmbot/deploy/backup.sh
