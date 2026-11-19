@@ -52,6 +52,27 @@ def web_filter_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {"n_calls": len(rows), "total": pack(tot), "by_model": {m: pack(v) for m, v in sorted(by_model.items())}}
 
 
+def judge_arm_cost(usage: list[dict[str, Any]]) -> dict[str, tuple[int, float, float | None]]:
+    """``{judge_arm: (n researched markets, judge cost USD, cost per researched market)}``.
+
+    Usage rows are tagged with the arm at call time (``judge_arm``, set around the judge calls only), so the cost of
+    quick-stage, helper and earlier-refresh calls never leaks into an arm; a row's market is its ``market_id``.
+    """
+    cost: dict[str, float] = defaultdict(float)
+    markets: dict[str, set[str]] = defaultdict(set)
+    for r in usage:
+        arm = r.get("judge_arm")
+        if not arm:
+            continue
+        cost[str(arm)] += _cost(r)
+        if r.get("market_id"):
+            markets[str(arm)].add(str(r["market_id"]))
+    return {
+        arm: (len(markets[arm]), cost[arm], cost[arm] / len(markets[arm]) if markets[arm] else None)
+        for arm in sorted(cost)
+    }
+
+
 def cost_stats(rows: list[dict[str, Any]], usage: list[dict[str, Any]], now: datetime | None = None) -> dict[str, Any]:
     """Cost per day / role / model / market, Brier-per-dollar by model, unknown-price counts."""
     now = now or datetime.now(tz=timezone.utc)
@@ -83,6 +104,7 @@ def cost_stats(rows: list[dict[str, Any]], usage: list[dict[str, Any]], now: dat
         "by_model": _sum_by(usage, "model"),
         "by_market": by_market,
         "brier_per_dollar": per_dollar,
+        "judge_arm_cost": judge_arm_cost(usage),
         "n_unknown": len(unknown),
         "missing_models": missing_models,
     }

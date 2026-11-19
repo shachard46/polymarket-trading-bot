@@ -9,8 +9,11 @@
 5. audit: each line gets a source-quality tag; ``auditor`` checks that the lines behind answered cruxes (at most
    ``AUDIT_MAX_LINES``) are really stated in their page text. Failed lines are dropped; lines without page text
    (Gemini / cache / beyond the cap) stay but are labelled ``unverified``.
-6. Two judges (``deep_researcher``, mode ``judge``) in parallel: J1 asks P(YES), J2 asks P(NO). Code flips J2 and
-   combines them in :func:`orchestrator.phases.p3_samples.aggregate_samples`.
+6. Judges (``deep_researcher``, mode ``judge``), A/B on cost: arm ``two`` runs J1 (asks P(YES)) and J2 (asks P(NO)) in
+   parallel; arm ``one`` runs a single judge whose framing (YES or NO) is picked per market by hash. Code flips a
+   NO-framed answer and combines them in :func:`orchestrator.phases.p3_samples.aggregate_samples`. The judges see only
+   the lines behind answered/contradicted cruxes (top ``JUDGE_LINES_PER_CRUX`` per crux). A compound market (AND / OR
+   of components) is checked in code (:mod:`orchestrator.compound`).
 
 No stage sees the market price. Bundle and ledger writes happen in the calling thread only; worker threads only
 fetch rows and call agents.
@@ -35,7 +38,10 @@ from config.trading_constants import (
     CRUX_MAX_QUERIES,
     CRUX_SEARCH_WORKERS,
     DEPTH_FULL_MIN_USD,
+    EVIDENCE_QUALITY_TIERS,
     GAP_MAX_QUERIES,
+    JUDGE_LINES_PER_CRUX,
+    SOURCE_CLASSIFIER_MAX_DOMAINS,
     LIQ_FRAC,
     MAX_GAP_ROUNDS,
     MAX_ORDER_USD,
@@ -43,7 +49,8 @@ from config.trading_constants import (
     RESEARCH_PIPELINE,
 )
 from obsidian_utils import ObsidianManager
-from orchestrator import evidence
+from orchestrator import compound as compound_mod
+from orchestrator import evidence, source_quality
 from orchestrator.agent_outputs import (
     REQUIRED_CRUX_ROLES,
     AuditOutput,
@@ -52,12 +59,14 @@ from orchestrator.agent_outputs import (
     DeepResearcherNeedsMore,
     GapOutput,
     ScoutOutput,
+    SourceClassifierOutput,
 )
-from orchestrator.config import FORCED_SYNTHESIS_OVERRIDE
+from orchestrator.config import FORCED_SYNTHESIS_OVERRIDE, JUDGE_ARM_ONE
 from orchestrator.parse import agent_error_reason, normalize_structured_output, run_agent_with_format_retries
 from orchestrator.phases.agent_call import check_complete, invoke_deep_researcher
 from orchestrator.phases.common import _as_float, _dr_payload, _text_fields, log
 from orchestrator.phases.p3_evidence import _ensure_as_of, fetch_rows, resolve_source
+from orchestrator.playbooks import playbook_for
 from orchestrator.runner import AgentRunner
 from orchestrator.state import InfraUnavailable, is_infra_error
 
@@ -213,18 +222,36 @@ def _templates(title: str, end: str) -> dict[str, dict[str, Any]]:
 
 
 def _normalize_cruxes(
-    proposed: list[dict[str, Any]], row: dict[str, Any], today: str, depth: str
+    proposed: list[dict[str, Any]], row: dict[str, Any], today: str, depth: str,
+    spec: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Enforce the required roles (template fill), the crux count for ``depth`` and unique, dated queries; assign ids."""
+    """Enforce the required roles (template fill), the crux count for ``depth`` and unique, dated queries; assign ids.
+
+    For a compound market (``spec``) every component gets at least one crux (an ``evidence`` template is added for a
+    component the architect left out) and the first crux of each component survives the count cap.
+    """
     lo, hi = CRUX_COUNT[depth]
     title = str(row.get("market_title") or "").strip()
     end = str((row.get("market_data") or {}).get("end_date") or "")[:10]
     tpl = _templates(title, end)
+    comp_ids = [c["id"] for c in spec["components"]] if spec else []
     cruxes = [dict(c) for c in proposed]
+    for c in cruxes:
+        if c.get("component") not in comp_ids:
+            c["component"] = None
     present = {c["role"] for c in cruxes}
     for role in REQUIRED_CRUX_ROLES:
         if role not in present:
             cruxes.append({"role": role, **tpl[role], "template": True})
+    for comp in spec["components"] if spec else []:
+        if not any(c.get("component") == comp["id"] for c in cruxes):
+            label = comp["label"]
+            cruxes.append({
+                "role": "evidence", "component": comp["id"], "template": True,
+                "question": f"What is the latest verified state of the component: {label}?",
+                "queries": [f"{title} {label} latest status news"],
+                "moves_p_if": "Fresh confirming facts push this component's probability up; disconfirming facts push it down.",
+            })
     while len(cruxes) < lo:
         cruxes.append({"role": "evidence", **tpl["evidence"], "template": True})
     if len(cruxes) > hi:  # drop from the end, never the first crux of a required role
@@ -233,6 +260,11 @@ def _normalize_cruxes(
         for i, c in enumerate(cruxes):
             if c["role"] in REQUIRED_CRUX_ROLES and c["role"] not in seen:
                 seen.add(c["role"])
+                protected.add(i)
+        seen_comp: set[str] = set()
+        for i, c in enumerate(cruxes):
+            if c.get("component") and c["component"] not in seen_comp:
+                seen_comp.add(c["component"])
                 protected.add(i)
         keep = [i for i in range(len(cruxes)) if i in protected]
         for i in range(len(cruxes)):
@@ -245,11 +277,17 @@ def _normalize_cruxes(
     out = []
     for n, c in enumerate(cruxes, start=1):
         queries = []
-        for q in c["queries"][:CRUX_MAX_QUERIES]:
+        prov = str(c.get("provenance_question") or "").strip()
+        for q in c["queries"][: CRUX_MAX_QUERIES - 1 if prov else CRUX_MAX_QUERIES]:
             q = _ensure_as_of(str(q).strip(), today)
             if q.lower() not in seen_q:
                 seen_q.add(q.lower())
                 queries.append(q)
+        if prov:  # source reliability: who produced the forecast / estimate, their stake and track record
+            pq = _ensure_as_of(prov, today)
+            if pq.lower() not in seen_q:
+                seen_q.add(pq.lower())
+                queries.append(pq)
         if not queries:  # every query duplicated an earlier crux's: ask the question itself
             q = _ensure_as_of(c["question"], today)
             seen_q.add(q.lower())
@@ -257,6 +295,7 @@ def _normalize_cruxes(
         out.append({
             "crux_id": f"c{n}", "role": c["role"], "question": c["question"],
             "moves_p_if": c.get("moves_p_if", ""), "queries": queries,
+            "component": c.get("component"), "provenance_question": prov,
             "status": "unanswered", "missing": "", "followed_up": False,
         })
     return out
@@ -264,10 +303,15 @@ def _normalize_cruxes(
 
 def _architect(
     runner: AgentRunner, row: dict[str, Any], today: str, depth: str, scout: dict[str, Any] | None, flags: list[str]
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """Returns ``(cruxes, compound spec or None)``."""
     payload = {**_text_fields(row, today), "depth": depth, "scout": scout}
+    playbook = playbook_for((row.get("market_data") or {}).get("category"))
+    if playbook:
+        payload["playbook"] = playbook  # optional key: only present when the category has a playbook
     out = _call_agent(runner, "briefer", payload, BrieferOutput, flags, "architect")
     proposed: list[dict[str, Any]] = []
+    spec = compound_mod.parse_spec(out.compound) if out is not None else None
     if out is not None:
         if out.cruxes:
             proposed = [c.model_dump() for c in out.cruxes]
@@ -277,7 +321,7 @@ def _architect(
                 for role, q in zip(_LEGACY_SLOT_ROLES, out.research_queries)
             ]
     # a failed architect leaves ``proposed`` empty: the templates (the old fixed slots plus horizon) fill in
-    return _normalize_cruxes(proposed, row, today, depth)
+    return _normalize_cruxes(proposed, row, today, depth, spec), spec
 
 
 # ---- search ---------------------------------------------------------------------------------------------
@@ -445,7 +489,48 @@ def _audit(
 
 
 def _crux_view(c: dict[str, Any]) -> dict[str, Any]:
-    return {k: c[k] for k in ("crux_id", "role", "question", "moves_p_if", "status", "missing", "followed_up")}
+    view = {k: c[k] for k in ("crux_id", "role", "question", "moves_p_if", "status", "missing", "followed_up")}
+    if c.get("component"):
+        view["component"] = c["component"]
+    if c.get("provenance_question"):
+        view["provenance_question"] = c["provenance_question"]
+    return view
+
+
+# ---- source classifier ------------------------------------------------------------------------------------
+
+
+def _classify_sources(
+    vault: ObsidianManager, runner: AgentRunner, market_id: str, rows: list[dict[str, Any]], flags: list[str]
+) -> int:
+    """One batched cheap ``source_classifier`` call for the domains no YAML entry, cache or heuristic resolves.
+
+    Answers are persisted in the vault's classifier cache, so a domain is never asked twice; a failed call is flagged
+    and retried by a later research. Returns the number of domains stored.
+    """
+    source_quality.bind_cache(source_quality.cache_path_for(vault))
+    urls = []
+    for r in rows:
+        if evidence.row_usable(r):
+            urls += [m.group(0) for m in evidence._URL_RE.finditer(str(r.get("research_data") or ""))]
+    domains = source_quality.unresolved_domains(urls)[:SOURCE_CLASSIFIER_MAX_DOMAINS]
+    if not domains:
+        return 0
+    out = _call_agent(
+        runner, source_quality.CLASSIFIER_ROLE, {"market_id": market_id, "domains": domains},
+        SourceClassifierOutput, flags, "source_classifier",
+    )
+    if out is None:
+        return 0
+    asked = set(domains)
+    tiers: dict[str, str] = {}
+    for d in out.domains:
+        key = source_quality.domain_key(d.domain.strip().lower())
+        if key in asked:
+            tiers[key] = d.tier.strip().lower() if d.tier.strip().lower() in EVIDENCE_QUALITY_TIERS else "unknown"
+    n = source_quality.store(tiers)
+    log.info("[PHASE 3] source_classifier for %s: asked=%d stored=%d", market_id, len(domains), n)
+    return n
 
 
 def build_evidence(
@@ -473,10 +558,11 @@ def build_evidence(
         return rows
 
     scout = _scout(runner, row, today, fetch, budget, flags)
-    cruxes = _architect(runner, row, today, depth, scout, flags)
+    cruxes, compound_spec = _architect(runner, row, today, depth, scout, flags)
     rows = _search_jobs(_initial_jobs(cruxes, budget), fetch, gap=False)
     gap_rows, gap_queries = _gap_round(runner, row, today, cruxes, rows, budget, fetch, flags)
     rows = rows + gap_rows
+    _classify_sources(vault, runner, market_id, rows, flags)
 
     dropped = 0
     audit_ran = False
@@ -502,6 +588,7 @@ def build_evidence(
         "pipeline": RESEARCH_PIPELINE,
         "research_depth": depth,
         "cruxes": [_crux_view(c) for c in cruxes],
+        "compound": compound_spec,
         "known_unknowns": known_unknowns,
         "gap_queries": gap_queries,
         "audit_ran": audit_ran,
@@ -528,14 +615,51 @@ def build_evidence(
 # ---- judges ---------------------------------------------------------------------------------------------
 
 
-def crux_table(bundle: list[dict[str, Any]], crux_meta: dict[str, Any] | None, today: str) -> list[dict[str, Any]] | None:
-    """The judge's crux table: each crux with the E-ids of its evidence lines (ids as in the rendered bundle)."""
+_TIER_RANK = {"official": 0, "major": 1, "aggregator": 2, "unknown": 3, "blog": 4}
+
+
+def crux_table(
+    bundle: list[dict[str, Any]], crux_meta: dict[str, Any] | None, today: str, only_ids: set[str] | None = None
+) -> list[dict[str, Any]] | None:
+    """The judge's crux table: each crux with the E-ids of its evidence lines (ids as in the rendered bundle).
+
+    With ``only_ids`` just the ids the judge is actually sent are listed.
+    """
     if not crux_meta or not crux_meta.get("cruxes"):
         return None
     ids: dict[str, list[str]] = {}
     for rec in evidence.label_lines(bundle, today):
-        ids.setdefault(str(rec["crux_id"]), []).append(rec["id"])
+        if only_ids is None or rec["id"] in only_ids:
+            ids.setdefault(str(rec["crux_id"]), []).append(rec["id"])
     return [{**c, "evidence_ids": ids.get(c["crux_id"], [])} for c in crux_meta["cruxes"]]
+
+
+def select_judge_ids(
+    bundle: list[dict[str, Any]], crux_meta: dict[str, Any] | None, today: str, k: int = JUDGE_LINES_PER_CRUX
+) -> set[str] | None:
+    """E-ids of the lines the judge is sent, or ``None`` for no trimming (no crux metadata: legacy bundle).
+
+    Lines behind answered / contradicted cruxes (and cruxes a follow-up query filled) count; per crux the top ``k`` by
+    source-quality tier, then recency (undated last). Lines of unanswered cruxes are not sent: the judge gets the crux
+    status and ``known_unknowns`` instead. Lines of a crux the metadata does not know are kept.
+    """
+    if not crux_meta or not crux_meta.get("cruxes"):
+        return None
+    by_id = {c["crux_id"]: c for c in crux_meta["cruxes"]}
+    per: dict[str, list[dict[str, Any]]] = {}
+    keep: set[str] = set()
+    for rec in evidence.label_lines(bundle, today):
+        c = by_id.get(str(rec["crux_id"]))
+        if c is None:
+            keep.add(rec["id"])
+        elif c["status"] in ("answered", "contradicted") or c.get("followed_up"):
+            per.setdefault(c["crux_id"], []).append(rec)
+    for recs in per.values():
+        recs.sort(key=lambda r: (
+            _TIER_RANK.get(r["quality"], 3), r["age_days"] if r["age_days"] is not None else 10**9, int(r["id"][1:]),
+        ))
+        keep.update(r["id"] for r in recs[:k])
+    return keep
 
 
 def _judge_one(
@@ -556,28 +680,60 @@ def _judge_one(
     return (out, research, framing) if research is not None else None
 
 
+def judge_plan(market_id: str) -> tuple[str, list[tuple[str, str]]]:
+    """``(arm, [(tag, framing), ...])``: two judges (J1 YES, J2 NO) or one judge with a hash-picked framing."""
+    arm = evidence.judge_arm(market_id)
+    if arm == JUDGE_ARM_ONE:
+        return arm, [("j1", evidence.judge_framing(market_id))]
+    return arm, [("j1", "yes"), ("j2", "no")]
+
+
+def failed_judges(market_id: str, samples: list[Any]) -> list[str]:
+    """Tags of the planned judges that returned no usable sample."""
+    have = {(s[2] if len(s) > 2 else "yes") for s in samples}
+    return [tag for tag, framing in judge_plan(market_id)[1] if framing not in have]
+
+
 def run_judges(
     vault: ObsidianManager, runner: AgentRunner, row: dict[str, Any], directives: str, today: str,
     crux_meta: dict[str, Any] | None,
 ) -> tuple[list[Sample], list[str]]:
-    """J1 (asks P(YES)) and J2 (asks P(NO)) in parallel on the same bundle; returns ``(samples, failed judge tags)``."""
+    """The judges of the market's arm in parallel on the same trimmed bundle; returns ``(samples, failed judge tags)``."""
+    from orchestrator.llm import usage  # noqa: PLC0415
+
     market_id = row["market_id"]
+    source_quality.bind_cache(source_quality.cache_path_for(vault))
     bundle = vault.read_research_bundle(market_id) or []
-    table = crux_table(bundle, crux_meta, today)
+    only = select_judge_ids(bundle, crux_meta, today)
+    total = len(evidence.label_lines(bundle, today))
+    log.info(
+        "[PHASE 3] judge input lines for %s: %d -> %d", market_id, total, total if only is None else len(only)
+    )
+    table = crux_table(bundle, crux_meta, today, only)
     unknowns = list(crux_meta.get("known_unknowns") or []) if crux_meta else None
+    compound_spec = (crux_meta or {}).get("compound")
+    playbook = playbook_for((row.get("market_data") or {}).get("category"))
+    arm, plan = judge_plan(market_id)
     jobs = []
-    for tag, framing in (("j1", "yes"), ("j2", "no")):
+    for tag, framing in plan:
         dr_in = _dr_payload(
             row, directives, bundle, mode="judge", today=today, system_override=FORCED_SYNTHESIS_OVERRIDE,
             session_tag=tag, ask=framing, crux_table=table, known_unknowns=unknowns,
+            compound=compound_spec, playbook=playbook, only_ids=only,
         )
         jobs.append((tag, framing, dr_in))
-    results = _pmap(lambda j: _judge_one(vault, runner, row, j[2], j[1]), jobs, 2)
+    with usage.judge_arm_scope(arm):
+        results = _pmap(lambda j: _judge_one(vault, runner, row, j[2], j[1]), jobs, 2)
     samples: list[Sample] = []
     failed: list[str] = []
     for (tag, _, _), res in zip(jobs, results):
         if isinstance(res, tuple):
             samples.append(res)
+            if res[0].base_rate is not None:  # how far the judge moved from the comparator's base rate (asked outcome)
+                log.info(
+                    "[PHASE 3] judge %s for %s: base_rate=%.3f estimated_p=%.3f (moved %+.3f)",
+                    tag, market_id, res[0].base_rate, res[0].estimated_p, res[0].estimated_p - res[0].base_rate,
+                )
         else:
             failed.append(tag)
     return samples, failed
@@ -594,7 +750,12 @@ def _bare(line: str) -> str:
 def offer_evidence(
     bundle: list[dict[str, Any]], today: str, samples: list[Sample], limit: int = 3
 ) -> dict[str, list[str]]:
-    """Verbatim evidence lines for the offer: audit-verified AND cited by a judge, split by the cited direction."""
+    """Verbatim evidence lines for the offer, split by the direction a judge cited them for.
+
+    Audit-verified cited lines are used; a side with none verified falls back to its cited lines marked
+    ``(unverified)`` (e.g. Gemini rows, lines beyond the audit cap, or an audit that failed), so the lists are only
+    empty when the judges cited nothing for that side. A line cited in both directions is ambiguous and skipped.
+    """
     recs = {r["id"]: r for r in evidence.label_lines(bundle, today)}
     directions: dict[str, set[str]] = {}
     for complete, _, _ in samples:
@@ -603,28 +764,36 @@ def offer_evidence(
                 continue
             for eid in v.cited:
                 directions.setdefault(eid, set()).add(v.direction)
-    bull: list[str] = []
-    bear: list[str] = []
+    sides: dict[str, tuple[list[str], list[str]]] = {"yes": ([], []), "no": ([], [])}
     for eid, dirs in directions.items():
         rec = recs.get(eid)
         if rec is None or len(dirs) != 1:
             continue
-        row = bundle[rec["row"]]
-        if rec["line"] not in (row.get("verified") or []):
-            continue
-        (bull if "yes" in dirs else bear).append(_bare(rec["text"]))
-    return {"evidence_bull": bull[:limit], "evidence_bear": bear[:limit]}
+        side = next(iter(dirs))
+        ok = rec["line"] in (bundle[rec["row"]].get("verified") or [])
+        sides[side][0 if ok else 1].append(_bare(rec["text"]))
+    def pick(side: str) -> list[str]:
+        verified, rest = sides[side]
+        return verified[:limit] if verified else [f"{t} (unverified)" for t in rest][:limit]
+    return {"evidence_bull": pick("yes"), "evidence_bear": pick("no")}
 
 
 # ---- ledger / frontmatter fields --------------------------------------------------------------------------
 
 
-def crux_fields(crux_meta: dict[str, Any] | None, framing_gap: float | None, failed: list[str]) -> dict[str, Any]:
-    """Flat, JSON-safe summary of one crux run for the ledger, ``research_state`` and the report frontmatter."""
+def crux_fields(
+    crux_meta: dict[str, Any] | None, framing_gap: float | None, failed: list[str],
+    *, judge_arm: str | None = None, judge_framing: str | None = None, compound: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Flat, JSON-safe summary of one crux run for the ledger, ``research_state`` and the report frontmatter.
+
+    ``judge_framing`` is set only in the one-judge arm (null with two judges); ``compound`` is the result of
+    :func:`orchestrator.compound.check` (its ``compound_*`` keys are copied).
+    """
     meta = crux_meta or {}
     statuses = Counter(c.get("status") for c in meta.get("cruxes") or [])
     flags = list(meta.get("flags") or []) + [f"judge_failed:{t}" for t in failed]
-    return {
+    out = {
         "pipeline": RESEARCH_PIPELINE,
         "research_depth": meta.get("research_depth"),
         "cruxes_total": len(meta.get("cruxes") or []),
@@ -638,7 +807,14 @@ def crux_fields(crux_meta: dict[str, Any] | None, framing_gap: float | None, fai
         "source_mix": meta.get("source_mix") or {},
         "pipeline_flags": flags,
         "web_calls": meta.get("web_calls", 0),
+        "judge_arm": judge_arm,
+        "judge_framing": judge_framing,
     }
+    if compound:
+        out.update(compound)
+        if compound.get("compound_gap") is None:
+            out["pipeline_flags"] = flags + ["compound_components_missing"]
+    return out
 
 
 # ---- backtest entry ---------------------------------------------------------------------------------------
@@ -690,7 +866,12 @@ def backtest_research(row: dict[str, Any], today: str, search_freshness: str | N
         return {
             "p": agg["p"], "p_low": agg["p_low"], "p_high": agg["p_high"], "confidence": agg["confidence"],
             "samples": agg["samples"], "spread": agg["spread"], "pipeline": RESEARCH_PIPELINE,
-            **crux_fields(meta, agg["spread"] if len(samples) == 2 else None, failed),
+            **crux_fields(
+                meta, agg["spread"] if len(samples) == 2 else None, failed,
+                judge_arm=judge_plan(prow["market_id"])[0],
+                judge_framing=samples[0][2] if len(samples) == 1 else None,
+                compound=compound_mod.check(samples, meta["compound"]) if meta.get("compound") else None,
+            ),
             **offer_evidence(bundle, today, samples),
         }
 
@@ -701,7 +882,10 @@ __all__ = [
     "build_evidence",
     "crux_fields",
     "crux_table",
+    "failed_judges",
+    "judge_plan",
     "offer_evidence",
+    "select_judge_ids",
     "potential_max_stake_usd",
     "research_depth",
     "run_judges",

@@ -129,6 +129,11 @@ CRUX_COUNT = {"full": (5, 8), "lite": (4, 5)}  # (min, max) cruxes per depth
 CRUX_MAX_QUERIES = 2                # queries per crux
 CRUX_SEARCH_WORKERS = 4             # crux searches run in parallel
 DEPTH_FULL_MIN_USD = 25.0           # potential max order below this -> RESEARCH_DEPTH "lite" (fewer cruxes, no audit)
+JUDGE_LINES_PER_CRUX = 4              # judge input: top evidence lines kept per answered/contradicted crux (quality tier, then recency)
+COMPOUND_MAX_CORR = 0.9             # judge-assumed correlation between compound components is clamped to [0, this]
+COMPOUND_MAX_COMPONENTS = 4         # components of a compound market (AND / OR); more are ignored
+SOURCE_CLASSIFIER_MAX_DOMAINS = 40  # unknown domains sent to the source_classifier per research
+JUDGE_ARM_MODES = ("ab", "one", "two")  # JUDGE_ARM_MODE: stable per-market A/B, always one judge, always two judges
 EVIDENCE_QUALITY_TIERS = ("official", "major", "aggregator", "blog", "unknown")
 
 # Evidence quality: age labels on the bundle the deep researcher sees, and the Brave web backend.

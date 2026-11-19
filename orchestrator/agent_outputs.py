@@ -25,8 +25,10 @@ class CruxSpec(BaseModel):
     question: str
     queries: list[str]
     moves_p_if: str = ""
+    component: str | None = None  # compound market: id of the component this crux is about
+    provenance_question: str = ""  # who produced the forecast/estimate this crux relies on, their stake, track record
 
-    @field_validator("question", "moves_p_if")
+    @field_validator("question", "moves_p_if", "provenance_question")
     @classmethod
     def _strip(cls, value: str) -> str:
         return str(value or "").strip()
@@ -52,6 +54,7 @@ class BrieferOutput(BaseModel):
 
     market_id: str
     cruxes: list[CruxSpec] = []
+    compound: dict[str, Any] | None = None  # {"type": "and"|"or", "components": [{"id", "label"}]} for compound markets
     research_queries: list[str] = []
     error: str | None = None
 
@@ -83,6 +86,37 @@ class ScoutOutput(BaseModel):
     contested: list[str] = []
     main_sources: list[str] = []
     error: str | None = None
+
+
+class SourceTier(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    domain: str
+    tier: str = "unknown"
+
+
+class SourceClassifierOutput(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    market_id: str = ""
+    domains: list[SourceTier] = []
+    error: str | None = None
+
+
+class ComponentP(BaseModel):
+    """Judge output for a compound market: probability that one component happens (independent of ``ask``)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    p: float
+
+    @field_validator("p")
+    @classmethod
+    def _unit(cls, value: float) -> float:
+        if not 0.0 <= value <= 1.0:
+            raise ValueError(f"component probability must be in [0, 1], got {value}")
+        return value
 
 
 class CruxAssessment(BaseModel):
@@ -172,6 +206,9 @@ class DeepResearcherComplete(BaseModel):
     error: str | None = None
     base_rate: float | None = None  # judge mode: the comparator's base rate for the asked outcome
     crux_verdicts: list[CruxVerdict] = []  # judge mode: which way each crux pushes, with cited E-ids
+    components: list[ComponentP] = []  # judge mode, compound market: P(component happens) per component id
+    correlation: float | None = None  # judge mode, compound market: assumed correlation between the components
+    discounted_sources: list[str] = []  # judge mode: interested / unproven sources whose claims it discounted
 
     @field_validator("estimated_p", "p_low", "p_high", "base_rate")
     @classmethod
@@ -237,6 +274,8 @@ __all__ = [
     "GapOutput",
     "REQUIRED_CRUX_ROLES",
     "ScoutOutput",
+    "ComponentP",
+    "SourceClassifierOutput",
     "DeepResearcherComplete",
     "DeepResearcherNeedsMore",
     "DeepResearcherOutput",

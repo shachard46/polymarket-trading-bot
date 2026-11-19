@@ -12,6 +12,7 @@ from orchestrator.stats.calc import bootstrap_diff_ci, brier, calibration_table,
 from orchestrator.stats.groups import (
     _COUNTERFACTUAL_STAGES,
     brier_by_evidence_source,
+    brier_by_judge_arm,
     brier_by_model,
     brier_by_provider,
     brier_by_runner_backend,
@@ -56,6 +57,7 @@ def compute_stats(
     out["market_integrity"] = market_integrity_stats(rows)
     out["calibration"] = calibration_table(triples)
     out["brier_by_evidence_source"] = brier_by_evidence_source(rows)
+    out["brier_by_judge_arm"] = brier_by_judge_arm(rows)
     out["brier_by_runner_backend"] = brier_by_runner_backend(rows)
     out["brier_by_model"] = brier_by_model(rows)
     out["brier_by_provider"] = brier_by_provider(rows)
@@ -117,6 +119,20 @@ def _render_model_vs_market(s: dict[str, Any]) -> list[str]:
 def _render_brier_by(s: dict[str, Any], title: str, field: str, key: str) -> list[str]:
     L = ["", f"### Brier by {title}", "", f"| {field} | n | Brier(p) | Brier(p) - Brier(q) |", "|---|---|---|---|"]
     L += [f"| {k} | {n} | {_fmt(bp)} | {_fmt(d)} |" for k, (n, bp, d) in s.get(key, {}).items()]
+    return L
+
+
+def _render_judge_arms(s: dict[str, Any]) -> list[str]:
+    """1 judge vs 2 judges: Brier from the ledger, judge cost per researched market from tagged usage rows."""
+    brier = s.get("brier_by_judge_arm", {})
+    cost = (s.get("cost") or {}).get("judge_arm_cost", {})
+    L = ["", "### Judge arms (1 vs 2 judges)", "",
+         "| judge_arm | n scored | Brier(p) | Brier(p) - Brier(q) | n researched | judge cost USD | judge cost per researched market USD |",
+         "|---|---|---|---|---|---|---|"]
+    for arm in sorted(set(brier) | set(cost)):
+        n, bp, d = brier.get(arm, (0, None, None))
+        nm, total, per = cost.get(arm, (0, None, None))
+        L.append(f"| {arm} | {n} | {_fmt(bp)} | {_fmt(d)} | {nm} | {_fmt(total)} | {_fmt(per)} |")
     return L
 
 
@@ -279,6 +295,7 @@ def _render_web_filter(s: dict[str, Any]) -> list[str]:
 def render_stats(s: dict[str, Any]) -> str:
     L = _render_model_vs_market(s)
     L += _render_brier_by(s, "evidence source", "evidence_source", "brier_by_evidence_source")
+    L += _render_judge_arms(s)
     L += _render_brier_by(s, "runner backend", "runner_backend", "brier_by_runner_backend")
     L += _render_brier_by(s, "model", "model", "brier_by_model")
     L += _render_brier_by(s, "provider", "provider", "brier_by_provider")

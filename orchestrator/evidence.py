@@ -54,6 +54,23 @@ def ab_arm(market_id: str) -> str:
     return AIQ if digest[-1] % 2 == 0 else WEB
 
 
+def _hash_parity(salt: str, market_id: str) -> int:
+    return hashlib.sha256((salt + ":" + str(market_id)).encode("utf-8")).digest()[-1] % 2
+
+
+def judge_arm(market_id: str) -> str:
+    """Judge arm for a market: ``one`` | ``two`` (``JUDGE_ARM_MODE``; in ``ab`` the parity of a salted hash)."""
+    mode = config.judge_arm_mode()
+    if mode != config.JUDGE_ARM_AB:
+        return mode
+    return config.JUDGE_ARM_ONE if _hash_parity("judge_arm", market_id) == 0 else config.JUDGE_ARM_TWO
+
+
+def judge_framing(market_id: str) -> str:
+    """Framing (``yes`` | ``no``) of the single judge in the ``one`` arm (salted hash, independent of the arm)."""
+    return "yes" if _hash_parity("judge_framing", market_id) == 0 else "no"
+
+
 def is_shadow(market_id: str) -> bool:
     """Stable ~SHADOW_RATE selection of quick no_divergence skips for the shadow FULL run.
 
@@ -133,20 +150,43 @@ def fetch_web_rows(
     """
     if config.web_backend() == config.WEB_BACKEND_BRAVE:
         rows = _brave_rows(runner, market_id, queries, today)
+        backends = [config.WEB_BACKEND_BRAVE] * len(rows)
         failed = [i for i, r in enumerate(rows) if r.get("error")]
         if failed:
             log.warning(
-                "[WEB-FALLBACK] %s: brave failed for %d/%d queries; using gemini web_searcher",
-                market_id, len(failed), len(queries),
+                "[WEB-FALLBACK] %s: brave path failed for %d/%d queries (%s); using gemini web_searcher",
+                market_id, len(failed), len(queries), _failure_reasons([rows[i] for i in failed]),
             )
             fallback = _gemini_rows(runner, market_id, [queries[i] for i in failed], today)
             for i, r in zip(failed, fallback):
                 rows[i] = r
-        backend = config.WEB_BACKEND_BRAVE
+                backends[i] = config.WEB_BACKEND_GEMINI
+        backend = _backend_label(backends)
     else:
         rows, backend = _gemini_rows(runner, market_id, queries, today), config.WEB_BACKEND_GEMINI
     _log_pages(market_id, backend, rows)
     return rows
+
+
+def _failure_reasons(rows: list[dict[str, Any]]) -> str:
+    """The distinct real errors behind failed Brave-path rows, tagged by stage (search = Brave itself, else the extractor)."""
+    seen: dict[str, int] = {}
+    for r in rows:
+        err = str(r.get("error") or "unknown").strip()
+        stage = "search" if err.startswith("brave") else "extractor"
+        key = f"{stage}: {err[:160]}"
+        seen[key] = seen.get(key, 0) + 1
+    return "; ".join(f"{k} x{n}" if n > 1 else k for k, n in seen.items())
+
+
+def _backend_label(backends: list[str]) -> str:
+    """``brave``, ``gemini``, or ``brave+gemini(fallback=N)`` when some rows were replaced by the gemini fallback."""
+    n_gemini = sum(1 for b in backends if b == config.WEB_BACKEND_GEMINI)
+    if n_gemini == 0:
+        return config.WEB_BACKEND_BRAVE
+    if n_gemini == len(backends):
+        return config.WEB_BACKEND_GEMINI
+    return f"{config.WEB_BACKEND_BRAVE}+{config.WEB_BACKEND_GEMINI}(fallback={n_gemini})"
 
 
 def _count_urls(text: str) -> int:
@@ -328,6 +368,11 @@ def _brave_one(
     # the pages handed to the extractor are exactly the retrieved set: airtight citation guard
     (row,), counts = filter_rows([row], [p.url for p in pages], strict=True)
     _record_filter(market_id, BRAVE_MODEL, counts)
+    if counts.kept == 0:
+        log.warning(
+            "[WEB-GUARD] %s: extractor lines all dropped for %r (%d pages; dropped_no_url=%d dropped_unretrieved=%d)",
+            market_id, query, len(pages), counts.dropped_no_url, counts.dropped_unretrieved,
+        )
     return {**row, PAGES_KEY: page_texts}
 
 
@@ -399,7 +444,7 @@ def _label(n: int, age: int | None, quality: str | None, unverified: bool) -> st
 
 
 def label_bundle(
-    bundle: list[dict[str, Any]], today: str, *, quality: bool = False
+    bundle: list[dict[str, Any]], today: str, *, quality: bool = False, only_ids: set[str] | None = None
 ) -> list[dict[str, Any]]:
     """Copy of ``bundle`` whose evidence lines carry ``[E<n> | <age>d]`` / ``[E<n> | undated]`` labels.
 
@@ -408,6 +453,8 @@ def label_bundle(
     ``undated``. Age above ``EVIDENCE_STALE_DAYS`` adds ``STALE``. Error rows and empty/NOT_FOUND/marker lines
     are left unlabelled. With ``quality=True`` each label also carries the source-quality tag of the line's URL
     (``unknown`` with no URL) and ``unverified`` unless the audit verified that line (row key ``verified``: line indexes).
+    With ``only_ids`` (E-ids such as ``"E7"``) the ids are still assigned over the whole bundle, but evidence lines
+    outside the set are omitted (a row left with no evidence line is omitted): the judge's trimmed input.
     """
     from orchestrator.source_quality import quality_for  # noqa: PLC0415 - keeps yaml load off the import path
 
@@ -420,15 +467,23 @@ def label_bundle(
             out.append(row)
             continue
         lines = []
+        kept_any = False
+        had_any = False
         verified = set(row.get("verified") or [])
         for li, line in enumerate(src):
             if not _is_evidence_line(line):
                 lines.append(line)
                 continue
             n += 1
+            had_any = True
+            if only_ids is not None and f"E{n}" not in only_ids:
+                continue
+            kept_any = True
             m = _URL_RE.search(line)
             tier = (quality_for(m.group(0)) if m else "unknown") if quality else None
             lines.append(f"{_label(n, _line_age_days(line, today_d), tier, li not in verified)} {line}")
+        if only_ids is not None and had_any and not kept_any:
+            continue
         out.append({**row, "research_data": "\n".join(lines)})
     return out
 
@@ -481,6 +536,8 @@ __all__ = [
     "AIQ",
     "WEB",
     "ab_arm",
+    "judge_arm",
+    "judge_framing",
     "is_shadow",
     "label_lines",
     "fetch_web_bundle",

@@ -37,6 +37,19 @@ def market_scope(market_id: str | None) -> Iterator[None]:
         _market_id.reset(token)
 
 
+_judge_arm: contextvars.ContextVar[str | None] = contextvars.ContextVar("llm_usage_judge_arm", default=None)
+
+
+@contextlib.contextmanager
+def judge_arm_scope(arm: str | None) -> Iterator[None]:
+    """Tag every :func:`record` call inside the block with the judge arm (``one`` | ``two``) for the cost A/B."""
+    token = _judge_arm.set(arm)
+    try:
+        yield
+    finally:
+        _judge_arm.reset(token)
+
+
 def current_market() -> str | None:
     return _market_id.get()
 
@@ -87,6 +100,7 @@ def record(role: str, resp: LLMResponse, *, batch: bool = False) -> None:
             "provider": resp.provider,
             "model": resp.model,
             "market_id": current_market(),
+            "judge_arm": _judge_arm.get(),
             "input_tokens": resp.input_tokens,
             "output_tokens": resp.output_tokens,
             "thinking_tokens": resp.thinking_tokens,

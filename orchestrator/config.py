@@ -143,6 +143,22 @@ def evidence_source() -> str:
     return mode
 
 
+# Judge arm: 1 judge (framing YES or NO, picked per market by hash, flipped back in code) vs 2 judges (J1 YES + J2 NO).
+JUDGE_ARM_MODE_ENV = "JUDGE_ARM_MODE"
+JUDGE_ARM_ONE = "one"
+JUDGE_ARM_TWO = "two"
+JUDGE_ARM_AB = "ab"
+DEFAULT_JUDGE_ARM_MODE = JUDGE_ARM_AB
+
+
+def judge_arm_mode() -> str:
+    """``ab`` | ``one`` | ``two`` (default ``ab``: stable per-market arm); read at call time. Unknown values raise."""
+    mode = os.environ.get(JUDGE_ARM_MODE_ENV, DEFAULT_JUDGE_ARM_MODE).strip().lower() or DEFAULT_JUDGE_ARM_MODE
+    if mode not in (JUDGE_ARM_AB, JUDGE_ARM_ONE, JUDGE_ARM_TWO):
+        raise ValueError(f"Invalid {JUDGE_ARM_MODE_ENV}={mode!r}; expected one of ['ab', 'one', 'two']")
+    return mode
+
+
 # Web search backend behind the "web" evidence arm: Brave Search + page fetch + extractor, or the gemini
 # web_searcher agent. Default: brave when BRAVE_API_KEY is set (live mode only), else gemini.
 WEB_BACKEND_ENV = "PMBOT_WEB_BACKEND"

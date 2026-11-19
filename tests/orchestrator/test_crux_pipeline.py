@@ -396,8 +396,10 @@ def test_stub_runner_full_stage_ledger_and_frontmatter_shape(monkeypatch, vault)
     assert sum(fm["source_mix"].values()) == 5 and fm["web_calls"] == 6 and fm["pipeline_flags"] == []
     meta = vault.read_research_bundle_meta("0xstub")["crux_meta"]
     assert len(meta["cruxes"]) == 5 and meta["audit_unverified"] == 5
-    # offers cite only audit-verified lines: the stub bundle has no page text, so there are none
-    assert fm["evidence_bull"] == [] and fm["evidence_bear"] == []
+    # the stub bundle has no page text, so nothing is audit-verified: cited lines fall back, marked (unverified)
+    assert len(fm["evidence_bull"]) == 3 and all(x.endswith("(unverified)") for x in fm["evidence_bull"])
+    assert fm["evidence_bear"] == []
+    assert fm["judge_arm"] == "two" and fm["judge_framing"] is None
     state = vault.read_filter_log("0xstub")["research_state"]
     assert state["pipeline"] == "crux_v1" and state["cruxes_total"] == 5
     # the same fields ride along to Phase 4

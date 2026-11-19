@@ -15,6 +15,7 @@ roles:
   scout:           {provider: openrouter, model: deepseek/deepseek-v4.1-flash}
   gap_analyzer:    {provider: openrouter, model: deepseek/deepseek-v4.1-flash}
   auditor:         {provider: openrouter, model: deepseek/deepseek-v4.1-flash}
+  source_classifier: {provider: openrouter, model: deepseek/deepseek-v4.1-flash}
   deep_researcher: {provider: gemini, model: gemini-4-hydrogen}
   post_mortem_analyst: {provider: gemini, model: gemini-4-hydrogen}
   overseer:        {provider: gemini, model: gemini-4-hydrogen}

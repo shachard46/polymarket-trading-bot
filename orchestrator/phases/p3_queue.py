@@ -42,7 +42,7 @@ from orchestrator.runner import AgentRunner, prefetch_runner, spawn_agent
 from orchestrator.scraper import market_data_pricing_error
 from orchestrator.state import InfraUnavailable, is_inactive, market_quarantine
 
-_SKIP_OUTCOMES = frozenset({"no_divergence", "sample_disagreement", "probable_misread", "no_evidence"})
+_SKIP_OUTCOMES = frozenset({"no_divergence", "sample_disagreement", "probable_misread", "no_evidence", "compound_inconsistent"})
 
 
 def _qualitative_rank_key(candidate: Phase3Candidate) -> tuple[float, str]:

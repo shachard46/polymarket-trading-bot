@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from obsidian_utils import ObsidianManager
+from orchestrator import compound as compound_mod
 from orchestrator import evidence, scraper
 from orchestrator.directives import extract_filter_directives
 from orchestrator.live_prompt import today_date
@@ -31,6 +32,17 @@ from orchestrator.phases.p3_samples import (  # noqa: F401  (re-exported; split 
 )
 from orchestrator.runner import AgentRunner
 from orchestrator.state import InfraUnavailable, vault_write_or_flag
+
+
+def _discounted_sources(samples: list[Sample]) -> list[str]:
+    """Sources the judges said they discounted (interested / unproven), deduplicated, short."""
+    out: list[str] = []
+    for s in samples:
+        for d in s[0].discounted_sources:
+            d = str(d).strip()[:120]
+            if d and d not in out:
+                out.append(d)
+    return out[:6]
 
 
 def _prepare_evidence(
@@ -205,21 +217,39 @@ def _research_market_body(
     ev_meta = vault.read_research_bundle_meta(market_id)
     ev_source = ev_meta.get("evidence_source") or evidence.AIQ  # legacy bundles were A-IQ
     ev_fallback = bool(ev_meta.get("evidence_fallback"))
-    framings = {(s[2] if len(s) > 2 else "yes") for s in samples}
-    failed = [tag for tag, framing in (("j1", "yes"), ("j2", "no")) if framing not in framings]
+    failed = p3_research.failed_judges(market_id, samples)
+    arm, plan = p3_research.judge_plan(market_id)
+    crux_meta = ev_meta.get("crux_meta")
+    spec = (crux_meta or {}).get("compound")
+    comp = compound_mod.check(samples, spec) if spec else None
     fields = p3_research.crux_fields(
-        ev_meta.get("crux_meta"), agg["spread"] if len(samples) == 2 else None, failed
+        crux_meta, agg["spread"] if len(samples) == 2 else None, failed,
+        judge_arm=arm, judge_framing=plan[0][1] if arm == "one" else None, compound=comp,
+    )
+    discounted = _discounted_sources(samples)
+    if discounted:
+        fields["discounted_sources"] = discounted
+    if comp and comp["compound_gap"] is not None:
+        log.info(
+            "[PHASE 3] compound %s for %s: combined=%.3f stated=%.3f gap=%.3f corr=%.2f",
+            comp["compound_type"], market_id, comp["compound_p"], comp["compound_stated_p"],
+            comp["compound_gap"], comp["compound_corr"],
+        )
+    knobs = extract_filter_directives(directives)
+    compound_bad = bool(
+        comp and comp["compound_gap"] is not None and comp["compound_gap"] > knobs["research_max_sample_spread"]
     )
     values = {
         "q": q, "p": agg["p"], "p_low": agg["p_low"], "p_high": agg["p_high"],
         "samples": agg["samples"], "spread": agg["spread"], "confidence": agg["confidence"],
         "evidence_source": ev_source, "evidence_fallback": ev_fallback, **fields,
     }
-    knobs = extract_filter_directives(directives)
     if shadow:
         would_skip = None
         if agg["spread"] > knobs["research_max_sample_spread"]:
             would_skip = "sample_disagreement"
+        elif compound_bad:
+            would_skip = "compound_inconsistent"
         elif q is not None and abs(agg["p"] - q) > knobs["research_max_q_gap"]:
             would_skip = "probable_misread"
         quick = quick or {}
@@ -233,6 +263,9 @@ def _research_market_body(
         return None
     if agg["spread"] > knobs["research_max_sample_spread"]:
         _skip_research(vault, row, "full", "sample_disagreement", **values)
+        return None
+    if compound_bad:
+        _skip_research(vault, row, "full", "compound_inconsistent", **values)
         return None
     if q is not None and abs(agg["p"] - q) > knobs["research_max_q_gap"]:
         _skip_research(vault, row, "full", "probable_misread", **values)

@@ -230,17 +230,22 @@ def _dr_payload(
     ask: Literal["yes", "no"] | None = None,
     crux_table: list[dict[str, Any]] | None = None,
     known_unknowns: list[str] | None = None,
+    compound: dict[str, Any] | None = None,
+    playbook: str | None = None,
+    only_ids: set[str] | None = None,
 ) -> dict[str, Any]:
+    optional = {k: v for k, v in (("compound", compound), ("playbook", playbook)) if v}
     return {
         **_text_fields(row, today),
         "mode": mode,
         "directives": directives,
         # ids + ages (+ source quality in judge mode) at render time only
-        "research_bundle": evidence.label_bundle(bundle, today, quality=mode == "judge"),
+        "research_bundle": evidence.label_bundle(bundle, today, quality=mode == "judge", only_ids=only_ids),
         "system_override": system_override,
         "format_validation_error": None,
         "session_tag": session_tag,
         "ask": ask,
         "crux_table": crux_table,
         "known_unknowns": known_unknowns,
+        **optional,  # only when set: a compound spec / category playbook (optional payload keys)
     }

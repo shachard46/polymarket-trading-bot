@@ -1,0 +1,12 @@
+id: source_classifier
+description: Source classifier — one batched call tags unknown web domains with a reliability tier (price-blind, cached by the Hub).
+model: null
+tools:
+  allow: []
+input_schema:
+  market_id: string
+  domains: list[str]
+output_schema:
+  market_id: string
+  domains: list[dict]
+  error: "string | null"

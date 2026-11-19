@@ -105,6 +105,11 @@ def brier_by_evidence_source(rows: list[dict[str, Any]]) -> dict[str, tuple[int,
     return _brier_by_field(rows, "evidence_source")
 
 
+def brier_by_judge_arm(rows: list[dict[str, Any]]) -> dict[str, tuple[int, float, float]]:
+    """``{judge_arm: (n, brier_p, brier_p - brier_q)}`` over resolved scored markets (``one`` vs ``two`` judges)."""
+    return _brier_by_field(rows, "judge_arm")
+
+
 def brier_by_runner_backend(rows: list[dict[str, Any]]) -> dict[str, tuple[int, float, float]]:
     """``{runner_backend: (n, brier_p, brier_p - brier_q)}`` over resolved scored markets."""
     return _brier_by_field(rows, "runner_backend")

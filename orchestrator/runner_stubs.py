@@ -119,6 +119,14 @@ def _auditor_stub(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _source_classifier_stub(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "market_id": payload.get("market_id", "stub"),
+        "domains": [{"domain": d, "tier": "unknown"} for d in payload.get("domains") or []],
+        "error": None,
+    }
+
+
 def _web_searcher_stub(payload: dict[str, Any]) -> dict[str, Any]:
     today = payload.get("today", "")
     return {
@@ -175,6 +183,10 @@ def _deep_researcher_stub(payload: dict[str, Any]) -> dict[str, Any]:
     }
     if payload.get("mode") == "judge":
         out["base_rate"] = None
+        spec = payload.get("compound")
+        if spec:  # compound market: components consistent with the stated P(YES) (independent, AND/OR of equal parts)
+            out["components"] = [{"id": c["id"], "p": STUB_ESTIMATED_P} for c in spec.get("components") or []]
+            out["correlation"] = 0.0
         out["crux_verdicts"] = [
             {"crux_id": c.get("crux_id"), "direction": "yes", "cited": list(c.get("evidence_ids") or [])[:1],
              "note": "stub"}
@@ -219,6 +231,7 @@ STUB_RESPONSES: dict[str, StubBuilder] = {
     "briefer": _briefer_stub,
     "gap_analyzer": _gap_analyzer_stub,
     "auditor": _auditor_stub,
+    "source_classifier": _source_classifier_stub,
     "web_searcher": _web_searcher_stub,
     "web_extractor": _web_extractor_stub,
     "deep_researcher": _deep_researcher_stub,

@@ -145,6 +145,14 @@ class ResearchFrontmatter(BaseModel):
     source_mix: dict[str, int] = {}
     pipeline_flags: list[str] = []  # degraded stages (scout_failed, gap_failed, audit_failed, judge_failed:j2, ...)
     web_calls: Optional[int] = None
+    judge_arm: Optional[str] = None  # "one" | "two" (judge cost A/B)
+    judge_framing: Optional[str] = None  # framing of the single judge ("yes" | "no"); null with two judges
+    compound_type: Optional[str] = None  # "and" | "or" for a compound market
+    compound_p: Optional[float] = None  # P(YES) combined in code from the judge's component probabilities
+    compound_stated_p: Optional[float] = None  # the judge's stated P(YES) for the same sample(s)
+    compound_gap: Optional[float] = None
+    compound_corr: Optional[float] = None
+    discounted_sources: list[str] = []  # interested / unproven sources the judge discounted
     evidence_bull: list[str] = []  # verbatim audit-verified lines the judge cited for YES (offer evidence)
     evidence_bear: list[str] = []  # ... and for NO
     status: Optional[str] = None
