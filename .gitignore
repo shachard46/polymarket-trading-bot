@@ -29,3 +29,5 @@ polymarket.db-wal
 agents/
 # Blueprint sessions shouldn't be tracked
 agents_blueprint/**/sessions/
+# Runtime vault (stub/live run output)
+Vault/
