@@ -7,11 +7,13 @@ implement ``_send`` (one provider call) and ``_is_retryable``.
 from __future__ import annotations
 
 import abc
+import contextlib
+import contextvars
 import logging
 import os
 import time
 from dataclasses import dataclass
-from typing import Any, ClassVar, Sequence
+from typing import Any, ClassVar, Iterator, Sequence
 
 from orchestrator.config import (
     DEFAULT_DIRECT_MAX_TOKENS,
@@ -37,6 +39,7 @@ class LLMResponse:
     input_tokens: int | None = None
     output_tokens: int | None = None
     citations: list[str] | None = None  # URLs the provider's web tool retrieved (None = unknown)
+    thinking_tokens: int | None = None  # thinking part of output_tokens (already included there); None = unknown
 
 
 @dataclass
@@ -48,6 +51,20 @@ class LLMRequest:
     json_mode: bool = False
     web: bool = False
     market_id: str | None = None  # usage attribution (usage.market_scope)
+    reasoning: bool | None = None  # per-call override of the role's reasoning (False = lowest thinking)
+
+
+# Per-call reasoning override (set by complete() and batch submit; wins over the role's reasoning).
+_reasoning_override: contextvars.ContextVar[bool | None] = contextvars.ContextVar("llm_reasoning", default=None)
+
+
+@contextlib.contextmanager
+def reasoning_scope(reasoning: bool | None) -> Iterator[None]:
+    token = _reasoning_override.set(reasoning)
+    try:
+        yield
+    finally:
+        _reasoning_override.reset(token)
 
 
 def _usage_record(role: str | None, resp: LLMResponse, batch: bool) -> None:
@@ -84,6 +101,11 @@ class LLM(abc.ABC):
         self.role: str | None = None  # set by routing.llm_for (usage attribution)
         self.batch_enabled = True  # routing sets this from the role's `batch` flag in models.yaml
 
+    def _reasoning(self) -> bool | None:
+        """Effective reasoning flag: the per-call override if set, else the role's."""
+        override = _reasoning_override.get()
+        return self.reasoning if override is None else override
+
     @classmethod
     def check_key(cls) -> None:
         """Raise :class:`LLMError` unless this provider's API key env var is set."""
@@ -102,15 +124,20 @@ class LLM(abc.ABC):
         """True for transient failures (connection, rate limit, 5xx)."""
 
     def complete(
-        self, system: str, user: str, *, json_mode: bool = False, web: bool = False
+        self, system: str, user: str, *, json_mode: bool = False, web: bool = False,
+        reasoning: bool | None = None,
     ) -> LLMResponse:
-        """Run one completion with retry/backoff on transient errors; failures raise :class:`LLMError`."""
+        """Run one completion with retry/backoff on transient errors; failures raise :class:`LLMError`.
+
+        reasoning=False lowers thinking for this call only (providers without the knob ignore it).
+        """
         attempts = llm_max_attempts()
         backoff = llm_retry_backoff()
         label = f"{self.provider_name}:{self.model}"
         for attempt in range(1, attempts + 1):
             try:
-                resp = self._send(system, user, json_mode, web)
+                with reasoning_scope(reasoning):
+                    resp = self._send(system, user, json_mode, web)
             except LLMError:
                 raise
             except Exception as exc:  # noqa: BLE001 - classified below
@@ -148,7 +175,8 @@ class LLM(abc.ABC):
     def _complete_one(self, req: LLMRequest) -> LLMResponse | LLMError:
         try:
             with _market_scope(req.market_id):
-                return self.complete(req.system, req.user, json_mode=req.json_mode, web=req.web)
+                return self.complete(req.system, req.user, json_mode=req.json_mode, web=req.web,
+                                     reasoning=req.reasoning)
         except LLMError as exc:
             return exc
 

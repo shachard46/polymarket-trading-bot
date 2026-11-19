@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Sequence
 
-from orchestrator.llm.base import LLMError, LLMRequest, LLMResponse
+from orchestrator.llm.base import LLMError, LLMRequest, LLMResponse, reasoning_scope
 from orchestrator.llm.http_llm import HttpLLM, HttpStatusError
 
 log = logging.getLogger(__name__)
@@ -29,7 +29,7 @@ class GeminiLLM(HttpLLM):
         gen_cfg: dict[str, Any] = {"maxOutputTokens": self.max_tokens}
         if self.temperature is not None:
             gen_cfg["temperature"] = self.temperature
-        if self.reasoning is False:
+        if self._reasoning() is False:
             # Lowest thinking level the model supports ("minimal" is not supported on Gemini 4 models).
             level = "low" if "gemini-4" in self.model else "minimal"
             gen_cfg["thinkingConfig"] = {"thinkingLevel": level}
@@ -50,13 +50,11 @@ class GeminiLLM(HttpLLM):
         return self.model[len("models/"):] if self.model.startswith("models/") else self.model
 
     def _batch_submit(self, requests: Sequence[LLMRequest]) -> Any:
-        reqs = [
-            {
-                "request": self._body(r.system, r.user, r.json_mode, r.web),
-                "metadata": {"key": f"k{i}"},
-            }
-            for i, r in enumerate(requests)
-        ]
+        reqs = []
+        for i, r in enumerate(requests):
+            with reasoning_scope(r.reasoning):
+                body = self._body(r.system, r.user, r.json_mode, r.web)
+            reqs.append({"request": body, "metadata": {"key": f"k{i}"}})
         body = {
             "batch": {
                 "display_name": f"pmbot-{self.role or 'llm'}-{len(reqs)}",
@@ -167,6 +165,7 @@ class GeminiLLM(HttpLLM):
             model=self.model,
             input_tokens=inp,
             output_tokens=out,
+            thinking_tokens=usage.get("thoughtsTokenCount"),
             citations=_grounding_urls(cand) if "groundingMetadata" in cand else None,
         )
 

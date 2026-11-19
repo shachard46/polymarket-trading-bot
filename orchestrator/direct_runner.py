@@ -56,10 +56,15 @@ def run_direct(role: str, spec: dict[str, Any], payload: dict[str, Any]) -> str:
     with usage.market_scope(payload.get("market_id")):
         resp = routing.llm_for(role).complete(
             spec.get("system_prompt") or "", _live_prompt(role, spec, payload),
-            json_mode=_json_mode(spec), web=_web_for(spec),
+            json_mode=_json_mode(spec), web=_web_for(spec), reasoning=_reasoning_for(payload),
         )
     _last_call.set((getattr(resp, "citations", None), getattr(resp, "model", None)))
     return resp.text
+
+
+def _reasoning_for(payload: dict[str, Any]) -> bool | None:
+    """Quick-mode calls (deep_researcher) use the lowest thinking level; everything else the role default."""
+    return False if payload.get("mode") == "quick" else None
 
 
 def _json_mode(spec: dict[str, Any]) -> bool:
@@ -82,6 +87,7 @@ def run_many(role: str, spec: dict[str, Any], payloads: list[dict[str, Any]]) ->
         LLMRequest(
             spec.get("system_prompt") or "", _live_prompt(role, spec, p),
             json_mode=_json_mode(spec), web=_web_for(spec), market_id=p.get("market_id"),
+            reasoning=_reasoning_for(p),
         )
         for p in payloads
     ]

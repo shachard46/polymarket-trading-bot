@@ -89,6 +89,7 @@ def record(role: str, resp: LLMResponse, *, batch: bool = False) -> None:
             "market_id": current_market(),
             "input_tokens": resp.input_tokens,
             "output_tokens": resp.output_tokens,
+            "thinking_tokens": resp.thinking_tokens,
             "batch": bool(batch),
             "cost_usd": compute_cost(resp.provider, resp.model, resp.input_tokens, resp.output_tokens, batch=batch),
         }

@@ -7,7 +7,7 @@ import logging
 from typing import Any, Sequence
 
 from orchestrator.config import openrouter_base_url
-from orchestrator.llm.base import LLMError, LLMRequest, LLMResponse
+from orchestrator.llm.base import LLMError, LLMRequest, LLMResponse, reasoning_scope
 from orchestrator.llm.http_llm import HttpLLM, HttpStatusError
 
 
@@ -45,7 +45,7 @@ class OpenRouterLLM(HttpLLM):
         }
         if self.temperature is not None:
             body["temperature"] = self.temperature
-        if self.reasoning is False:  # documented: reasoning.enabled=false (effort "none" is rejected by some models)
+        if self._reasoning() is False:  # documented: reasoning.enabled=false (effort "none" is rejected by some models)
             body["reasoning"] = {"enabled": False}
         if json_mode:
             body["response_format"] = {"type": "json_object"}
@@ -58,7 +58,8 @@ class OpenRouterLLM(HttpLLM):
     def _batch_submit(self, requests: Sequence[LLMRequest]) -> Any:
         reqs = []
         for i, r in enumerate(requests):
-            body = self._body(r.system, r.user, r.json_mode, r.web)
+            with reasoning_scope(r.reasoning):
+                body = self._body(r.system, r.user, r.json_mode, r.web)
             body.pop("model", None)  # the batch-level model applies
             reqs.append({"custom_id": f"req-{i}", "body": body})
         # Key order matters: endpoint and model must precede requests or the API answers 400.
@@ -75,7 +76,16 @@ class OpenRouterLLM(HttpLLM):
         return data
 
     def _batch_poll(self, handle: Any) -> str:
-        return _BATCH_STATES.get(str(self._batch_get(handle).get("status") or "").lower(), "pending")
+        try:
+            status = str(self._batch_get(handle).get("status") or "").lower()
+        except Exception as exc:  # noqa: BLE001
+            # 404 right after a 202 is read-after-write lag; transient errors stay pending too
+            # (base turns any poll exception into "failed"). PMBOT_LLM_BATCH_MAX_WAIT_SEC bounds the wait.
+            if (isinstance(exc, HttpStatusError) and exc.status == 404) or self._is_retryable(exc):
+                log.info("[LLM] openrouter:%s batch poll transient (%s); still pending", self.model, exc)
+                return "pending"
+            raise
+        return _BATCH_STATES.get(status, "pending")
 
     def _batch_fetch(self, handle: Any, count: int) -> list[LLMResponse | LLMError | None]:
         label = f"{self.provider_name}:{self.model}"
@@ -122,11 +132,14 @@ class OpenRouterLLM(HttpLLM):
         except (KeyError, IndexError, TypeError, AttributeError) as exc:
             raise HttpStatusError(502, "response has no choices[0].message") from exc
         usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+        details = usage.get("completion_tokens_details")
+        thinking = details.get("reasoning_tokens") if isinstance(details, dict) else None
         return LLMResponse(
             content if isinstance(content, str) else "",
             self.provider_name, self.model,
             usage.get("prompt_tokens"), usage.get("completion_tokens"),
             citations=_citations(message),
+            thinking_tokens=thinking if isinstance(thinking, int) else None,
         )
 
 

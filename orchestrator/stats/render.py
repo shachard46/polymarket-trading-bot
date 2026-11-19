@@ -253,9 +253,11 @@ def _render_cost(s: dict[str, Any]) -> list[str]:
     L += [f"Today: **{c['today']:.4f} USD**; all time: {c['total']:.4f} USD over {c['n_calls']} calls.", "",
           "| day | cost USD |", "|---|---|"]
     L += [f"| {d} | {v:.4f} |" for d, v in c["per_day"].items()]
-    for title, key in (("role", "by_role"), ("model", "by_model")):
-        L += ["", f"### Cost by {title}", "", f"| {title} | cost USD |", "|---|---|"]
-        L += [f"| {k} | {v:.4f} |" for k, v in c[key].items()]
+    think = c.get("thinking_by_role") or {}
+    L += ["", "### Cost by role", "", "| role | cost USD | thinking tokens |", "|---|---|---|"]
+    L += [f"| {k} | {v:.4f} | {think.get(k, 0)} |" for k, v in c["by_role"].items()]
+    L += ["", "### Cost by model", "", "| model | cost USD |", "|---|---|"]
+    L += [f"| {k} | {v:.4f} |" for k, v in c["by_model"].items()]
     L += ["", "### Cost per researched market", "", "| market | cost USD |", "|---|---|"]
     L += [f"| {k} | {v:.4f} |" for k, v in sorted(c["by_market"].items(), key=lambda kv: -kv[1])]
     L += ["", "### Brier per dollar (by model)", "",

@@ -42,7 +42,7 @@ def test_record_writes_row_with_scope(tmp_path, monkeypatch):
     r0, r1 = _rows(tmp_path)
     assert r0["market_id"] is None and r0["cost_usd"] == 4.5 and r0["batch"] is False
     assert r1["market_id"] == "0xabc" and r1["cost_usd"] == 2.25 and r1["batch"] is True
-    assert set(r1) == {"ts", "role", "provider", "model", "market_id", "input_tokens", "output_tokens", "batch", "cost_usd"}
+    assert set(r1) == {"ts", "role", "provider", "model", "market_id", "input_tokens", "output_tokens", "thinking_tokens", "batch", "cost_usd"}
 
 
 def test_record_never_raises(tmp_path, monkeypatch):

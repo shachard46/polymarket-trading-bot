@@ -83,3 +83,29 @@ def test_cancel_is_noop(llm, monkeypatch):
     monkeypatch.setattr(llm, "_get", boom)
     monkeypatch.setattr(llm, "_request", boom)
     llm._batch_cancel({"id": "batch_1"})
+
+
+def test_poll_transient_errors_stay_pending(llm, monkeypatch):
+    from orchestrator.llm.http_llm import HttpStatusError
+
+    for status, pending in ((404, True), (429, True), (503, True), (400, False)):
+        def boom(url, headers, s=status):
+            raise HttpStatusError(s, "x")
+
+        monkeypatch.setattr(llm, "_get", boom)
+        if pending:
+            assert llm._batch_poll({"id": "b"}) == "pending"
+        else:
+            with pytest.raises(HttpStatusError):
+                llm._batch_poll({"id": "b"})
+
+
+def test_missing_nullable_error_defaults_to_none():
+    from orchestrator.schema_validation import AgentSchemaError, build_model, validate_payload
+
+    m = build_model("T", {"market_id": "string", "error": "string | null"})
+    validate_payload("t", "output", m, {"market_id": "x"})  # no error key: ok
+    assert m.model_validate({"market_id": "x"}).error is None
+    assert m.model_validate({"market_id": "x", "error": "boom"}).error == "boom"
+    with pytest.raises(AgentSchemaError):
+        validate_payload("t", "output", m, {"error": None})  # other fields still required

@@ -76,7 +76,9 @@ def build_model(name: str, schema: Any) -> Optional[Type[BaseModel]]:
     fields: dict[str, tuple[Any, Any]] = {}
     for key, decl in schema.items():
         py_type = _resolve_type(decl)
-        fields[key] = (py_type, ...)
+        # A missing "error" is no error: nullable ``error`` defaults to None (a non-null value still counts).
+        optional_error = key == "error" and getattr(py_type, "__origin__", None) is not None and type(None) in py_type.__args__
+        fields[key] = (py_type, None if optional_error else ...)
     return create_model(  # type: ignore[call-overload]
         name,
         __config__=ConfigDict(extra="allow", strict=True),
