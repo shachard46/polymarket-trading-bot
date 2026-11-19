@@ -1,0 +1,13 @@
+id: auditor
+description: Citation auditor — checks that each evidence line's fact is really stated in its cited page text (price-blind).
+model: null
+tools:
+  allow: []
+input_schema:
+  market_id: string
+  today: string
+  items: list[dict]
+output_schema:
+  market_id: string
+  verdicts: list[dict]
+  error: "string | null"

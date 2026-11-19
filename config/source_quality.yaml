@@ -1,0 +1,45 @@
+# Source quality tiers by domain (editable). A bundle line gets the tier of its URL's domain, next to its age label.
+# Domains match themselves and any subdomain. Tiers: official, major, aggregator, blog, unknown.
+# A domain not listed here falls back to a heuristic (see orchestrator/source_quality.py), else "unknown".
+official:
+  - sec.gov
+  - federalreserve.gov
+  - whitehouse.gov
+  - congress.gov
+  - europa.eu
+  - un.org
+  - who.int
+  - bls.gov
+  - fda.gov
+major:
+  - reuters.com
+  - apnews.com
+  - bloomberg.com
+  - ft.com
+  - wsj.com
+  - nytimes.com
+  - washingtonpost.com
+  - bbc.com
+  - bbc.co.uk
+  - theguardian.com
+  - cnbc.com
+  - economist.com
+  - politico.com
+  - espn.com
+aggregator:
+  - wikipedia.org
+  - investopedia.com
+  - fandom.com
+  - yahoo.com
+  - msn.com
+  - newsbreak.com
+blog:
+  - medium.com
+  - substack.com
+  - blogspot.com
+  - wordpress.com
+  - reddit.com
+  - quora.com
+  - x.com
+  - twitter.com
+  - facebook.com

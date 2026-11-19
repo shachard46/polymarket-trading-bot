@@ -114,7 +114,7 @@ def test_poisoned_bundle_is_replanned_and_refetched(vault, monkeypatch):
         return briefer_ok(payload) if role == "briefer" else deep_researcher_complete(payload)
 
     out = phases._research_market(vault, runner, _row("m-p"), "d")
-    assert out is not None and roles[0] == "briefer" and fetched
+    assert out is not None and "briefer" in roles and fetched
     assert any(e["research_data"] == "real" for e in vault.read_research_bundle("m-p"))
 
 
@@ -143,32 +143,6 @@ def test_refresh_always_plans_and_replaces_stale_rows(vault, monkeypatch):
         return briefer_ok(payload) if role == "briefer" else deep_researcher_complete(payload)
 
     phases._research_market(vault, runner, _row("m-e"), "d", refresh=True)
-    assert roles[0] == "briefer"
+    assert "briefer" in roles
     data = [e["research_data"] for e in vault.read_research_bundle("m-e")]
     assert data and set(data) == {"FRESH"}
-
-
-def test_forced_synthesis_fetches_last_pending_queries(vault, monkeypatch):
-    fetched: list[str] = []
-
-    def fetch(qs):
-        fetched.extend(qs)
-        return [{"query": q, "research_data": "d", "error": None} for q in qs]
-
-    monkeypatch.setattr(p3_evidence, "fetch_research_bundle", fetch)
-    n = {"i": 0}
-    forced_bundle: list[Any] = []
-
-    def runner(role, payload):
-        if role == "briefer":
-            return briefer_ok(payload)
-        if payload.get("system_override"):
-            forced_bundle.extend(e["query"] for e in payload["research_bundle"])
-            return deep_researcher_complete(payload)
-        n["i"] += 1
-        return {"status": "needs_more_data", "new_queries": [f"follow-up {n['i']}"]}
-
-    phases._research_market(vault, runner, _row("m-f"), "d")
-    last = f"follow-up {n['i']}"
-    assert n["i"] == 2  # one round + one follow-up round, then forced synthesis
-    assert last in fetched and last in forced_bundle

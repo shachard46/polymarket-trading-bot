@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import shutil
 from datetime import datetime, timezone
@@ -14,9 +15,12 @@ from config.trading_constants import (
     F_MAX,
     BOUNDS,
     FILTERS,
+    RESEARCH_PIPELINE,
 )
 
 from .schemas import DirectivesPayload, VaultWriteError, _atomic_write_text, _dump_frontmatter
+
+log = logging.getLogger(__name__)
 
 _DIRECTIVES_FILENAME = "active_directives.md"
 
@@ -182,12 +186,47 @@ class DirectivesMixin:
         directives_path = self._dirs["system"] / _DIRECTIVES_FILENAME
         if directives_path.exists() and directives_path.stat().st_size > 0:
             self._migrate_directives_version()
+            self._migrate_research_pipeline()
             return False
 
         seed_content = _build_seed_directives()
         directives_path.parent.mkdir(parents=True, exist_ok=True)
         self._install_directives(seed_content, 1)
         return True
+
+    def _migrate_research_pipeline(self) -> None:
+        """Bump the directives version once when the research pipeline changes (a new Brier cohort).
+
+        ``research_max_sample_spread`` changed meaning with ``crux_v1`` (the gap between the J1 and flipped
+        J2 judges, not the spread of 3 samples), so scores before and after must not share a directives version.
+        The knobs are untouched; the frontmatter records the pipeline and a note, and the old file is archived.
+        """
+        from orchestrator.research import split_yaml_frontmatter_markdown  # noqa: PLC0415
+
+        text = self.read_directives()
+        try:
+            fm, _ = split_yaml_frontmatter_markdown(text)
+        except ValueError:
+            return
+        if fm.get("research_pipeline") == RESEARCH_PIPELINE:
+            return
+        try:
+            self.write_directives(
+                {
+                    "new_directives_markdown": text,
+                    "rationale": f"Hub migration: research pipeline {RESEARCH_PIPELINE} (new scoring cohort; knobs unchanged).",
+                },
+                enforce_bounds=False,
+                meta={
+                    "research_pipeline": RESEARCH_PIPELINE,
+                    "pipeline_note": (
+                        f"{RESEARCH_PIPELINE}: research_max_sample_spread now bounds the gap between the "
+                        "J1 (P(YES)) and flipped J2 (P(NO)) judges; version bumped, knob values unchanged."
+                    ),
+                },
+            )
+        except Exception:  # noqa: BLE001 - a migration must never stop the daemon
+            log.exception("could not stamp directives with research_pipeline=%s", RESEARCH_PIPELINE)
 
     def _migrate_directives_version(self) -> None:
         """Rewrite a legacy non-integer ``version`` (e.g. ``"0.1-seed"``) as integer 1."""
@@ -230,6 +269,7 @@ version: 1
 knob_last_changed: {{}}
 seeded_at: "{now_iso}"
 overseer_updated: false
+research_pipeline: {RESEARCH_PIPELINE}
 ---"""
 
     body = f"""\

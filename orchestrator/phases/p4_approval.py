@@ -18,7 +18,7 @@ from orchestrator.phases.common import (
     log,
 )
 from orchestrator.phases.p4_execution import (
-    _INDEP_KEYS,
+    _CRUX_KEYS,
     _persist_trade,
     _phase4_quotes,
     _place_trade,
@@ -44,7 +44,7 @@ def _park_offer(
     resume = {
         "row": {
             k: row.get(k)
-            for k in ("p_value", "p_low", "p_high", "evidence_source", "evidence_fallback", *_INDEP_KEYS)
+            for k in ("p_value", "p_low", "p_high", "evidence_source", "evidence_fallback", *_CRUX_KEYS)
             if row.get(k) is not None
         },
         "market_fields": _ledger_market_fields(market_data, role="deep_researcher"),
@@ -92,7 +92,7 @@ def _offer_row_fields(offer: dict[str, Any], **override: Any) -> dict[str, Any]:
         "expires_at": offer.get("expires_at"),
         "evidence_source": row.get("evidence_source"),
         "evidence_fallback": row.get("evidence_fallback"),
-        **{k: row[k] for k in _INDEP_KEYS if row.get(k) is not None},
+        **{k: row[k] for k in _CRUX_KEYS if row.get(k) is not None},
         "lam": resume.get("lam"),
         "min_edge": resume.get("min_edge"),
         **(resume.get("market_fields") or {}),
@@ -149,7 +149,7 @@ def _approve_offer(vault: ObsidianManager, offer: dict[str, Any]) -> str:
         "p_value": stored.get("p_value", offer.get("p")),
         "p_low": stored.get("p_low"),
         "p_high": stored.get("p_high"),
-        **{k: v for k, v in stored.items() if k in ("evidence_source", "evidence_fallback", *_INDEP_KEYS)},
+        **{k: v for k, v in stored.items() if k in ("evidence_source", "evidence_fallback", *_CRUX_KEYS)},
         "market_data": market_data,
     }
     allocation = compute_allocation(

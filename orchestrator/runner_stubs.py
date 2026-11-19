@@ -55,18 +55,66 @@ def _stub_deep_researcher_markdown(
     )
 
 
+def _scout_stub(payload: dict[str, Any]) -> dict[str, Any]:
+    title = str(payload.get("title", "")).strip()
+    return {
+        "market_id": payload.get("market_id", "stub"),
+        "event": f"stub landscape for {title}",
+        "deciding_actors": ["stub actor"],
+        "resolution_source": payload.get("resolution_source"),
+        "scheduled": [],
+        "contested": [],
+        "main_sources": ["example.org"],
+        "error": None,
+    }
+
+
 def _briefer_stub(payload: dict[str, Any]) -> dict[str, Any]:
     title = str(payload.get("title", "")).strip()
     today = payload.get("today", "")
     slots = (
-        "resolution criteria and polarity",
-        "reference class base rate",
-        "current state",
-        "strongest disconfirming evidence",
+        ("mechanism", "how and when it resolves"),
+        ("comparator", "reference class base rate"),
+        ("evidence", "current state"),
+        ("horizon", "catalysts before the end date"),
+        ("skeptic", "strongest case against"),
     )
+    if payload.get("depth") == "lite":
+        slots = slots[:4]
     return {
         "market_id": payload.get("market_id", "stub"),
-        "research_queries": [f"stub {slot} for {title} as of {today}" for slot in slots],
+        "cruxes": [
+            {
+                "role": role,
+                "question": f"stub {what} for {title}?",
+                "queries": [f"stub {what} for {title} as of {today}"],
+                "moves_p_if": "stub: a yes answer pushes p up",
+            }
+            for role, what in slots
+        ],
+        "error": None,
+    }
+
+
+def _gap_analyzer_stub(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "market_id": payload.get("market_id", "stub"),
+        "assessments": [
+            {"crux_id": c.get("crux_id"), "status": "answered", "missing": ""}
+            for c in payload.get("cruxes") or []
+        ],
+        "follow_up_queries": [],
+        "error": None,
+    }
+
+
+def _auditor_stub(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "market_id": payload.get("market_id", "stub"),
+        "verdicts": [
+            {"id": it.get("id"), "supported": True, "reason": "stub: supported"}
+            for it in payload.get("items") or []
+        ],
         "error": None,
     }
 
@@ -108,20 +156,31 @@ def _web_extractor_stub(payload: dict[str, Any]) -> dict[str, Any]:
 def _deep_researcher_stub(payload: dict[str, Any]) -> dict[str, Any]:
     market_id = payload.get("market_id", "stub")
     today = payload.get("today") or "2026-01-01"
-    return {
+    p, low, high = STUB_ESTIMATED_P, STUB_P_LOW, STUB_P_HIGH
+    if payload.get("ask") == "no":  # judge J2: the probability of NO (the complement of the YES stub)
+        p, low, high = round(1 - p, 6), round(1 - STUB_P_HIGH, 6), round(1 - STUB_P_LOW, 6)
+    out: dict[str, Any] = {
         "status": "complete",
         "market_id": market_id,
-        "estimated_p": STUB_ESTIMATED_P,
-        "p_low": STUB_P_LOW,
-        "p_high": STUB_P_HIGH,
+        "estimated_p": p,
+        "p_low": low,
+        "p_high": high,
         "confidence": "medium",
         "resolution_checklist": ["stub: YES requires the titled event"],
         "key_assumptions": ["stub assumption"],
         "as_of": today,
         "markdown": _stub_deep_researcher_markdown(
-            market_id, p_low=STUB_P_LOW, p_high=STUB_P_HIGH
+            market_id, estimated_p=p, p_low=low, p_high=high
         ),
     }
+    if payload.get("mode") == "judge":
+        out["base_rate"] = None
+        out["crux_verdicts"] = [
+            {"crux_id": c.get("crux_id"), "direction": "yes", "cited": list(c.get("evidence_ids") or [])[:1],
+             "note": "stub"}
+            for c in payload.get("crux_table") or []
+        ]
+    return out
 
 
 def _post_mortem_stub(payload: dict[str, Any]) -> dict[str, Any]:
@@ -156,7 +215,10 @@ def _overseer_stub(payload: dict[str, Any]) -> dict[str, Any]:
 
 STUB_RESPONSES: dict[str, StubBuilder] = {
     "triage": _triage_stub,
+    "scout": _scout_stub,
     "briefer": _briefer_stub,
+    "gap_analyzer": _gap_analyzer_stub,
+    "auditor": _auditor_stub,
     "web_searcher": _web_searcher_stub,
     "web_extractor": _web_extractor_stub,
     "deep_researcher": _deep_researcher_stub,

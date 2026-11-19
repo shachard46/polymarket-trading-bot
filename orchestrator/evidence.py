@@ -20,7 +20,6 @@ from config.trading_constants import (
     BRAVE_QUERY_WORKERS,
     EVIDENCE_STALE_DAYS,
     GEMINI_QUERY_WORKERS,
-    INDEP_SAMPLE_RATE,
     SHADOW_RATE,
 )
 from orchestrator import brave_search, config
@@ -62,15 +61,6 @@ def is_shadow(market_id: str) -> bool:
     """
     digest = hashlib.sha256(("shadow:" + str(market_id)).encode("utf-8")).hexdigest()
     return int(digest[:8], 16) / 2**32 < SHADOW_RATE
-
-
-def is_indep_sample(market_id: str) -> bool:
-    """Stable ~INDEP_SAMPLE_RATE selection for the measure-only independent-evidence sample.
-
-    Salted hash prefix: independent of :func:`ab_arm` and :func:`is_shadow`.
-    """
-    digest = hashlib.sha256(("indep:" + str(market_id)).encode("utf-8")).hexdigest()
-    return int(digest[:8], 16) / 2**32 < INDEP_SAMPLE_RATE
 
 
 def intended_source(market_id: str) -> str:
@@ -296,6 +286,7 @@ def _fetch_web_rows_once(
 # ---- Brave backend --------------------------------------------------------------------------------
 
 BRAVE_MODEL = "brave+web_extractor"
+PAGES_KEY = "pages"  # in-memory only: [{url, text}] the extractor read for this row
 _UNKNOWN_DATE_TAIL_RE = re.compile(r"\|\s*unknown\s*$", re.IGNORECASE)
 
 
@@ -330,12 +321,14 @@ def _brave_one(
     row = {**row, "pages_fetched": len(pages)}
     if row.get("error") or not str(row.get("research_data") or "").strip():
         return row
+    # page text rides along in memory only (the auditor reads it); callers strip it before persisting
+    page_texts = [{"url": p.url, "text": p.text} for p in pages]
     ages = {normalize_url(p.url): p.page_age for p in pages if p.page_age}
     row["research_data"] = _fill_dates(row["research_data"], ages)
     # the pages handed to the extractor are exactly the retrieved set: airtight citation guard
     (row,), counts = filter_rows([row], [p.url for p in pages], strict=True)
     _record_filter(market_id, BRAVE_MODEL, counts)
-    return row
+    return {**row, PAGES_KEY: page_texts}
 
 
 def _brave_rows(
@@ -369,40 +362,104 @@ def _line_age_days(line: str, today: date | None) -> int | None:
         return None
 
 
-def label_bundle(bundle: list[dict[str, Any]], today: str) -> list[dict[str, Any]]:
+def _today_date(today: str) -> date | None:
+    try:
+        return date.fromisoformat(str(today)[:10])
+    except ValueError:
+        return None
+
+
+def _row_lines(row: dict[str, Any]) -> list[str] | None:
+    """The row's text lines, or ``None`` for an error/empty row (never labelled)."""
+    data = str(row.get("research_data") or "")
+    if row.get("error") or not data.strip():
+        return None
+    return data.splitlines()
+
+
+def _is_evidence_line(line: str) -> bool:
+    return bool(line.strip()) and not line.strip().startswith(_NO_LABEL_PREFIXES)
+
+
+def line_url(line: str) -> str | None:
+    m = _URL_RE.search(line)
+    return normalize_url(m.group(0)) if m else None
+
+
+def _label(n: int, age: int | None, quality: str | None, unverified: bool) -> str:
+    """``[E<n> | <age>d | STALE | <quality> | unverified]``; the tags after the age appear only with a quality tag."""
+    parts = [f"E{n}", "undated" if age is None else f"{age}d"]
+    if age is not None and age > EVIDENCE_STALE_DAYS:
+        parts.append("STALE")
+    if quality is not None:
+        parts.append(quality)
+    if quality is not None and unverified:
+        parts.append("unverified")
+    return "[" + " | ".join(parts) + "]"
+
+
+def label_bundle(
+    bundle: list[dict[str, Any]], today: str, *, quality: bool = False
+) -> list[dict[str, Any]]:
     """Copy of ``bundle`` whose evidence lines carry ``[E<n> | <age>d]`` / ``[E<n> | undated]`` labels.
 
     Rendering only: stored bundles are never mutated. Ids run across the whole bundle. The age is days between
     ``today`` and the line's trailing ``| YYYY-MM-DD`` field; lines with no such date (all A-IQ prose) are
     ``undated``. Age above ``EVIDENCE_STALE_DAYS`` adds ``STALE``. Error rows and empty/NOT_FOUND/marker lines
-    are left unlabelled.
+    are left unlabelled. With ``quality=True`` each label also carries the source-quality tag of the line's URL
+    (``unknown`` with no URL) and ``unverified`` unless the audit verified that line (row key ``verified``: line indexes).
     """
-    try:
-        today_d: date | None = date.fromisoformat(str(today)[:10])
-    except ValueError:
-        today_d = None
+    from orchestrator.source_quality import quality_for  # noqa: PLC0415 - keeps yaml load off the import path
+
+    today_d = _today_date(today)
     n = 0
     out = []
     for row in bundle or []:
-        data = str(row.get("research_data") or "")
-        if row.get("error") or not data.strip():
+        src = _row_lines(row)
+        if src is None:
             out.append(row)
             continue
         lines = []
-        for line in data.splitlines():
-            if not line.strip() or line.strip().startswith(_NO_LABEL_PREFIXES):
+        verified = set(row.get("verified") or [])
+        for li, line in enumerate(src):
+            if not _is_evidence_line(line):
                 lines.append(line)
                 continue
             n += 1
-            age = _line_age_days(line, today_d)
-            if age is None:
-                label = f"[E{n} | undated]"
-            elif age > EVIDENCE_STALE_DAYS:
-                label = f"[E{n} | {age}d | STALE]"
-            else:
-                label = f"[E{n} | {age}d]"
-            lines.append(f"{label} {line}")
+            m = _URL_RE.search(line)
+            tier = (quality_for(m.group(0)) if m else "unknown") if quality else None
+            lines.append(f"{_label(n, _line_age_days(line, today_d), tier, li not in verified)} {line}")
         out.append({**row, "research_data": "\n".join(lines)})
+    return out
+
+
+def label_lines(bundle: list[dict[str, Any]], today: str) -> list[dict[str, Any]]:
+    """One record per labelled evidence line, with the same ``E<n>`` ids :func:`label_bundle`` assigns.
+
+    Keys: ``id`` (``"E7"``), ``row`` (index in ``bundle``), ``line`` (index within the row's lines),
+    ``crux_id``, ``role``, ``text``, ``url`` (normalized or None), ``age_days`` (None = undated), ``stale``, ``quality``.
+    """
+    from orchestrator.source_quality import quality_for  # noqa: PLC0415
+
+    today_d = _today_date(today)
+    n = 0
+    out: list[dict[str, Any]] = []
+    for ri, row in enumerate(bundle or []):
+        src = _row_lines(row)
+        if src is None:
+            continue
+        for li, line in enumerate(src):
+            if not _is_evidence_line(line):
+                continue
+            n += 1
+            m = _URL_RE.search(line)
+            age = _line_age_days(line, today_d)
+            out.append({
+                "id": f"E{n}", "row": ri, "line": li, "crux_id": row.get("crux_id"), "role": row.get("role"),
+                "text": line, "url": normalize_url(m.group(0)) if m else None, "age_days": age,
+                "stale": age is not None and age > EVIDENCE_STALE_DAYS,
+                "quality": quality_for(m.group(0)) if m else "unknown",
+            })
     return out
 
 
@@ -425,7 +482,7 @@ __all__ = [
     "WEB",
     "ab_arm",
     "is_shadow",
-    "is_indep_sample",
+    "label_lines",
     "fetch_web_bundle",
     "fetch_web_rows",
     "intended_source",

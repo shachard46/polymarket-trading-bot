@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -133,43 +132,16 @@ def _evidence_summary(vault: ObsidianManager, market_id: str, limit: int = 500) 
         return None
 
 
-def _thesis_bullets(body: str, heading: str, max_items: int = 3, limit: int = 300) -> list[str]:
-    """Bullets under ``## <heading>`` of the research markdown (each cut at a word boundary)."""
-    m = re.search(rf"^##\s*{re.escape(heading)}\s*$(.*?)(?=^##\s|\Z)", body, re.M | re.S)
-    if not m:
-        return []
-    out: list[str] = []
-    for line in m.group(1).splitlines():
-        line = line.strip()
-        if line[:1] in ("-", "*"):
-            text = " ".join(line.lstrip("-* ").split())
-            if text:
-                out.append(_cut_words(text, limit))
-        if len(out) >= max_items:
-            break
-    return out
-
-
-def _cut_words(text: str, limit: int) -> str:
-    if len(text) <= limit:
-        return text
-    cut = text[:limit]
-    if text[limit] != " ":
-        cut = cut.rsplit(" ", 1)[0] if " " in cut else cut
-    return cut.rstrip(" ,;:-") + "…"
-
-
 def _evidence_theses(vault: ObsidianManager, market_id: str) -> dict[str, list[str]]:
+    """Offer evidence: the verbatim lines the audit passed and the judge cited (research frontmatter), YES vs NO."""
     try:
-        path = vault.market_file(market_id, "active")
-        if path is None:
-            return {}
-        from orchestrator.research import split_yaml_frontmatter_markdown
-
-        _, body = split_yaml_frontmatter_markdown(path.read_text(encoding="utf-8"))
-        return {"evidence_bull": _thesis_bullets(body, "Bull Thesis"), "evidence_bear": _thesis_bullets(body, "Bear Thesis")}
+        fm = vault.read_market_record(market_id, "active") or {}
     except Exception:  # noqa: BLE001 - optional
         return {}
+    return {
+        key: [str(x) for x in fm.get(key) or [] if str(x).strip()][:3]
+        for key in ("evidence_bull", "evidence_bear")
+    }
 
 
 def _market_url(market_data: dict[str, Any]) -> str | None:

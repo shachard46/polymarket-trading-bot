@@ -1,5 +1,5 @@
 id: briefer
-description: Surgical Query Planner — exactly 4 fixed-slot A-IQ verification queries per market (price-blind).
+description: Crux Architect — turns the scout's landscape into 5-8 role-assigned research questions (cruxes) with queries (price-blind).
 model: null
 tools:
   allow: []
@@ -11,7 +11,9 @@ input_schema:
   end_date: "string | null"
   category: "string | null"
   today: string
+  depth: string
+  scout: "dict | null"
 output_schema:
   market_id: string
-  research_queries: list[str]
+  cruxes: list[dict]
   error: "string | null"

@@ -17,8 +17,10 @@ from orchestrator.aiq_bundle import fetch_research_bundle_cached, normalize_quer
 from orchestrator.phases import p3_evidence, p3_queue
 from orchestrator.scraper import MarketRow
 from tests.orchestrator.test_phase3_helpers import (
+    HELPER_ROLES,
     briefer_ok,
     deep_researcher_complete,
+    helper_role_response,
 )
 
 Q_PRICE_FIELDS = {"q", "yes_price", "no_price", "last_trade_price", "midpoint", "spread"}
@@ -75,6 +77,8 @@ class World:
             self.calls.append((role, json.loads(json.dumps(payload))))
         if role == "briefer":
             return briefer_ok(payload)
+        if role in HELPER_ROLES:
+            return helper_role_response(role, payload)
         assert role == "deep_researcher", role
         p = self.dr_p(payload) if callable(self.dr_p) else self.dr_p
         if not isinstance(p, tuple):
@@ -120,13 +124,17 @@ def test_models_never_see_q(world, vault):
     out = phases.phase3_qualitative_pipeline(vault, runner=world.runner)
     assert len(out) == 1
     seen = [p for r, p in world.calls]
-    assert world.of("briefer") and world.of("deep_researcher", "quick") and world.of("deep_researcher", "full")
+    assert world.of("briefer") and world.of("deep_researcher", "quick") and world.of("deep_researcher", "judge")
+    assert world.of("scout") and world.of("gap_analyzer")
     for payload in seen:
         assert not Q_PRICE_FIELDS & set(_keys(payload))
         assert "0.4137" not in json.dumps(payload)
-    # the briefer payload is exactly the text fields
+    # the architect payload is the text fields plus the depth and the scout landscape
     assert set(world.of("briefer")[0]) == {
-        "market_id", "title", "description", "resolution_source", "end_date", "category", "today",
+        "market_id", "title", "description", "resolution_source", "end_date", "category", "today", "depth", "scout",
+    }
+    assert set(world.of("scout")[0]) == {
+        "market_id", "title", "description", "resolution_source", "end_date", "category", "today", "evidence",
     }
 
 
@@ -245,57 +253,65 @@ def test_escalation_survives_full_budget_exhaustion(world, vault, monkeypatch):
 # --- FULL stage -------------------------------------------------------------
 
 
-def test_full_stage_writes_median_and_runs_three_independent_samples(world, vault):
+def test_full_stage_runs_two_judges_flips_j2_and_unions_ranges(world, vault):
     world.market("m1", 0.42)
     _seed(vault, "m1")
     by_tag = {
         None: (0.6, 0.5, 0.7),  # quick
-        "s1": (0.55, 0.45, 0.60),
-        "s2": (0.60, 0.50, 0.70),
-        "s3": (0.65, 0.40, 0.80),
+        "j1": (0.60, 0.50, 0.65),  # J1 is asked P(YES)
+        "j2": (0.70, 0.62, 0.80),  # scripted as YES; the fake judge answers J2 with the complement (P(NO))
     }
     world.dr_p = lambda payload: by_tag.get(
         None if payload["mode"] == "quick" else payload["session_tag"]
     )
     (row,) = phases.phase3_qualitative_pipeline(vault, runner=world.runner)
-    full = world.of("deep_researcher", "full")
-    assert [p["session_tag"] for p in full] == ["s1", "s2", "s3"]
-    assert all(p["research_bundle"] for p in full)
-    # median of each: p 0.60, low 0.45, high 0.70 (min/max would be 0.40 / 0.80)
-    assert (row["p_value"], row["p_low"], row["p_high"]) == (0.60, 0.45, 0.70)
+    judges = world.of("deep_researcher", "judge")
+    assert sorted(p["session_tag"] for p in judges) == ["j1", "j2"]
+    assert {p["session_tag"]: p["ask"] for p in judges} == {"j1": "yes", "j2": "no"}
+    assert all(p["research_bundle"] and p["crux_table"] for p in judges)
+    assert all(p["system_override"] for p in judges)  # needs_more is disabled
+    assert not world.of("deep_researcher", "full")
+    # mean of J1 and flipped J2; union of the ranges
+    assert row["p_value"] == pytest.approx(0.65)
+    assert (row["p_low"], row["p_high"]) == (pytest.approx(0.50), pytest.approx(0.80))
     fm = vault.read_market_record("m1", "active")
-    assert fm["estimated_p"] == 0.60 and fm["p_low"] == 0.45 and fm["p_high"] == 0.70
-    assert fm["q_at_research"] == 0.42 and fm["samples"] == [0.55, 0.60, 0.65]
+    assert fm["estimated_p"] == pytest.approx(0.65) and fm["p_low"] == pytest.approx(0.50)
+    assert fm["p_high"] == pytest.approx(0.80)
+    assert fm["q_at_research"] == 0.42 and fm["samples"] == pytest.approx([0.60, 0.70])
+    assert fm["framing_gap"] == pytest.approx(0.10)
+    assert fm["pipeline"] == "crux_v1" and fm["research_depth"] == "full"
+    assert fm["cruxes_total"] >= 5 and fm["crux_answered"] + fm["crux_unanswered"] + fm["crux_contradicted"] == fm["cruxes_total"]
     assert fm["confidence"] == "medium" and fm["as_of"] and fm["researched_at"]
     assert fm["resolution_checklist"] and fm["key_assumptions"]
 
 
-def test_aggregate_samples_median_and_conservative_confidence():
+def test_aggregate_samples_flips_j2_unions_range_and_is_conservative():
     def comp(p, lo, hi, conf):
-        return (
-            DeepResearcherComplete(
-                status="complete", market_id="m", estimated_p=p, p_low=lo, p_high=hi,
-                confidence=conf, resolution_checklist=[], key_assumptions=[],
-                as_of="2026-10-22", markdown="x",
-            ),
-            None,
+        return DeepResearcherComplete(
+            status="complete", market_id="m", estimated_p=p, p_low=lo, p_high=hi,
+            confidence=conf, resolution_checklist=[], key_assumptions=[],
+            as_of="2026-10-22", markdown="x",
         )
 
-    agg = phases.aggregate_samples(
-        [comp(0.5, 0.4, 0.55, "high"), comp(0.7, 0.6, 0.9, "low"), comp(0.55, 0.3, 0.6, "medium")]
-    )
-    assert (agg["p"], agg["p_low"], agg["p_high"]) == (0.55, 0.4, 0.6)
-    assert agg["chosen"] == 2 and agg["confidence"] == "low"
-    assert agg["spread"] == pytest.approx(0.2)
-    # two samples: the mean of the pair
-    two = phases.aggregate_samples([comp(0.4, 0.3, 0.5, "high"), comp(0.5, 0.4, 0.6, "high")])
-    assert two["p"] == pytest.approx(0.45) and two["p_low"] <= two["p"] <= two["p_high"]
+    j1 = (comp(0.6, 0.5, 0.65, "high"), None, "yes")
+    j2 = (comp(0.3, 0.2, 0.38, "low"), None, "no")  # P(NO) = 0.3 -> YES 0.7, range [0.62, 0.80]
+    agg = phases.aggregate_samples([j1, j2])
+    assert agg["p"] == pytest.approx(0.65)
+    assert agg["p_low"] == pytest.approx(0.5) and agg["p_high"] == pytest.approx(0.8)
+    assert agg["samples"] == pytest.approx([0.6, 0.7]) and agg["spread"] == pytest.approx(0.1)
+    assert agg["chosen"] == 0 and agg["confidence"] == "low"
+    # J1 missing: the J2 body is the one written
+    only = phases.aggregate_samples([j2])
+    assert only["p"] == pytest.approx(0.7) and only["spread"] == 0 and only["chosen"] == 0
+    # a legacy 2-tuple sample is a YES sample
+    legacy = phases.aggregate_samples([(comp(0.4, 0.3, 0.5, "high"), None), (comp(0.5, 0.4, 0.6, "high"), None)])
+    assert legacy["p"] == pytest.approx(0.45) and legacy["p_low"] <= legacy["p"] <= legacy["p_high"]
 
 
-def test_sample_disagreement_is_skipped(world, vault):
+def test_framing_gap_above_the_knob_is_skipped(world, vault):
     world.market("m1", 0.42)
     _seed(vault, "m1")
-    ps = {"s1": 0.5, "s2": 0.6, "s3": 0.75}
+    ps = {"j1": 0.5, "j2": 0.75}  # gap 0.25 > research_max_sample_spread 0.15
     world.dr_p = lambda payload: (0.6, 0.5, 0.7) if payload["mode"] == "quick" else (
         ps[payload["session_tag"]], None, None
     )
@@ -303,7 +319,8 @@ def test_sample_disagreement_is_skipped(world, vault):
     assert out == [] and not vault.active_research_path("m1").exists()
     (skip,) = _skips(vault, "m1")
     assert skip["reason"] == "sample_disagreement" and skip["research_stage"] == "full"
-    assert skip["samples"] == [0.5, 0.6, 0.75] and skip["spread"] == pytest.approx(0.25)
+    assert skip["samples"] == pytest.approx([0.5, 0.75]) and skip["spread"] == pytest.approx(0.25)
+    assert skip["framing_gap"] == pytest.approx(0.25) and skip["pipeline"] == "crux_v1"
     assert vault.read_filter_log("m1")["research_state"]["outcome"] == "sample_disagreement"
 
 
@@ -317,7 +334,7 @@ def test_probable_misread_is_skipped_with_all_values(world, vault):
     assert skip["reason"] == "probable_misread"
     assert skip["q"] == 0.2 and skip["p"] == 0.65
     assert skip["p_low"] == pytest.approx(0.57) and skip["p_high"] == pytest.approx(0.73)
-    assert skip["samples"] == [0.65, 0.65, 0.65] and skip["confidence"] == "medium"
+    assert skip["samples"] == pytest.approx([0.65, 0.65]) and skip["confidence"] == "medium"
     # not retried next tick while q is unchanged
     world.calls.clear()
     phases.phase3_qualitative_pipeline(vault, runner=world.runner)
@@ -331,20 +348,34 @@ def test_gap_exactly_at_threshold_is_not_a_misread(world, vault):
     assert len(phases.phase3_qualitative_pipeline(vault, runner=world.runner)) == 1
 
 
-def test_full_stage_follow_up_cap_then_forced_synthesis(world, vault):
+def test_judges_are_forced_to_synthesize_and_one_failed_judge_is_tolerated(world, vault):
     world.market("m1", 0.42)
     _seed(vault, "m1")
-    seen: list[tuple[str, bool]] = []
 
     def runner(role, payload):
-        if role != "deep_researcher" or payload["mode"] == "quick" or payload.get("system_override"):
-            return world.runner(role, payload)
-        seen.append((payload["session_tag"], bool(payload.get("system_override"))))
-        return {"status": "needs_more_data", "new_queries": ["more as of today"]}
+        if role == "deep_researcher" and payload["mode"] == "judge" and payload["session_tag"] == "j1":
+            return {"status": "needs_more_data", "new_queries": ["more as of today"]}
+        return world.runner(role, payload)
 
     out = phases.phase3_qualitative_pipeline(vault, runner=runner)
-    assert len(out) == 1
-    assert len(seen) == 2  # 1 round + 1 follow-up, then forced synthesis (and no 3rd round)
+    assert len(out) == 1  # J2 alone carries the market
+    assert out[0]["pipeline_flags"] and "judge_failed:j1" in out[0]["pipeline_flags"]
+    fm = vault.read_market_record("m1", "active")
+    assert fm["framing_gap"] is None and len(fm["samples"]) == 1
+    assert "judge_failed:j1" in fm["pipeline_flags"]
+
+
+def test_both_judges_failing_flags_the_market(world, vault):
+    world.market("m1", 0.42)
+    _seed(vault, "m1")
+
+    def runner(role, payload):
+        if role == "deep_researcher" and payload["mode"] == "judge":
+            return {"status": "needs_more_data", "new_queries": ["more as of today"]}
+        return world.runner(role, payload)
+
+    assert phases.phase3_qualitative_pipeline(vault, runner=runner) == []
+    assert vault.is_market_inactive("m1")
 
 
 # --- budgets, concurrency, event reuse -------------------------------------
@@ -418,10 +449,12 @@ def test_same_event_markets_share_one_bundle(world, vault):
         _seed(vault, mid)
     out = phases.phase3_qualitative_pipeline(vault, runner=world.runner)
     assert sorted(r["market_id"] for r in out) == ["a", "b"]
-    assert len(world.of("briefer")) == 1 and len(world.fetches) == 1
-    full = world.of("deep_researcher", "full")
-    assert sorted({p["market_id"] for p in full}) == ["a", "b"]
-    assert len(full) == 6  # the Deep Researcher still runs per market (3 samples each)
+    assert len(world.of("briefer")) == 1 and len(world.of("scout")) == 1
+    assert all("Title a" in q for f in world.fetches for q in f)  # only the first market searched
+    judges = world.of("deep_researcher", "judge")
+    assert sorted({p["market_id"] for p in judges}) == ["a", "b"]
+    assert len(judges) == 4  # the judges still run per market (J1 + J2 each)
+    assert judges[0]["crux_table"] and all(p["crux_table"] for p in judges)  # the sibling reuses the crux table
     assert vault.read_research_bundle("a") == vault.read_research_bundle("b")
 
 
@@ -473,7 +506,8 @@ def test_aiq_cache_hit_expiry_and_error_skip(tmp_path):
     assert list(data) == ["who wins?"]  # expired + error entries pruned/never stored
 
 
-def test_phase3_uses_vault_cache_across_markets(world, vault):
+def test_phase3_uses_vault_cache_across_markets(world, vault, monkeypatch):
+    monkeypatch.setenv("PMBOT_RESEARCH_WORKERS", "1")  # sequential: the second market must hit the cache
     for mid in ("a", "b"):
         world.market(mid, 0.42, event_id=f"ev-{mid}")
         _seed(vault, mid)
@@ -489,7 +523,9 @@ def test_phase3_uses_vault_cache_across_markets(world, vault):
 
     phases.phase3_qualitative_pipeline(vault, runner=runner)
     assert (vault._dirs["active"] / "aiq_cache.json").exists()
-    assert sum(len(f) for f in world.fetches) == 4  # second market served from the cache
+    # the 4 shared queries were fetched once; the second market was served from the cache
+    shared = [q for f in world.fetches for q in f if q.startswith("Shared")]
+    assert len(shared) == 4
 
 
 # --- refresh ----------------------------------------------------------------
@@ -546,7 +582,7 @@ def test_phase2_flags_price_move_refresh_and_phase3_runs_full_only(world, vault)
     world.dr_p = 0.6
     (row,) = phases.phase3_qualitative_pipeline(vault, runner=world.runner)
     assert world.of("deep_researcher", "quick") == []  # refresh skips the QUICK stage
-    assert world.of("briefer") and len(world.of("deep_researcher", "full")) == 3
+    assert world.of("briefer") and len(world.of("deep_researcher", "judge")) == 2
     assert vault.read_market_record("m1", "active")["q_at_research"] == 0.42
     rec = vault.read_filter_log("m1")
     assert rec["refresh_reason"] is None and rec["research_state"]["outcome"] == "researched"
@@ -578,7 +614,7 @@ def test_failed_refresh_does_not_loop(world, vault):
     _seed(vault, "m1")
     _research(vault, "m1", hours_ago=500, q=0.42)
     world.market("m1", 0.42)
-    world.dr_p = lambda payload: (0.5, None, None) if payload["session_tag"] == "s1" else (0.8, None, None)
+    world.dr_p = lambda payload: (0.5, None, None) if payload["session_tag"] == "j1" else (0.8, None, None)
     assert phases.phase3_qualitative_pipeline(vault, runner=world.runner) == []  # disagreement
     assert _skips(vault, "m1")[0]["reason"] == "sample_disagreement"
     assert phases.build_phase3_queue(vault) == []  # cooldown until its TTL / a price move

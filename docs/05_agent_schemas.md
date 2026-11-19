@@ -27,28 +27,46 @@ Phase 2's gate is deterministic code (`orchestrator/gate.py`, see `02_orchestrat
 - **Manipulation risk:** price-blind, text-only rating. `high` = vague/subjective source, a single small or obscure oracle/account, or an outcome one actor can directly cause or control; `medium` = some rule ambiguity or a concentrated-but-official source; `low` = clear rules and an authoritative independent source. The schema keeps it a plain string; the Hub validates the value.
 - **Caching:** the Hub stores the verdict in the market's `01_Filters/` frontmatter (`triage:`) forever and reuses it for every market with the same `event_id`. `researchable: false` retires the market.
 
-## 2. The Surgical Query Planner (briefer)
+## 2. The question-led research roles (scout, briefer / architect, gap_analyzer, auditor)
 
-- **System Prompt:** "**Surgical Query Planner** in the Phase 3 **Forensic Pipeline**. Price-blind: you only see the market text and today's date. Emit exactly 4 fixed-slot verification queries, each containing `as of {today}`. The Hub runs `execute_aiq_query` in parallel (`AIQ_TIMEOUT_SEC` poll timeout, 4k chars per result) - you do not call tools."
-- **Input Schema:** `{"market_id": "string", "title": "string", "description": "string", "resolution_source": "string | null", "end_date": "string | null", "category": "string | null", "today": "string"}` (no price).
-- **Output Schema:**
+The FULL stage (`crux_v1`, `docs/02_orchestrator_pipeline.md` section 3) uses four price-blind helper roles before the judges. None has tools; the Hub runs every search. Cheap roles are DeepSeek (`config/models.yaml`: `scout`, `briefer`, `gap_analyzer`, `auditor`).
+
+### 2a. Scout (`scout`)
+
+- **Input:** `{market_id, title, description, resolution_source, end_date, category, today, evidence: list[dict]}` (`evidence` = the rows of one broad pull, labelled). No price.
+- **Output:** `{market_id, event, deciding_actors: [str], resolution_source: str|null, scheduled: [str], contested: [str], main_sources: [str], error}`. A map of the landscape: it must not estimate or lean.
+
+### 2b. Crux Architect (`briefer`)
+
+- **Input:** the market text fields plus `depth` (`"full"` | `"lite"`) and `scout` (the landscape dict above without `market_id`/`error`, or `null` when the scout failed). No price.
+- **Output:**
 
 ```json
 {
   "market_id": "string",
-  "research_queries": ["string"],
+  "cruxes": [{"role": "mechanism|comparator|evidence|horizon|skeptic", "question": "string", "queries": ["string (1-2)"], "moves_p_if": "string"}],
   "error": "string | null"
 }
 ```
 
-On success `research_queries` is a list of **exactly 4** non-empty strings, in slot order: (1) resolution criteria and polarity (what resolves YES; does YES equal the title event?), (2) reference class / base rate, (3) current state as of today, (4) strongest disconfirming evidence. Each must contain `as of {today}` (the Hub appends it if missing). On failure: `research_queries` may be `[]` with a non-null `error`.
+5-8 cruxes (`lite`: 4-5). The Hub requires at least one `mechanism` (how and when it resolves), `comparator` (base rate / reference class), `horizon` (catalysts before `end_date`) and `skeptic` (the strongest case against the apparent leaning) crux and fills a missing role with a template query; every query carries `as of {today}` (appended if missing). An unknown `role` or a crux with 0 or more than 2 queries fails validation (retryable `format_validation_error`). The legacy output (exactly 4 `research_queries`, slot order mechanism / comparator / evidence / skeptic) is still accepted. `error` set means the Hub uses its template cruxes instead.
+
+### 2c. Gap Analyzer (`gap_analyzer`)
+
+- **Input:** `{market_id, title, end_date, today, cruxes: [{crux_id, role, question, moves_p_if, evidence: [labelled lines]}]}`.
+- **Output:** `{market_id, assessments: [{crux_id, status: answered|unanswered|contradicted, missing}], follow_up_queries: [{crux_id, query}], error}`. The Hub runs **one** round, accepts at most 3 follow-up queries (unanswered cruxes only, no repeats) and stops there.
+
+### 2d. Citation Auditor (`auditor`)
+
+- **Input:** `{market_id, today, items: [{id: "E7", claim, url, page_text}]}` (at most 10 items: lines behind answered cruxes that have page text; the text is sanitized of market/odds mentions).
+- **Output:** `{market_id, verdicts: [{id, supported: bool, reason}], error}`. `supported` only when the page text itself states the fact (same entity, number, date, direction). Unsupported lines are dropped by the Hub.
 
 ## 3. The Forensic Fact Verifier (deep_researcher)
 
 The Deep Researcher is **price-blind**: its payload contains no `q`, `yes_price` or any other market price, and it must not be asked to anchor on or default to one. The Hub compares its output to `q` (see `02_orchestrator_pipeline.md` section 3).
 
 - **System Prompt:** "**Forensic Fact Verifier**. Work resolution rules first (polarity!), then reference class, then verified current state as of `today`, then the strongest disconfirming evidence. Output a probability with an honest range. Inconclusive evidence means a wide range and low confidence - never a neutral default. In `mode: quick` you have no bundle and must answer from the market text and your knowledge; in `mode: full` you may use `needs_more_data` once (1-3 follow-up queries)."
-- **Input Schema:** `{"market_id": "string", "title": "string", "description": "string", "resolution_source": "string | null", "end_date": "string | null", "category": "string | null", "today": "string", "mode": "string (quick|full)", "directives": "string", "research_bundle": "list[dict]", "system_override": "string | null", "format_validation_error": "string | null", "session_tag": "string | null"}`. `session_tag` (`quick`, `s1`..`s3`) gives each independent sample its own label; calls are stateless.
+- **Input Schema:** `{"market_id": "string", "title": "string", "description": "string", "resolution_source": "string | null", "end_date": "string | null", "category": "string | null", "today": "string", "mode": "string (quick|judge; full is legacy)", "directives": "string", "research_bundle": "list[dict]", "system_override": "string | null", "format_validation_error": "string | null", "session_tag": "string | null", "ask": "string | null", "crux_table": "list[dict] | null", "known_unknowns": "list[str] | null"}`. `session_tag` (`quick`, `j1`, `j2`) labels each stateless call. **Judge mode** (FULL stage): `ask` is `"yes"` (J1: P(market resolves YES)) or `"no"` (J2: P(resolves NO), same title and rules); `estimated_p`/`p_low`/`p_high` are the probability of the asked outcome, `## Bull Thesis` always argues YES and `## Bear Thesis` NO. `research_bundle` rows carry `crux_id`/`role` and labels `[E<n> | <age>d | <quality> | unverified]`; `crux_table` lists `{crux_id, role, question, moves_p_if, status, missing, followed_up, evidence_ids}`; `known_unknowns` are unresolved questions. `needs_more_data` is disabled (forced-synthesis override). The Complete object adds optional `base_rate` (0-1 or null, for the asked outcome) and `crux_verdicts: [{crux_id, direction: yes|no|neutral, cited: [E-ids], note}]` (direction is about the market outcome, independent of `ask`). The Hub flips J2 (`1 - p`), takes the mean and the union of the ranges (`aggregate_samples`).
 - **Output Schema (state machine):**
 
 ```json
@@ -72,9 +90,9 @@ The Deep Researcher is **price-blind**: its payload contains no `q`, `yes_price`
 }
 ```
 
-Validated by the Hub: all probabilities in `[0, 1]` and `p_low <= estimated_p <= p_high`. `markdown` is the full wire format (YAML frontmatter with `market_id`, `estimated_p`, optional `p_low`/`p_high`, `error`, then `## Bull Thesis`, `## Bear Thesis`, empty `## Post-Mortem`); the Hub cross-checks `estimated_p` (and `p_low`/`p_high` when present) between the JSON and the frontmatter. The file the Hub writes carries the **aggregated** values of the 3 FULL samples (medians) plus Hub-side `q_at_research`, `researched_at`, `end_date`, `samples`.
+Validated by the Hub: all probabilities in `[0, 1]` and `p_low <= estimated_p <= p_high`. `markdown` is the full wire format (YAML frontmatter with `market_id`, `estimated_p`, optional `p_low`/`p_high`, `error`, then `## Bull Thesis`, `## Bear Thesis`, empty `## Post-Mortem`); the Hub cross-checks `estimated_p` (and `p_low`/`p_high` when present) between the JSON and the frontmatter. The file the Hub writes carries the **aggregated** values of the two FULL judges (J2 flipped, mean `p`, union range) plus Hub-side `q_at_research`, `researched_at`, `end_date`, `samples`, the crux fields and the offer evidence (`evidence_bull`/`evidence_bear`).
 
-**Hub caps (Forensic Pipeline):** FULL stage: **1 round + 1 follow-up round** (`MAX_RESEARCH_ITERATIONS = 2`), then forced synthesis requiring `status: complete`; 3 samples per market; per-query `research_data` capped at **4000** characters; A-IQ poll timeout **`AIQ_TIMEOUT_SEC`**; A-IQ results cached 24h.
+**Hub caps (Forensic Pipeline):** FULL stage: one scout, one architect, `RESEARCH_MAX_WEB_CALLS` (12) searches, **one** gap round (`MAX_GAP_ROUNDS = 1`, at most 3 follow-up queries), an audit of at most 10 lines, then two forced-synthesis judges (J1/J2) requiring `status: complete` (no `needs_more_data` rounds, no extra samples); per-query `research_data` capped at **4000** characters; A-IQ poll timeout **`AIQ_TIMEOUT_SEC`**; A-IQ results cached 24h.
 
 Hub persistence: cumulative A-IQ results live in `02_Active_Research/research_bundles/{market_id}.json`; the query caches in `02_Active_Research/aiq_cache.json` and `web_cache.json` (web arm, see `docs/02`). The bundle envelope also stores `evidence_source` / `evidence_fallback`.
 
@@ -124,8 +142,11 @@ Contract changes from the Wave 3 research redesign (re-check the live prompts ag
 |------|---------------------------|
 | **web_searcher** | Agent for the `web` evidence arm. Input `{market_id, queries: list[str], today}`; tools `web_search`, `web_fetch`. Output `{market_id, results: [{query, research_data (<= 4000 chars, sourced and dated facts), error}], error}`. Price-blind: it must never report prediction-market or betting prices/odds; the Hub also redacts such lines. The Hub calls it with ONE query per call (parallel) so each query gets the full search budget. |
 | **web_extractor** | Agent for the Brave backend of the `web` arm (no tools). Input `{market_id, query, today, pages: [{url, title, page_age, text}]}` (pages fetched by the Hub); output same as web_searcher with exactly one result. Facts come only from the given pages, so the citation guard accepts exactly the fetched URLs; `| unknown` dates are filled from Brave's `page_age`. Price-blind like web_searcher. |
-| **briefer** | Input is price-blind text (`title`, `description`, `resolution_source`, `end_date`, `category`, `today`). Output `research_queries`: exactly 4 fixed-slot strings with `as of {today}`. `tools.allow` is empty; the Hub runs `execute_aiq_query`. |
-| **deep_researcher** | Price-blind input (no `q`), `mode`, `session_tag`. Complete output adds `p_low`, `p_high`, `confidence`, `resolution_checklist`, `key_assumptions`, `as_of`. JSON state machine, no agent tools. |
+| **scout** | New. Price-blind landscape map from one broad evidence pull (`evidence` rows); no estimate. See section 2a. |
+| **briefer** | Now the crux architect. Input adds `depth` and `scout`; output `cruxes` (role, question, 1-2 queries, `moves_p_if`) instead of 4 fixed-slot `research_queries` (legacy still accepted). `tools.allow` is empty; the Hub runs the searches. See section 2b. |
+| **gap_analyzer** | New. One round of crux status plus up to 3 follow-up queries. See section 2c. |
+| **auditor** | New. Checks lines against page text. See section 2d. |
+| **deep_researcher** | Price-blind input (no `q`), `mode` (`quick`, `judge`), `session_tag`, `ask`, `crux_table`, `known_unknowns`. Complete output adds `p_low`, `p_high`, `confidence`, `resolution_checklist`, `key_assumptions`, `as_of`. JSON state machine, no agent tools. |
 | **executioner** | **Removed.** Phase 4 is deterministic Hub code. |
 
 **Hub behavior:** The orchestrator always populates `research_bundle` before spawning Deep Researcher. A-IQ fetches are never invoked by agents. No agent payload contains the market price.

@@ -1,4 +1,4 @@
-"""Phase 3 iterative Hub loop — state recovery, needs_more_data, forced synthesis."""
+"""Phase 3 FULL stage — state recovery, forced judge synthesis (no needs_more rounds), architect fallback."""
 
 from __future__ import annotations
 
@@ -7,14 +7,17 @@ from typing import Any
 import pytest
 
 from config.trading_constants import ERROR_LOG_KEY, STATUS_INACTIVE, STATUS_KEY
+from orchestrator import config as orch_config
 from orchestrator import phases, scraper
 from orchestrator.phases import p3_evidence, p3_full
 from orchestrator.scraper import MarketRow
 from tests.orchestrator.test_phase3_helpers import (
+    HELPER_ROLES,
     STUB_MARKET_DATA,
     briefer_ok,
     deep_researcher_complete,
     deep_researcher_needs_more,
+    helper_role_response,
 )
 
 
@@ -84,61 +87,32 @@ def test_phase3_resumes_from_salvaged_bundle_without_briefer_or_fetch(
     assert calls["fetch"] == 0
 
 
-def test_phase3_needs_more_data_then_complete(monkeypatch, vault):
+def test_phase3_judges_are_forced_and_never_loop(monkeypatch, vault):
+    """No needs_more rounds: a FULL judge call always carries the forced-synthesis override."""
     _seed_filter(vault)
     _mock_row(monkeypatch)
-    dr_calls = {"n": 0}
+    judge_payloads: list[dict[str, Any]] = []
 
     def runner(role: str, payload: dict[str, Any]) -> Any:
         if role == "briefer":
             return briefer_ok(payload)
-        if role == "deep_researcher":
-            if payload["mode"] == "quick" or payload.get("system_override"):
-                return deep_researcher_complete(payload)
-            dr_calls["n"] += 1
-            if dr_calls["n"] == 1:
-                return deep_researcher_needs_more(payload)
-            return deep_researcher_complete(payload)
-        raise AssertionError(role)
+        if role in HELPER_ROLES:
+            return helper_role_response(role, payload)
+        assert role == "deep_researcher", role
+        if payload["mode"] == "judge":
+            judge_payloads.append(payload)
+        return deep_researcher_complete(payload)
 
     monkeypatch.setattr(
         p3_evidence,
         "fetch_research_bundle",
-        lambda queries: [
-            {"query": q, "research_data": f"data:{q}", "error": None} for q in queries
-        ],
+        lambda queries: [{"query": q, "research_data": "x", "error": None} for q in queries],
     )
 
     out = phases.phase3_qualitative_pipeline(vault, runner=runner)
     assert len(out) == 1
-    bundle = vault.read_research_bundle("0xabc")
-    assert bundle is not None
-    assert len(bundle) >= 2
-
-
-def test_phase3_forced_synthesis_on_iteration_cap(monkeypatch, vault):
-    _seed_filter(vault)
-    _mock_row(monkeypatch)
-
-    def runner(role: str, payload: dict[str, Any]) -> Any:
-        if role == "briefer":
-            return briefer_ok(payload)
-        if role == "deep_researcher":
-            if payload.get("system_override") or payload["mode"] == "quick":
-                return deep_researcher_complete(payload)
-            return deep_researcher_needs_more(payload)
-        raise AssertionError(role)
-
-    monkeypatch.setattr(
-        p3_evidence,
-        "fetch_research_bundle",
-        lambda queries: [
-            {"query": q, "research_data": "x", "error": None} for q in queries
-        ],
-    )
-
-    out = phases.phase3_qualitative_pipeline(vault, runner=runner)
-    assert len(out) == 1
+    assert len(judge_payloads) == 2 and all(p["system_override"] for p in judge_payloads)
+    assert not hasattr(orch_config, "MAX_RESEARCH_ITERATIONS")
 
 
 def test_phase3_forced_synthesis_disobedience_flags_inactive(monkeypatch, vault):
@@ -169,38 +143,33 @@ def test_phase3_forced_synthesis_disobedience_flags_inactive(monkeypatch, vault)
     assert filt.get(STATUS_KEY) == STATUS_INACTIVE
 
 
-def test_phase3_briefer_error_with_empty_queries_flags_inactive(monkeypatch, vault):
+def test_phase3_architect_error_falls_back_to_template_cruxes(monkeypatch, vault):
+    """An architect failure never flags the market: code-built template cruxes (old fixed slots + horizon) run."""
     _seed_filter(vault)
     _mock_row(monkeypatch)
-    calls = {"fetch": 0, "dr": 0}
+    fetched: list[str] = []
 
     def runner(role: str, payload: dict[str, Any]) -> Any:
         if role == "briefer":
-            return {
-                "market_id": payload["market_id"],
-                "research_queries": [],
-                "error": "cannot plan queries",
-            }
-        if role == "deep_researcher":
-            calls["dr"] += 1
-            assert payload["mode"] == "quick"  # the full stage never starts
-            return deep_researcher_complete(payload)
-        raise AssertionError(role)
+            return {"market_id": payload["market_id"], "cruxes": [], "error": "cannot plan queries"}
+        if role in HELPER_ROLES:
+            return helper_role_response(role, payload)
+        assert role == "deep_researcher", role
+        return deep_researcher_complete(payload)
 
     monkeypatch.setattr(
         p3_evidence,
         "fetch_research_bundle",
-        lambda queries: (calls.__setitem__("fetch", calls["fetch"] + 1) or []),
+        lambda queries: (fetched.extend(queries) or [{"query": q, "research_data": "x", "error": None} for q in queries]),
     )
 
     out = phases.phase3_qualitative_pipeline(vault, runner=runner)
-    assert out == []
-    assert calls["fetch"] == 0
-    assert calls["dr"] == 1  # quick stage only
-    filt = vault.read_filter_log("0xabc")
-    assert filt is not None
-    assert filt.get(STATUS_KEY) == STATUS_INACTIVE
-    assert "briefer error" in str(filt.get(ERROR_LOG_KEY, {}).get("reason", ""))
+    assert len(out) == 1
+    assert not vault.is_market_inactive("0xabc", dir_key="filters")
+    meta = vault.read_research_bundle_meta("0xabc")["crux_meta"]
+    assert "architect_failed" in meta["flags"]
+    assert {c["role"] for c in meta["cruxes"]} >= {"mechanism", "comparator", "horizon", "skeptic"}
+    assert fetched  # the templates were searched
 
 
 def test_phase3_survives_research_market_exception(monkeypatch, vault):

@@ -198,9 +198,11 @@ def test_build_live_prompt_lists_briefer_schema_keys():
             "end_date": None,
             "category": None,
             "today": "2026-10-22",
+        "depth": "full",
+        "scout": None,
         },
     )
-    assert "research_queries" in prompt
+    assert "cruxes" in prompt
     assert "error" in prompt
     assert "decision fields" not in prompt
     assert "Required keys exactly" in prompt
@@ -243,10 +245,12 @@ def test_spawn_agent_briefer_rejects_evaluator_shape(monkeypatch):
                 "end_date": None,
                 "category": None,
                 "today": "2026-10-22",
+            "depth": "full",
+            "scout": None,
             },
         )
     msg = str(exc_info.value)
-    assert "research_queries" in msg
+    assert "cruxes" in msg
 
 
 def test_spawn_agent_briefer_accepts_valid_payload():
@@ -260,8 +264,10 @@ def test_spawn_agent_briefer_accepts_valid_payload():
             "end_date": None,
             "category": None,
             "today": "2026-10-22",
+        "depth": "full",
+        "scout": None,
         },
     )
     assert out["market_id"] == "0xabc"
-    assert out["research_queries"]
+    assert out["cruxes"]
     assert out.get("error") is None

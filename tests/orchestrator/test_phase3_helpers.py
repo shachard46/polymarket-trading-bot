@@ -40,6 +40,8 @@ def deep_researcher_complete(
     market_id = payload["market_id"]
     p_low = max(0.0, estimated_p - 0.08) if p_low is None else p_low
     p_high = min(1.0, estimated_p + 0.08) if p_high is None else p_high
+    if payload.get("ask") == "no":  # judge J2 is asked P(NO): the complement of the scripted YES estimate
+        estimated_p, p_low, p_high = round(1 - estimated_p, 6), round(1 - p_high, 6), round(1 - p_low, 6)
     return {
         "status": "complete",
         "market_id": market_id,
@@ -54,6 +56,16 @@ def deep_researcher_complete(
             market_id, estimated_p=estimated_p, p_low=p_low, p_high=p_high
         ),
     }
+
+
+HELPER_ROLES = ("scout", "gap_analyzer", "auditor")
+
+
+def helper_role_response(role: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Deterministic stub answer for the crux pipeline's helper roles (what the shipped stub runner returns)."""
+    from orchestrator.runner_stubs import STUB_RESPONSES
+
+    return STUB_RESPONSES[role](payload)
 
 
 def deep_researcher_needs_more(payload: dict[str, Any]) -> dict[str, Any]:

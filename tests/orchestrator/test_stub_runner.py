@@ -46,12 +46,15 @@ def test_stub_briefer_includes_market_title():
             "end_date": None,
             "category": None,
             "today": "2026-10-22",
+            "depth": "full",
+            "scout": None,
         },
     )
     parsed = out if isinstance(out, dict) else parse_agent_json_or_yaml(out)
-    assert len(parsed["research_queries"]) == 4
-    assert all("as of 2026-10-22" in q for q in parsed["research_queries"])
-    assert any("Will X?" in q for q in parsed["research_queries"])
+    queries = [q for c in parsed["cruxes"] for q in c["queries"]]
+    assert {c["role"] for c in parsed["cruxes"]} >= {"mechanism", "comparator", "horizon", "skeptic"}
+    assert all("as of 2026-10-22" in q for q in queries)
+    assert any("Will X?" in q for q in queries)
     assert parsed["error"] is None
 
 
@@ -72,6 +75,9 @@ def test_stub_deep_researcher_returns_parseable_complete_payload():
             "system_override": None,
             "format_validation_error": None,
             "session_tag": None,
+            "ask": None,
+            "crux_table": None,
+            "known_unknowns": None,
         },
     )
     parsed = parse_deep_researcher_json(out)
@@ -109,6 +115,9 @@ def test_stub_error_deep_researcher_carries_error_in_frontmatter(monkeypatch):
             "system_override": None,
             "format_validation_error": None,
             "session_tag": None,
+            "ask": None,
+            "crux_table": None,
+            "known_unknowns": None,
         },
     )
     parsed = parse_deep_researcher_json(out)

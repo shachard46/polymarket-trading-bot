@@ -67,21 +67,6 @@ def test_stats_coverage_latest_week_flag_and_exclusion():
     assert "Signal coverage" in md and "80.0% ⚠" in md
 
 
-def test_stats_independent_sample():
-    rows = []
-    for mid, y, p, ip, gap in (("a", 1, 0.8, 0.6, 0.2), ("b", 0, 0.3, 0.5, -0.2), ("c", 1, 0.5, 0.9, None)):
-        rows.append({"stage": "traded", "market_id": mid, "p": p, "q": 0.5, "indep_p": ip,
-                     **({"indep_gap": gap} if gap is not None else {})})
-    rows += [{"stage": "resolution", "market_id": "a", "outcome_yes": 1},
-             {"stage": "resolution", "market_id": "b", "outcome_yes": 0}]
-    d = stats.independent_sample_stats(rows)
-    assert d["n"] == 3 and d["n_resolved"] == 2
-    assert d["mean_abs_gap"] == pytest.approx((0.2 + 0.2 + 0.4) / 3)
-    assert d["brier_p"] == pytest.approx((0.04 + 0.09) / 2)
-    assert d["brier_indep"] == pytest.approx((0.16 + 0.25) / 2)
-    assert "Independent evidence sample" in stats.render_stats(stats.compute_stats(rows))
-
-
 def test_stats_gate_flags_vs_passed():
     rows = []
     spec = [("g1", "suspicious_move", 1, 0.2, None), ("g2", "concentrated", 0, 0.4, "supply"),

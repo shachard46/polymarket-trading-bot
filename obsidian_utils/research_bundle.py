@@ -14,6 +14,9 @@ from .schemas import _atomic_write_text, _check_market_id
 log = logging.getLogger(__name__)
 
 
+_META_KEYS = ("evidence_source", "evidence_fallback", "crux_meta")
+
+
 def _has_usable_research_data(entry: dict[str, Any]) -> bool:
     return bool(str(entry.get("research_data", "")).strip())
 
@@ -91,7 +94,7 @@ class ResearchBundleMixin:
         return [q for q in queries if isinstance(q, dict)]
 
     def read_research_bundle_meta(self, market_id: str) -> dict[str, Any]:
-        """``{evidence_source, evidence_fallback}`` stored with the bundle (empty if absent)."""
+        """``{evidence_source, evidence_fallback, crux_meta}`` stored with the bundle (empty if absent)."""
         path = self._research_bundle_path(market_id)
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
@@ -99,7 +102,7 @@ class ResearchBundleMixin:
             return {}
         if not isinstance(raw, dict):
             return {}
-        return {k: raw[k] for k in ("evidence_source", "evidence_fallback") if k in raw}
+        return {k: raw[k] for k in _META_KEYS if k in raw}
 
     def write_research_bundle(
         self,

@@ -48,7 +48,7 @@ def test_shadow_run_has_no_report_no_state_change_and_one_ledger_row(world, vaul
     assert vault.read_active_research(mid) is None
     state = vault.read_filter_log(mid)["research_state"]
     assert (state["stage"], state["outcome"]) == ("quick", "no_divergence")
-    assert len(world.of("deep_researcher", "full")) == 3  # the FULL stage really ran
+    assert len(world.of("deep_researcher", "judge")) == 2  # the FULL stage really ran
     (skip,) = [r for r in ledger.iter_rows(vault) if r["stage"] == "research_skip"]
     assert skip["reason"] == "no_divergence"
     (row,) = _shadow_rows(vault)

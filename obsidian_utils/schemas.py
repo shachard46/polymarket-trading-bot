@@ -132,12 +132,21 @@ class ResearchFrontmatter(BaseModel):
     samples: list[float] = []
     evidence_source: Optional[str] = None
     evidence_fallback: Optional[bool] = None
-    indep_p: Optional[float] = None  # measure-only independent-evidence sample (never sizes a bet)
-    indep_p_low: Optional[float] = None
-    indep_p_high: Optional[float] = None
-    indep_source: Optional[str] = None
-    indep_gap: Optional[float] = None
-    indep_error: Optional[str] = None
+    pipeline: Optional[str] = None  # "crux_v1": question-led FULL stage
+    research_depth: Optional[str] = None  # "lite" | "full" (stake-scaled)
+    cruxes_total: Optional[int] = None
+    crux_answered: Optional[int] = None
+    crux_unanswered: Optional[int] = None
+    crux_contradicted: Optional[int] = None
+    gap_queries: Optional[int] = None
+    audit_dropped: Optional[int] = None
+    audit_unverified: Optional[int] = None
+    framing_gap: Optional[float] = None  # |J1 - flipped J2|
+    source_mix: dict[str, int] = {}
+    pipeline_flags: list[str] = []  # degraded stages (scout_failed, gap_failed, audit_failed, judge_failed:j2, ...)
+    web_calls: Optional[int] = None
+    evidence_bull: list[str] = []  # verbatim audit-verified lines the judge cited for YES (offer evidence)
+    evidence_bear: list[str] = []  # ... and for NO
     status: Optional[str] = None
     error_log: Optional[dict[str, Any]] = None
 

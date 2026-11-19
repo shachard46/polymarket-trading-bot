@@ -223,17 +223,24 @@ def _dr_payload(
     directives: str,
     bundle: list[dict[str, Any]],
     *,
-    mode: Literal["quick", "full"],
+    mode: Literal["quick", "full", "judge"],
     today: str,
     system_override: str | None = None,
     session_tag: str | None = None,
+    ask: Literal["yes", "no"] | None = None,
+    crux_table: list[dict[str, Any]] | None = None,
+    known_unknowns: list[str] | None = None,
 ) -> dict[str, Any]:
     return {
         **_text_fields(row, today),
         "mode": mode,
         "directives": directives,
-        "research_bundle": evidence.label_bundle(bundle, today),  # ids + ages at render time only
+        # ids + ages (+ source quality in judge mode) at render time only
+        "research_bundle": evidence.label_bundle(bundle, today, quality=mode == "judge"),
         "system_override": system_override,
         "format_validation_error": None,
         "session_tag": session_tag,
+        "ask": ask,
+        "crux_table": crux_table,
+        "known_unknowns": known_unknowns,
     }

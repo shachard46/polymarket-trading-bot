@@ -182,34 +182,6 @@ def signal_coverage_stats(rows: list[dict[str, Any]], now: datetime | None = Non
     return out
 
 
-def independent_sample_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Research rows carrying `indep_p`: n, mean |indep_gap|, and for resolved ones Brier(median p) vs Brier(indep_p)."""
-    res = resolutions(rows)
-    # Latest row *carrying indep_p* (later rows without it must not hide it), so no _latest_by_market.
-    latest: dict[str, dict[str, Any]] = {}
-    for r in rows:
-        if r.get("stage") in _NON_DECISION or not r.get("market_id") or r.get("market_id") == "_tick":
-            continue
-        if _num(r.get("indep_p")) is not None:
-            latest[r["market_id"]] = r
-    gaps = []
-    for r in latest.values():
-        gap = _num(r.get("indep_gap"))
-        if gap is None and _num(r.get("p")) is not None:
-            gap = _num(r["p"]) - _num(r["indep_p"])
-        if gap is not None:
-            gaps.append(abs(gap))
-    scored = [(m, r) for m, r in latest.items() if m in res and _num(r.get("p")) is not None]
-    ys = [res[m] for m, _ in scored]
-    return {
-        "n": len(latest),
-        "mean_abs_gap": sum(gaps) / len(gaps) if gaps else None,
-        "n_resolved": len(ys),
-        "brier_p": _brier_or_none([_num(r["p"]) for _, r in scored], ys),
-        "brier_indep": _brier_or_none([_num(r["indep_p"]) for _, r in scored], ys),
-    }
-
-
 def gate_flag_stats(rows: list[dict[str, Any]]) -> dict[str, tuple[int, float | None]]:
     """`{group: (n, Brier(q))}` on resolved markets: gate_reject by flag reason vs markets that passed the gate.
 

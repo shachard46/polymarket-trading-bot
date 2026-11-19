@@ -27,7 +27,6 @@ AIQ_TIMEOUT_SEC = 300.0
 # Research redesign (Phase 3). The model never sees the market price q; the Hub decides
 # whether research diverges from q and whether a result looks like a misread.
 RESEARCH_MAX_QUICK_WIDTH = 0.20     # quick range wider than this is "uninformative" -> escalate (also escalates on confidence "low")
-RESEARCH_SAMPLES = 3                # independent Deep Researcher samples in the FULL stage
 RESEARCH_MAX_SAMPLE_SPREAD = 0.15   # max(p) - min(p) across samples above this -> sample_disagreement
 RESEARCH_MAX_Q_GAP = 0.40           # |p_median - q| above this -> probable_misread (paper-trading: wider)
 RESEARCH_REFRESH_PRICE_MOVE = 0.08  # q moved this much since research -> re-research
@@ -56,9 +55,6 @@ SHADOW_MAX_PER_TICK = 2
 # stage triage_shadow) so we can score what permanent triage rejects cost us.
 TRIAGE_SHADOW_RATE = 0.10
 TRIAGE_SHADOW_MAX_PER_TICK = 2
-# Independent-evidence sample: a stable ~1/5 of FULL markets get one EXTRA measure-only sample on a
-# bundle from the other evidence source (not part of the median), to measure evidence noise.
-INDEP_SAMPLE_RATE = 0.20
 # Signal coverage: log an error when more than this share of gated markets lack a signal.
 SIGNAL_COVERAGE_ALERT_FRAC = 0.5
 # Open failure tags: a post-mortem 'new:<slug>' tag is shown to the Overseer as a class once it
@@ -122,6 +118,18 @@ MAX_KNOBS_CHANGED_PER_RUN = 2       # more than this in one directives doc -> re
 KNOB_COOLDOWN_VERSIONS = 3          # a knob changed at version V may change again at V + 3
 AUTO_REVERT_MIN_SCORED = 30         # resolved scored markets a version needs before it is judged
 AUTO_REVERT_BRIER_WORSE_BY = 0.02   # current Brier worse than previous by more than this -> revert
+
+# Question-led FULL stage (crux_v1): scout -> architect -> per-crux search -> one gap round -> audit -> 2 judges.
+RESEARCH_PIPELINE = "crux_v1"
+RESEARCH_MAX_WEB_CALLS = 12         # search calls per market (scout + crux queries + gap follow-ups)
+MAX_GAP_ROUNDS = 1                  # gap-analyzer rounds (capped in code)
+GAP_MAX_QUERIES = 3                 # follow-up queries one gap round may add
+AUDIT_MAX_LINES = 10                # evidence lines the auditor checks per market
+CRUX_COUNT = {"full": (5, 8), "lite": (4, 5)}  # (min, max) cruxes per depth
+CRUX_MAX_QUERIES = 2                # queries per crux
+CRUX_SEARCH_WORKERS = 4             # crux searches run in parallel
+DEPTH_FULL_MIN_USD = 25.0           # potential max order below this -> RESEARCH_DEPTH "lite" (fewer cruxes, no audit)
+EVIDENCE_QUALITY_TIERS = ("official", "major", "aggregator", "blog", "unknown")
 
 # Evidence quality: age labels on the bundle the deep researcher sees, and the Brave web backend.
 EVIDENCE_STALE_DAYS = 180           # bundle lines older than this are tagged STALE

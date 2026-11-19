@@ -16,6 +16,7 @@ import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Any
@@ -42,6 +43,21 @@ BRAVE_URL = "https://api.search.brave.com/res/v1/web/search"
 API_KEY_ENV = "BRAVE_API_KEY"
 
 _sleep = time.sleep  # patched in tests
+
+# Process-wide default for search(..., freshness=None); set by the backtest harness (worker threads
+# do not inherit contextvars) so every Brave call in a research run is date-limited.
+_FRESHNESS_OVERRIDE: str | None = None
+
+
+@contextmanager
+def freshness_override(freshness: str | None):
+    """Within the block, searches without an explicit freshness use this value (pd/pw/pm/py or a date range)."""
+    global _FRESHNESS_OVERRIDE
+    prev, _FRESHNESS_OVERRIDE = _FRESHNESS_OVERRIDE, freshness
+    try:
+        yield
+    finally:
+        _FRESHNESS_OVERRIDE = prev
 
 
 class BraveError(Exception):
@@ -73,10 +89,16 @@ def _retry_wait(resp: Any, attempt: int) -> float:
     return min(2.0 ** attempt, BRAVE_BACKOFF_CAP_SEC)
 
 
-def search(query: str) -> list[dict[str, Any]]:
-    """Brave Web Search results (``web.results``) for ``query``; backs off and retries on HTTP 429."""
+def search(query: str, freshness: str | None = None) -> list[dict[str, Any]]:
+    """Brave Web Search results (web.results) for query; backs off and retries on HTTP 429.
+
+    freshness (optional): pd/pw/pm/py or a date range "YYYY-MM-DDtoYYYY-MM-DD".
+    """
     headers = _headers()
     params = {"q": query, "count": BRAVE_RESULTS_PER_QUERY, "extra_snippets": "true"}
+    freshness = freshness or _FRESHNESS_OVERRIDE
+    if freshness:
+        params["freshness"] = freshness
     for attempt in range(BRAVE_MAX_RETRIES + 1):
         try:
             resp = requests.get(BRAVE_URL, headers=headers, params=params, timeout=BRAVE_SEARCH_TIMEOUT_SEC)
@@ -218,9 +240,9 @@ def _build_page(result: dict[str, Any]) -> Page | None:
     )
 
 
-def search_pages(query: str, fetch_pages: int = BRAVE_FETCH_PAGES) -> list[Page]:
+def search_pages(query: str, fetch_pages: int = BRAVE_FETCH_PAGES, freshness: str | None = None) -> list[Page]:
     """Search ``query`` and read the top ``fetch_pages`` results; raises :class:`BraveError` on a failed search."""
-    results = search(query)[: max(0, fetch_pages)]
+    results = search(query, freshness=freshness)[: max(0, fetch_pages)]
     if not results:
         return []
     with ThreadPoolExecutor(max_workers=len(results)) as pool:
@@ -228,4 +250,4 @@ def search_pages(query: str, fetch_pages: int = BRAVE_FETCH_PAGES) -> list[Page]
     return [p for p in pages if p is not None]
 
 
-__all__ = ["BraveError", "Page", "fetch_page_text", "html_to_text", "search", "search_pages"]
+__all__ = ["BraveError", "Page", "fetch_page_text", "freshness_override", "html_to_text", "search", "search_pages"]

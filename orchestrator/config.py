@@ -62,9 +62,8 @@ DEFAULT_RESEARCH_WORKERS = 3
 RESEARCH_TICK_BUDGET_ENV = "PMBOT_RESEARCH_TICK_BUDGET_SEC"
 DEFAULT_RESEARCH_TICK_BUDGET_SEC = 1800
 
-# Phase 3 Forensic Pipeline — FULL stage: one round + one follow-up, then forced synthesis.
+# Phase 3 Forensic Pipeline — FULL stage: the judges are forced to synthesize (no needs_more rounds).
 MAX_FORMAT_RETRIES = 2
-MAX_RESEARCH_ITERATIONS = 2
 RESEARCH_DATA_MAX_CHARS = 4000
 
 FORCED_SYNTHESIS_OVERRIDE = (
@@ -300,7 +299,6 @@ __all__ = [
     "research_workers",
     "research_tick_budget_sec",
     "MAX_FORMAT_RETRIES",
-    "MAX_RESEARCH_ITERATIONS",
     "RESEARCH_DATA_MAX_CHARS",
     "FORCED_SYNTHESIS_OVERRIDE",
     "VAULT_PATH_ENV",

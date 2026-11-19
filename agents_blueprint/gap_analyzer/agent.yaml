@@ -1,0 +1,16 @@
+id: gap_analyzer
+description: Gap analyzer — marks each crux answered / unanswered / contradicted from the gathered evidence and proposes at most 3 reworded follow-up queries (price-blind).
+model: null
+tools:
+  allow: []
+input_schema:
+  market_id: string
+  title: string
+  end_date: "string | null"
+  today: string
+  cruxes: list[dict]
+output_schema:
+  market_id: string
+  assessments: list[dict]
+  follow_up_queries: list[dict]
+  error: "string | null"

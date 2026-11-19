@@ -72,8 +72,10 @@ def test_legacy_seed_version_migrates_to_one(tmp_path):
     v.write_file("Vault/00_System/active_directives.md", legacy)
     assert directive_version(legacy) == 1
     assert v.cold_start_protocol() is False
-    assert fm_of(v)["version"] == 1 and fm_of(v)["migrated_from"] == "0.1-seed"
-    assert (v.directives_history_dir() / "v1.md").exists()
+    # the legacy version migrates to 1, then the crux_v1 pipeline stamp bumps it once more (new scoring cohort)
+    assert fm_of(v)["version"] == 2 and fm_of(v)["research_pipeline"] == "crux_v1"
+    assert (v.directives_history_dir() / "v1.md").read_text().count("migrated_from: 0.1-seed") == 1
+    assert (v.directives_history_dir() / "v2.md").exists()
 
 
 def test_write_increments_and_archives_each_version(vault):
@@ -381,7 +383,7 @@ def test_quick_decision_uses_width_knob():
 
 
 def test_phase3_sample_spread_and_q_gap_follow_directives(monkeypatch, vault):
-    # samples 0.5/0.6/0.75: spread 0.25 -> skipped by default, researched once the knob is 0.25
+    # J1 0.5 vs flipped J2 0.75: framing gap 0.25 -> skipped by default, researched once the knob is 0.25
     def ran(mid: str, q: float, dr_p) -> list[dict]:
         w = World(monkeypatch, vault)
         w.market(mid, q)
@@ -390,7 +392,7 @@ def test_phase3_sample_spread_and_q_gap_follow_directives(monkeypatch, vault):
         out = phases.phase3_qualitative_pipeline(vault, runner=w.runner)
         return out
 
-    ps = {"s1": 0.5, "s2": 0.6, "s3": 0.75}
+    ps = {"j1": 0.5, "j2": 0.75}
     spread_p = lambda payload: (0.6, 0.5, 0.7) if payload["mode"] == "quick" else (ps[payload["session_tag"]], None, None)  # noqa: E731
     assert ran("s_default", 0.42, spread_p) == []
     write(vault, doc(research_max_sample_spread=0.25), enforce_bounds=False)

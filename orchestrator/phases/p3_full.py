@@ -1,151 +1,36 @@
-"""Phase 3 FULL stage: Briefer -> evidence -> Deep Researcher x3 -> Hub decision -> research report."""
+"""Phase 3 FULL stage: crux pipeline (scout -> architect -> search -> gap -> audit) -> two judges -> Hub decision -> report.
+
+The question-led pipeline itself lives in :mod:`orchestrator.phases.p3_research`; this module wires it into the
+per-market flow (evidence reuse, no_evidence skip, aggregation, skips, report, ledger/research state).
+"""
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import ValidationError
-
 from obsidian_utils import ObsidianManager
-import agents_blueprint  # module import (not from-import) avoids a cycle when agents_blueprint is imported first
 from orchestrator import evidence, scraper
-from orchestrator.agent_outputs import (
-    BrieferOutput,
-    DeepResearcherComplete,
-    DeepResearcherNeedsMore,
-)
-from orchestrator.config import FORCED_SYNTHESIS_OVERRIDE, MAX_RESEARCH_ITERATIONS
 from orchestrator.directives import extract_filter_directives
 from orchestrator.live_prompt import today_date
-from orchestrator.parse import (
-    agent_error_reason,
-    normalize_structured_output,
-    run_agent_with_format_retries,
-)
-from orchestrator.phases.agent_call import invoke_deep_researcher
+from orchestrator.phases import p3_research
 from orchestrator.phases.common import (
     _as_float,
-    _dr_payload,
     _ledger_market_fields,
     _ledger_safe,
-    _text_fields,
     log,
 )
-from orchestrator.phases.p3_evidence import (
-    _bundle_has_entries,
-    _ensure_as_of,
-    _fetch_and_persist_bundle,
-)
+from orchestrator.phases.p3_evidence import _bundle_has_entries
 from orchestrator.phases.research_state import _record_attempt, _skip_research
 from orchestrator.phases.p3_samples import (  # noqa: F401  (re-exported; split out of this module)
     _CONFIDENCE_RANK,
     Sample,
     ShadowFailure,
-    _extra_sample,
     _flag,
-    _indep_sample,
     aggregate_samples,
 )
-from orchestrator.phases.p3_samples import _collect_samples as _collect_samples_impl
 from orchestrator.runner import AgentRunner
 from orchestrator.state import InfraUnavailable, vault_write_or_flag
-
-def _plan_research_queries(
-    vault: ObsidianManager,
-    runner: AgentRunner,
-    row: dict[str, Any],
-    today: str,
-    shadow: bool = False,
-) -> list[str] | None:
-    market_id = row["market_id"]
-    brief_in = _text_fields(row, today)
-    spec = agents_blueprint.AGENTS["briefer"]
-
-    def _validate_briefer(parsed: dict[str, Any]) -> BrieferOutput:
-        normalized = normalize_structured_output(
-            "briefer",
-            brief_in,
-            parsed,
-            output_schema=spec.get("output_schema"),
-        )
-        return BrieferOutput.model_validate(normalized)
-
-    try:
-        brief = run_agent_with_format_retries(
-            runner, "briefer", brief_in, validate_fn=_validate_briefer
-        )
-    except ValidationError as exc:
-        _flag(
-            vault,
-            market_id,
-            "phase3",
-            f"briefer output validation failed: {exc}",
-            brief_in,
-            shadow,
-        )
-        return None
-
-    err = agent_error_reason(brief.model_dump())
-    if err:
-        _flag(vault, market_id, "phase3", f"briefer error: {err}", brief.model_dump(), shadow)
-        return None
-
-    return [_ensure_as_of(q, today) for q in brief.research_queries]
-
-
-def _research_loop(
-    vault: ObsidianManager,
-    runner: AgentRunner,
-    row: dict[str, Any],
-    directives: str,
-    today: str,
-    tag: str,
-    shadow: bool = False,
-) -> DeepResearcherComplete | None:
-    """Lead FULL sample: one round, one follow-up round, then forced synthesis."""
-    market_id = row["market_id"]
-    last_out: DeepResearcherComplete | DeepResearcherNeedsMore | None = None
-
-    for _ in range(MAX_RESEARCH_ITERATIONS):
-        dr_in = _dr_payload(
-            row, directives, vault.read_research_bundle(market_id) or [],
-            mode="full", today=today, session_tag=tag,
-        )
-        try:
-            last_out = invoke_deep_researcher(runner, dr_in)
-        except ValidationError as exc:
-            _flag(
-                vault, market_id, "phase3",
-                f"deep researcher output validation failed: {exc}", dr_in, shadow,
-            )
-            return None
-        if isinstance(last_out, DeepResearcherComplete):
-            return last_out
-        _fetch_and_persist_bundle(
-            vault, market_id, list(last_out.new_queries), runner, today
-        )
-
-    override_in = _dr_payload(
-        row, directives, vault.read_research_bundle(market_id) or [],
-        mode="full", today=today, system_override=FORCED_SYNTHESIS_OVERRIDE,
-        session_tag=tag,
-    )
-    try:
-        forced = invoke_deep_researcher(runner, override_in)
-    except ValidationError as exc:
-        _flag(
-            vault, market_id, "phase3",
-            f"deep researcher forced synthesis validation failed: {exc}", override_in, shadow,
-        )
-        return None
-    if isinstance(forced, DeepResearcherNeedsMore):
-        _flag(
-            vault, market_id, "phase3",
-            "deep researcher disobeyed forced synthesis override", forced.model_dump(), shadow,
-        )
-        return None
-    return forced
 
 
 def _prepare_evidence(
@@ -158,18 +43,19 @@ def _prepare_evidence(
     shared_meta: dict[str, Any] | None,
     shadow: bool = False,
 ) -> bool:
-    """Ensure the market has an evidence bundle; ``False`` after a flagged Briefer failure."""
+    """Ensure the market has an evidence bundle (always ``True``: helper-role failures degrade, never flag).
+
+    A same-event sibling reuses the first market's bundle (and its crux table); an existing usable bundle is reused;
+    otherwise the crux evidence stage runs.
+    """
     market_id = row["market_id"]
     if shared_bundle:  # same-event sibling: reuse the first market's evidence
         vault.clear_research_bundle(market_id)
         vault.write_research_bundle(market_id, shared_bundle, meta=shared_meta)
     elif refresh or not _bundle_has_entries(vault.read_research_bundle(market_id)):
-        if refresh:
-            vault.clear_research_bundle(market_id)
-        queries = _plan_research_queries(vault, runner, row, today, shadow)
-        if queries is None:
-            return False
-        _fetch_and_persist_bundle(vault, market_id, queries, runner, today)
+        depth = p3_research.research_depth(row.get("market_data") or {})
+        log.info("[PHASE 3] RESEARCH_DEPTH=%s for %s", depth, market_id)
+        p3_research.build_evidence(vault, runner, row, today, depth)
     return True
 
 
@@ -181,11 +67,16 @@ def _collect_samples(
     today: str,
     shadow: bool = False,
 ) -> list[Sample] | None:
-    """Lead sample plus independent extra samples; ``None`` after an inactive flag."""
-    # ``_research_loop`` is looked up here at call time so patches on this module still apply.
-    return _collect_samples_impl(
-        vault, runner, row, directives, today, shadow, research_loop=_research_loop
-    )
+    """The two judge samples (J1 P(YES), J2 P(NO)); one failed judge is tolerated, both flag the market."""
+    market_id = row["market_id"]
+    crux_meta = vault.read_research_bundle_meta(market_id).get("crux_meta")
+    samples, failed = p3_research.run_judges(vault, runner, row, directives, today, crux_meta)
+    if not samples:
+        _flag(
+            vault, market_id, "phase3", "both deep researcher judges failed", {"failed": failed}, shadow,
+        )
+        return None
+    return samples
 
 
 def _write_research_report(
@@ -197,10 +88,10 @@ def _write_research_report(
     samples: list[Sample],
     ev_source: str,
     ev_fallback: bool,
-    indep: dict[str, Any] | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> bool:
     """Persist the chosen sample's report to ``02_Active_Research/``."""
-    chosen, chosen_research = samples[agg["chosen"]]
+    chosen, chosen_research = samples[agg["chosen"]][:2]
     payload = {
         "market_id": market_id,
         "estimated_p": agg["p"],
@@ -218,7 +109,7 @@ def _write_research_report(
         "samples": agg["samples"],
         "evidence_source": ev_source,
         "evidence_fallback": ev_fallback,
-        **(indep or {}),
+        **(extra or {}),
     }
     return vault_write_or_flag(
         vault=vault,
@@ -242,7 +133,7 @@ def _research_market(
     shadow: bool = False,
     quick: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    """FULL stage for one market: Briefer -> A-IQ -> Deep Researcher x3 -> Hub decision.
+    """FULL stage for one market: crux evidence pipeline -> two judges (J1 YES, J2 NO) -> Hub decision.
 
     ``shadow`` (measure only, a quick no_divergence skip): runs the same research but writes no
     report and leaves ``research_state`` untouched; one ``shadow_research`` ledger row, returns None.
@@ -314,15 +205,16 @@ def _research_market_body(
     ev_meta = vault.read_research_bundle_meta(market_id)
     ev_source = ev_meta.get("evidence_source") or evidence.AIQ  # legacy bundles were A-IQ
     ev_fallback = bool(ev_meta.get("evidence_fallback"))
+    framings = {(s[2] if len(s) > 2 else "yes") for s in samples}
+    failed = [tag for tag, framing in (("j1", "yes"), ("j2", "no")) if framing not in framings]
+    fields = p3_research.crux_fields(
+        ev_meta.get("crux_meta"), agg["spread"] if len(samples) == 2 else None, failed
+    )
     values = {
         "q": q, "p": agg["p"], "p_low": agg["p_low"], "p_high": agg["p_high"],
         "samples": agg["samples"], "spread": agg["spread"], "confidence": agg["confidence"],
-        "evidence_source": ev_source, "evidence_fallback": ev_fallback,
+        "evidence_source": ev_source, "evidence_fallback": ev_fallback, **fields,
     }
-    indep: dict[str, Any] = {}
-    if not shadow and evidence.is_indep_sample(market_id):
-        indep = _indep_sample(vault, runner, row, directives, today, ev_source, agg["p"])
-        values.update(indep)
     knobs = extract_filter_directives(directives)
     if shadow:
         would_skip = None
@@ -346,9 +238,9 @@ def _research_market_body(
         _skip_research(vault, row, "full", "probable_misread", **values)
         return None
 
-
+    offer_ev = p3_research.offer_evidence(vault.read_research_bundle(market_id) or [], today, samples)
     if not _write_research_report(
-        vault, market_id, md, q, agg, samples, ev_source, ev_fallback, indep
+        vault, market_id, md, q, agg, samples, ev_source, ev_fallback, {**fields, **offer_ev}
     ):
         return None
     _record_attempt(vault, row, "full", "researched", **values)
@@ -360,5 +252,5 @@ def _research_market_body(
         "market_data": md,
         "evidence_source": ev_source,
         "evidence_fallback": ev_fallback,
-        **indep,
+        **fields,
     }

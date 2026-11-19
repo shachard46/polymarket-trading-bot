@@ -103,7 +103,7 @@ def test_web_path_end_to_end_in_stub_mode(vault, monkeypatch):
     assert (vault._dirs["active"] / "web_cache.json").exists()
     assert not (vault._dirs["active"] / "aiq_cache.json").exists()
     bundle = vault.read_research_bundle("0xweb")
-    assert len(bundle) == 4 and all("stub web finding" in b["research_data"] for b in bundle)
+    assert len(bundle) >= 4 and all("stub web finding" in b["research_data"] and b["crux_id"] for b in bundle)
 
 
 def test_web_searcher_stub_error_yields_error_rows(monkeypatch):

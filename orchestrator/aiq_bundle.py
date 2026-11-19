@@ -150,6 +150,13 @@ def _write_cache(path: Path, cache: dict[str, dict[str, Any]]) -> None:
     write_json_atomic(path, cache, indent=1, sort_keys=True)
 
 
+def _written_after(entry: Any, now: float) -> bool:
+    try:
+        return isinstance(entry, dict) and float(entry["fetched_at"]) > now and bool(str(entry.get("research_data") or "").strip())
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
 def _fresh(entry: Any, now: float, ttl: float) -> bool:
     if not isinstance(entry, dict):
         return False
@@ -208,7 +215,8 @@ def fetch_research_bundle_cached(
             with _cache_lock:
                 try:
                     cache = _read_cache(cache_path)
-                    cache = {k: v for k, v in cache.items() if _fresh(v, clock, ttl_sec)}
+                    # keep entries a concurrent call wrote with a later clock (negative age here), not only fresh ones
+                    cache = {k: v for k, v in cache.items() if _fresh(v, clock, ttl_sec) or _written_after(v, clock)}
                     for key, row in rows.items():
                         if not row.get("error") and str(row.get("research_data") or "").strip():
                             cache[key] = {"fetched_at": clock, "research_data": row["research_data"]}

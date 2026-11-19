@@ -37,18 +37,32 @@ def _assert_failed_not_flagged(vault, mid, world):
     assert vault.read_active_research(mid) is None
 
 
-def test_shadow_briefer_error(world, vault):
+def test_shadow_both_judges_fail(world, vault):
+    mid = _shadow_market(world, vault)
+    orig = world.runner
+
+    def runner(role, payload):
+        if role == "deep_researcher" and payload.get("mode") == "judge":
+            return {"status": "needs_more_data", "new_queries": ["x as of today"]}
+        return orig(role, payload)
+
+    world.runner = runner
+    _assert_failed_not_flagged(vault, mid, world)
+    assert "judges failed" in _rows(vault, "shadow_failed")[0]["reason"]
+
+
+def test_shadow_architect_error_degrades_to_templates_and_still_runs(world, vault):
     mid = _shadow_market(world, vault)
     orig = world.runner
 
     def runner(role, payload):
         if role == "briefer":
-            return {"market_id": mid, "research_queries": [], "error": "boom"}
+            return {"market_id": mid, "cruxes": [], "error": "boom"}
         return orig(role, payload)
 
     world.runner = runner
-    _assert_failed_not_flagged(vault, mid, world)
-    assert "briefer" in _rows(vault, "shadow_failed")[0]["reason"]
+    assert phases.phase3_qualitative_pipeline(vault, runner=world.runner) == []
+    assert not _rows(vault, "shadow_failed") and len(_rows(vault, "shadow_research")) == 1
 
 
 def test_shadow_deep_researcher_bad_markdown(world, vault):
@@ -57,7 +71,7 @@ def test_shadow_deep_researcher_bad_markdown(world, vault):
 
     def runner(role, payload):
         out = orig(role, payload)
-        if role == "deep_researcher" and payload.get("mode") == "full":
+        if role == "deep_researcher" and payload.get("mode") == "judge":
             out["markdown"] = "not frontmatter"
         return out
 
@@ -65,16 +79,14 @@ def test_shadow_deep_researcher_bad_markdown(world, vault):
     _assert_failed_not_flagged(vault, mid, world)
 
 
-def test_shadow_unexpected_exception(world, vault):
+def test_shadow_unexpected_exception(world, vault, monkeypatch):
     mid = _shadow_market(world, vault)
-    orig = world.runner
+    from orchestrator.phases import p3_research
 
-    def runner(role, payload):
-        if role == "briefer":
-            raise RuntimeError("weird")
-        return orig(role, payload)
+    def boom(*a, **k):
+        raise RuntimeError("weird")
 
-    world.runner = runner
+    monkeypatch.setattr(p3_research, "run_judges", boom)
     _assert_failed_not_flagged(vault, mid, world)
 
 

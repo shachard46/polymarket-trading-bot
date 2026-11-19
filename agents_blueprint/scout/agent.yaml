@@ -1,0 +1,23 @@
+id: scout
+description: Landscape scout — reads one broad evidence pull for a market and maps the event, actors, resolution source, schedule and disputes (never estimates; price-blind).
+model: null
+tools:
+  allow: []
+input_schema:
+  market_id: string
+  title: string
+  description: string
+  resolution_source: "string | null"
+  end_date: "string | null"
+  category: "string | null"
+  today: string
+  evidence: list[dict]
+output_schema:
+  market_id: string
+  event: string
+  deciding_actors: list[str]
+  resolution_source: "string | null"
+  scheduled: list[str]
+  contested: list[str]
+  main_sources: list[str]
+  error: "string | null"

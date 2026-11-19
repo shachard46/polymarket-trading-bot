@@ -114,11 +114,20 @@ def test_build_offer_title_url_end_date_and_theses(vault):
     assert offer2["description"] == "A b."
 
 
-def test_thesis_bullets():
-    body = "## Bull Thesis\n\n- one\n- two **x**\n\n## Bear Thesis\n\n- bad\n\n## Post-Mortem\n"
-    assert notify._thesis_bullets(body, "Bull Thesis") == ["one", "two **x**"]
-    assert notify._thesis_bullets(body, "Bear Thesis") == ["bad"]
-    assert notify._thesis_bullets("none", "Bull Thesis") == []
+def test_offer_evidence_comes_from_frontmatter_not_markdown(vault):
+    vault.write_research_report(
+        "0xev",
+        {"market_id": "0xev", "estimated_p": 0.6, "p_low": 0.5, "p_high": 0.7,
+         "evidence_bull": ["Rates held | https://a.example/x | 2026-11-01"],
+         "evidence_bear": ["Inflation rose | https://b.example/y | 2026-11-02"]},
+        "## Bull Thesis\n\n- markdown bullet\n\n## Bear Thesis\n\n- markdown bear\n\n## Post-Mortem\n",
+    )
+    assert notify._evidence_theses(vault, "0xev") == {
+        "evidence_bull": ["Rates held | https://a.example/x | 2026-11-01"],
+        "evidence_bear": ["Inflation rose | https://b.example/y | 2026-11-02"],
+    }
+    vault.write_research_report("0xold", {"market_id": "0xold", "estimated_p": 0.6}, "## Bull Thesis\n\n- x\n")
+    assert notify._evidence_theses(vault, "0xold") == {"evidence_bull": [], "evidence_bear": []}
 
 
 def test_render_digest():

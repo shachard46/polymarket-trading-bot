@@ -19,7 +19,6 @@ from orchestrator.stats.groups import (
     false_negative_rate,
     fit_lambda,
     gate_flag_stats,
-    independent_sample_stats,
     market_integrity_stats,
     resolutions,
     scored_triples,
@@ -53,7 +52,6 @@ def compute_stats(
     out["brier_shadow"] = brier_shadow(rows)
     out["triage_shadow"] = triage_shadow_stats(rows)
     out["signal_coverage"] = signal_coverage_stats(rows)
-    out["indep_sample"] = independent_sample_stats(rows)
     out["gate_flags"] = gate_flag_stats(rows)
     out["market_integrity"] = market_integrity_stats(rows)
     out["calibration"] = calibration_table(triples)
@@ -152,13 +150,6 @@ def _render_triage_shadow(s: dict[str, Any]) -> list[str]:
     for kind, (n, bp, bq) in s.get("triage_shadow", {}).items():
         L.append(f"| {kind} | {n} | {_fmt(bp)} | {_fmt(bq)} |")
     return L
-
-
-def _render_indep(s: dict[str, Any]) -> list[str]:
-    ind = s.get("indep_sample", {"n": 0, "mean_abs_gap": None, "n_resolved": 0, "brier_p": None, "brier_indep": None})
-    return ["", "### Independent evidence sample", "",
-            f"Research rows with indep_p: {ind['n']}; mean |indep_gap|: {_fmt(ind['mean_abs_gap'])}. "
-            f"Resolved: {ind['n_resolved']}; Brier(median p) {_fmt(ind['brier_p'])} vs Brier(indep_p) {_fmt(ind['brier_indep'])}."]
 
 
 def _render_gate_flags(s: dict[str, Any]) -> list[str]:
@@ -292,7 +283,7 @@ def render_stats(s: dict[str, Any]) -> str:
     L += _render_brier_by(s, "model", "model", "brier_by_model")
     L += _render_brier_by(s, "provider", "provider", "brier_by_provider")
     for section in (
-        _render_shadow, _render_signal_coverage, _render_triage_shadow, _render_indep,
+        _render_shadow, _render_signal_coverage, _render_triage_shadow,
         _render_gate_flags, _render_integrity, _render_offers, _render_calibration,
         _render_pnl, _render_counterfactual, _render_false_negative_and_lambda, _render_cost,
         _render_web_filter,

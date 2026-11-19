@@ -56,6 +56,9 @@ def test_two_stub_ticks(tmp_path, monkeypatch):
     stages = {(r["market_id"], r["stage"], r.get("reason")) for r in ledger.iter_rows(vault)}
     assert ("ok2", "research_skip", "no_divergence") in stages
     assert ("ok1", "traded", None) in stages
+    traded = [r for r in ledger.iter_rows(vault) if r["market_id"] == "ok1" and r["stage"] == "traded"][0]
+    assert traded["pipeline"] == "crux_v1" and traded["cruxes_total"] >= 5  # crux fields reach the ledger
+    assert fm["pipeline"] == "crux_v1" and fm["cruxes_total"] >= 5
     # tick 2 did not redo the skipped quick research for ok2
     skips = [r for r in ledger.iter_rows(vault) if r["market_id"] == "ok2" and r["stage"] == "research_skip"]
     assert len(skips) == 1

@@ -10,14 +10,49 @@ from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, mo
 DeepResearcherOutput = Union["DeepResearcherNeedsMore", "DeepResearcherComplete"]
 
 
-BRIEFER_QUERY_SLOTS = 4  # resolution/polarity, base rate, current state, disconfirming evidence
+BRIEFER_QUERY_SLOTS = 4  # legacy fixed-slot briefer output (resolution/polarity, base rate, current state, disconfirming)
+CRUX_ROLES = ("mechanism", "comparator", "evidence", "horizon", "skeptic")
+REQUIRED_CRUX_ROLES = ("mechanism", "comparator", "skeptic", "horizon")
+CRUX_STATUSES = ("answered", "unanswered", "contradicted")
+
+
+class CruxSpec(BaseModel):
+    """One research question from the architect: role, question, 1-2 queries, what moves p."""
+
+    model_config = ConfigDict(extra="allow")
+
+    role: Literal["mechanism", "comparator", "evidence", "horizon", "skeptic"]
+    question: str
+    queries: list[str]
+    moves_p_if: str = ""
+
+    @field_validator("question", "moves_p_if")
+    @classmethod
+    def _strip(cls, value: str) -> str:
+        return str(value or "").strip()
+
+    @field_validator("queries")
+    @classmethod
+    def _clean_queries(cls, value: list[str]) -> list[str]:
+        return [str(q).strip() for q in value if str(q).strip()]
+
+    @model_validator(mode="after")
+    def _has_question_and_queries(self) -> "CruxSpec":
+        if not self.question:
+            raise ValueError("crux question must be non-empty")
+        if not 1 <= len(self.queries) <= 2:
+            raise ValueError("crux queries must contain 1 to 2 non-empty strings")
+        return self
 
 
 class BrieferOutput(BaseModel):
+    """Architect output: ``cruxes``; the legacy four fixed-slot ``research_queries`` is still accepted."""
+
     model_config = ConfigDict(extra="allow")
 
     market_id: str
-    research_queries: list[str]
+    cruxes: list[CruxSpec] = []
+    research_queries: list[str] = []
     error: str | None = None
 
     @field_validator("research_queries")
@@ -26,15 +61,77 @@ class BrieferOutput(BaseModel):
         return [str(q).strip() for q in value if str(q).strip()]
 
     @model_validator(mode="after")
-    def _error_or_four_queries(self) -> "BrieferOutput":
-        if self.error:
+    def _error_or_cruxes_or_four_queries(self) -> "BrieferOutput":
+        if self.error or self.cruxes:
             return self
         if len(self.research_queries) != BRIEFER_QUERY_SLOTS:
             raise ValueError(
-                f"research_queries must contain exactly {BRIEFER_QUERY_SLOTS} non-empty "
-                "strings (fixed slots) when error is null"
+                "briefer must return non-empty cruxes (or, legacy, exactly "
+                f"{BRIEFER_QUERY_SLOTS} research_queries) when error is null"
             )
         return self
+
+
+class ScoutOutput(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    market_id: str
+    event: str = ""
+    deciding_actors: list[str] = []
+    resolution_source: str | None = None
+    scheduled: list[str] = []
+    contested: list[str] = []
+    main_sources: list[str] = []
+    error: str | None = None
+
+
+class CruxAssessment(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    crux_id: str
+    status: Literal["answered", "unanswered", "contradicted"]
+    missing: str = ""
+
+
+class FollowUpQuery(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    crux_id: str
+    query: str
+
+
+class GapOutput(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    market_id: str
+    assessments: list[CruxAssessment] = []
+    follow_up_queries: list[FollowUpQuery] = []
+    error: str | None = None
+
+
+class AuditVerdict(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    supported: bool
+    reason: str = ""
+
+
+class AuditOutput(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    market_id: str
+    verdicts: list[AuditVerdict] = []
+    error: str | None = None
+
+
+class CruxVerdict(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    crux_id: str
+    direction: Literal["yes", "no", "neutral"] = "neutral"
+    cited: list[str] = []
+    note: str = ""
 
 
 class DeepResearcherNeedsMore(BaseModel):
@@ -73,11 +170,13 @@ class DeepResearcherComplete(BaseModel):
     as_of: date
     markdown: str
     error: str | None = None
+    base_rate: float | None = None  # judge mode: the comparator's base rate for the asked outcome
+    crux_verdicts: list[CruxVerdict] = []  # judge mode: which way each crux pushes, with cited E-ids
 
-    @field_validator("estimated_p", "p_low", "p_high")
+    @field_validator("estimated_p", "p_low", "p_high", "base_rate")
     @classmethod
-    def _p_in_unit_interval(cls, value: float) -> float:
-        if not (0.0 <= value <= 1.0):
+    def _p_in_unit_interval(cls, value: float | None) -> float | None:
+        if value is not None and not (0.0 <= value <= 1.0):
             raise ValueError(f"probability must be in [0, 1], got {value}")
         return value
 
@@ -128,8 +227,16 @@ def parse_deep_researcher_json(parsed: dict[str, Any]) -> DeepResearcherOutput:
 
 
 __all__ = [
+    "AuditOutput",
     "BRIEFER_QUERY_SLOTS",
     "BrieferOutput",
+    "CRUX_ROLES",
+    "CRUX_STATUSES",
+    "CruxSpec",
+    "CruxVerdict",
+    "GapOutput",
+    "REQUIRED_CRUX_ROLES",
+    "ScoutOutput",
     "DeepResearcherComplete",
     "DeepResearcherNeedsMore",
     "DeepResearcherOutput",
