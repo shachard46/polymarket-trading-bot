@@ -7,18 +7,27 @@ same ``vault.write_research_bundle`` format, so ``deep_researcher`` is unchanged
 
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 from pathlib import Path
 from typing import Any, Callable
 
-from config.trading_constants import INDEP_SAMPLE_RATE, SHADOW_RATE
-from orchestrator import config
+from config.trading_constants import (
+    BRAVE_QUERY_WORKERS,
+    EVIDENCE_STALE_DAYS,
+    GEMINI_QUERY_WORKERS,
+    INDEP_SAMPLE_RATE,
+    SHADOW_RATE,
+)
+from orchestrator import brave_search, config
 from orchestrator.aiq_bundle import fetch_research_bundle_cached, normalize_query
 from orchestrator.config import RESEARCH_DATA_MAX_CHARS
 from orchestrator.util import truncate_lines
-from orchestrator.web_filter import NOT_FOUND, filter_rows
+from orchestrator.web_filter import _URL_RE, NOT_FOUND, filter_rows, normalize_url
 from orchestrator.parse import AgentOutputParseError, parse_agent_json_or_yaml
 from orchestrator.schema_validation import AgentSchemaError
 from orchestrator.state import InfraUnavailable
@@ -127,10 +136,74 @@ def fetch_web_rows(
     queries: list[str],
     today: str,
 ) -> list[dict[str, Any]]:
-    """``web_searcher`` call for ``queries``; rows aligned to the input, never raises.
+    """Web evidence rows for ``queries`` (aligned to the input, never raises except ``InfraUnavailable``).
 
-    If no row is usable (errors, wrong shape, only ``NOT_FOUND``) the call is retried once.
+    Backend (``config.web_backend()``): Brave search + page fetch + ``web_extractor``, or the gemini
+    ``web_searcher`` (one query per call, in parallel). A query whose Brave path errors falls back to gemini.
     """
+    if config.web_backend() == config.WEB_BACKEND_BRAVE:
+        rows = _brave_rows(runner, market_id, queries, today)
+        failed = [i for i, r in enumerate(rows) if r.get("error")]
+        if failed:
+            log.warning(
+                "[WEB-FALLBACK] %s: brave failed for %d/%d queries; using gemini web_searcher",
+                market_id, len(failed), len(queries),
+            )
+            fallback = _gemini_rows(runner, market_id, [queries[i] for i in failed], today)
+            for i, r in zip(failed, fallback):
+                rows[i] = r
+        backend = config.WEB_BACKEND_BRAVE
+    else:
+        rows, backend = _gemini_rows(runner, market_id, queries, today), config.WEB_BACKEND_GEMINI
+    _log_pages(market_id, backend, rows)
+    return rows
+
+
+def _count_urls(text: str) -> int:
+    """Distinct URLs in a row's fact lines (the pages that actually back the kept facts)."""
+    return len({normalize_url(m.group(0)) for m in _URL_RE.finditer(text or "")})
+
+
+def _log_pages(market_id: str, backend: str, rows: list[dict[str, Any]]) -> None:
+    counts = [_count_urls(r.get("research_data") or "") if row_usable(r) else 0 for r in rows]
+    avg = sum(counts) / len(counts) if counts else 0.0
+    log.info(
+        "[WEB-PAGES] %s backend=%s queries=%d pages_per_query=%s avg=%.2f empty=%d",
+        market_id, backend, len(counts), counts, avg, sum(1 for c in counts if c == 0),
+    )
+
+
+def _run_parallel(fn: Callable[[Any], Any], items: list[Any], workers: int) -> list[Any]:
+    """``fn`` over ``items`` in a thread pool, order kept; each call gets a copy of the caller's context."""
+    if len(items) <= 1:
+        return [fn(i) for i in items]
+    with ThreadPoolExecutor(max_workers=max(1, min(workers, len(items)))) as pool:
+        futures = [pool.submit(contextvars.copy_context().run, fn, i) for i in items]
+        return [f.result() for f in futures]
+
+
+def _gemini_rows(
+    runner: Callable[[str, dict[str, Any]], Any],
+    market_id: str,
+    queries: list[str],
+    today: str,
+) -> list[dict[str, Any]]:
+    """Gemini backend: ONE query per ``web_searcher`` call (so each gets the full search budget), in parallel."""
+    if len(queries) <= 1:
+        return _gemini_one(runner, market_id, list(queries), today)
+    per_query = _run_parallel(
+        lambda q: _gemini_one(runner, market_id, [q], today), list(queries), GEMINI_QUERY_WORKERS
+    )
+    return [rows[0] for rows in per_query]
+
+
+def _gemini_one(
+    runner: Callable[[str, dict[str, Any]], Any],
+    market_id: str,
+    queries: list[str],
+    today: str,
+) -> list[dict[str, Any]]:
+    """One ``web_searcher`` call; if no row is usable (errors, wrong shape, only ``NOT_FOUND``) retried once."""
     rows = _fetch_web_rows_once(runner, market_id, queries, today)
     if queries and not rows_usable(rows):
         log.warning("[WEB-RETRY] %s: no usable web evidence; retrying web_searcher once", market_id)
@@ -138,42 +211,36 @@ def fetch_web_rows(
     return rows
 
 
-def _fetch_web_rows_once(
+def _agent_rows(
     runner: Callable[[str, dict[str, Any]], Any],
+    role: str,
+    payload: dict[str, Any],
     market_id: str,
     queries: list[str],
-    today: str,
 ) -> list[dict[str, Any]]:
-    """One ``web_searcher`` call and its filtered, sanitized rows."""
+    """One ``web_searcher``-schema agent call; unfiltered rows aligned to ``queries``, never raises."""
 
     def fail(msg: str) -> list[dict[str, Any]]:
         return [{"query": q, "research_data": "", "error": msg} for q in queries]
 
-    from orchestrator import direct_runner  # noqa: PLC0415 - lazy: keeps provider SDKs out of stub mode
-
-    direct_runner.reset_last_call()  # a stale value from an earlier call must never be read
     try:
-        raw = runner("web_searcher", {"market_id": market_id, "queries": list(queries), "today": today})
+        raw = runner(role, payload)
     except AgentSchemaError as exc:
-        return fail(f"web_searcher schema mismatch: {exc.cause}")
+        return fail(f"{role} schema mismatch: {exc.cause}")
     except InfraUnavailable:
         raise
     except Exception as exc:  # noqa: BLE001
-        return fail(f"web_searcher failed: {exc}")
+        return fail(f"{role} failed: {exc}")
     try:
         parsed = raw if isinstance(raw, dict) else parse_agent_json_or_yaml(raw)
     except AgentOutputParseError as exc:
-        return fail(f"web_searcher parse error: {exc}")
+        return fail(f"{role} parse error: {exc}")
     results = _salvage_results(parsed, queries)
     if results is None:
         if parsed.get("error"):
-            return fail(f"web_searcher error: {parsed['error']}")
+            return fail(f"{role} error: {parsed['error']}")
         results = parsed.get("results") or []
-    by_query = {
-        normalize_query(r.get("query", "")): r
-        for r in results
-        if isinstance(r, dict)
-    }
+    by_query = {normalize_query(r.get("query", "")): r for r in results if isinstance(r, dict)}
     rows = []
     for q in queries:
         r = by_query.get(normalize_query(q))
@@ -188,10 +255,10 @@ def _fetch_web_rows_once(
                     "error": str(err) if err else None,
                 }
             )
-    # last_model() is None when no real provider call happened (stub / injected runner): nothing to verify.
-    web_call = direct_runner.last_model() is not None
-    rows, counts = filter_rows(rows, direct_runner.last_citations(), strict=web_call)
-    model = direct_runner.last_model() or "stub"
+    return rows
+
+
+def _record_filter(market_id: str, model: str, counts: Any) -> None:
     log.info(
         "[WEB-FILTER] %s model=%s kept=%d dropped_no_url=%d dropped_unretrieved=%d dropped_unverifiable=%d",
         market_id, model, counts.kept, counts.dropped_no_url, counts.dropped_unretrieved,
@@ -203,7 +270,140 @@ def _fetch_web_rows_once(
         model, counts.kept, counts.dropped_no_url, counts.dropped_unretrieved, market_id=market_id,
         dropped_unverifiable=counts.dropped_unverifiable,
     )
+
+
+def _fetch_web_rows_once(
+    runner: Callable[[str, dict[str, Any]], Any],
+    market_id: str,
+    queries: list[str],
+    today: str,
+) -> list[dict[str, Any]]:
+    """One gemini ``web_searcher`` call and its filtered, sanitized rows."""
+    from orchestrator import direct_runner  # noqa: PLC0415 - lazy: keeps provider SDKs out of stub mode
+
+    direct_runner.reset_last_call()  # a stale value from an earlier call must never be read
+    rows = _agent_rows(
+        runner, "web_searcher", {"market_id": market_id, "queries": list(queries), "today": today},
+        market_id, queries,
+    )
+    # last_model() is None when no real provider call happened (stub / injected runner): nothing to verify.
+    web_call = direct_runner.last_model() is not None
+    rows, counts = filter_rows(rows, direct_runner.last_citations(), strict=web_call)
+    _record_filter(market_id, direct_runner.last_model() or "stub", counts)
     return sanitize_rows(rows)
+
+
+# ---- Brave backend --------------------------------------------------------------------------------
+
+BRAVE_MODEL = "brave+web_extractor"
+_UNKNOWN_DATE_TAIL_RE = re.compile(r"\|\s*unknown\s*$", re.IGNORECASE)
+
+
+def _fill_dates(text: str, ages: dict[str, str]) -> str:
+    """Replace a trailing ``| unknown`` date with Brave's page_age for that line's URL, when it has one."""
+    out = []
+    for line in text.splitlines():
+        m = _URL_RE.search(line)
+        age = ages.get(normalize_url(m.group(0))) if m else None
+        out.append(_UNKNOWN_DATE_TAIL_RE.sub(f"| {age}", line) if age and _UNKNOWN_DATE_TAIL_RE.search(line) else line)
+    return "\n".join(out)
+
+
+def _brave_one(
+    runner: Callable[[str, dict[str, Any]], Any], market_id: str, query: str, today: str
+) -> dict[str, Any]:
+    try:
+        pages = brave_search.search_pages(query)
+    except brave_search.BraveError as exc:
+        return {"query": query, "research_data": "", "error": f"brave: {exc}"}
+    except Exception as exc:  # noqa: BLE001 - any search/fetch bug must fall back, not abort the tick
+        return {"query": query, "research_data": "", "error": f"brave failed: {exc}"}
+    if not pages:
+        return {"query": query, "research_data": NOT_FOUND, "error": None}
+    payload = {
+        "market_id": market_id,
+        "query": query,
+        "today": today,
+        "pages": [{"url": p.url, "title": p.title, "page_age": p.page_age, "text": p.text} for p in pages],
+    }
+    (row,) = _agent_rows(runner, "web_extractor", payload, market_id, [query])
+    row = {**row, "pages_fetched": len(pages)}
+    if row.get("error") or not str(row.get("research_data") or "").strip():
+        return row
+    ages = {normalize_url(p.url): p.page_age for p in pages if p.page_age}
+    row["research_data"] = _fill_dates(row["research_data"], ages)
+    # the pages handed to the extractor are exactly the retrieved set: airtight citation guard
+    (row,), counts = filter_rows([row], [p.url for p in pages], strict=True)
+    _record_filter(market_id, BRAVE_MODEL, counts)
+    return row
+
+
+def _brave_rows(
+    runner: Callable[[str, dict[str, Any]], Any],
+    market_id: str,
+    queries: list[str],
+    today: str,
+) -> list[dict[str, Any]]:
+    rows = _run_parallel(
+        lambda q: _brave_one(runner, market_id, q, today), list(queries), BRAVE_QUERY_WORKERS
+    )
+    log.info(
+        "[BRAVE-PAGES] %s pages_fetched_per_query=%s", market_id, [r.get("pages_fetched", 0) for r in rows]
+    )
+    return sanitize_rows([{k: v for k, v in r.items() if k != "pages_fetched"} for r in rows])
+
+
+# ---- Labelled evidence (A1) -----------------------------------------------------------------------
+
+_DATE_TAIL_RE = re.compile(r"\|\s*(\d{4}-\d{2}-\d{2})\s*(?:\(stale\))?\s*$")
+_NO_LABEL_PREFIXES = (REDACTED, NOT_FOUND, "[truncated")
+
+
+def _line_age_days(line: str, today: date | None) -> int | None:
+    m = _DATE_TAIL_RE.search(line)
+    if not m or today is None:
+        return None
+    try:
+        return max(0, (today - date.fromisoformat(m.group(1))).days)
+    except ValueError:
+        return None
+
+
+def label_bundle(bundle: list[dict[str, Any]], today: str) -> list[dict[str, Any]]:
+    """Copy of ``bundle`` whose evidence lines carry ``[E<n> | <age>d]`` / ``[E<n> | undated]`` labels.
+
+    Rendering only: stored bundles are never mutated. Ids run across the whole bundle. The age is days between
+    ``today`` and the line's trailing ``| YYYY-MM-DD`` field; lines with no such date (all A-IQ prose) are
+    ``undated``. Age above ``EVIDENCE_STALE_DAYS`` adds ``STALE``. Error rows and empty/NOT_FOUND/marker lines
+    are left unlabelled.
+    """
+    try:
+        today_d: date | None = date.fromisoformat(str(today)[:10])
+    except ValueError:
+        today_d = None
+    n = 0
+    out = []
+    for row in bundle or []:
+        data = str(row.get("research_data") or "")
+        if row.get("error") or not data.strip():
+            out.append(row)
+            continue
+        lines = []
+        for line in data.splitlines():
+            if not line.strip() or line.strip().startswith(_NO_LABEL_PREFIXES):
+                lines.append(line)
+                continue
+            n += 1
+            age = _line_age_days(line, today_d)
+            if age is None:
+                label = f"[E{n} | undated]"
+            elif age > EVIDENCE_STALE_DAYS:
+                label = f"[E{n} | {age}d | STALE]"
+            else:
+                label = f"[E{n} | {age}d]"
+            lines.append(f"{label} {line}")
+        out.append({**row, "research_data": "\n".join(lines)})
+    return out
 
 
 def fetch_web_bundle(
@@ -229,6 +429,7 @@ __all__ = [
     "fetch_web_bundle",
     "fetch_web_rows",
     "intended_source",
+    "label_bundle",
     "rows_usable",
     "sanitize_rows",
     "sanitize_text",

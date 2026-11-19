@@ -122,7 +122,8 @@ Contract changes from the Wave 3 research redesign (re-check the live prompts ag
 
 | Role | Critical contract changes |
 |------|---------------------------|
-| **web_searcher** | Agent for the `web` evidence arm. Input `{market_id, queries: list[str], today}`; tools `web_search`, `web_fetch`. Output `{market_id, results: [{query, research_data (<= 4000 chars, sourced and dated facts), error}], error}`. Price-blind: it must never report prediction-market or betting prices/odds; the Hub also redacts such lines. |
+| **web_searcher** | Agent for the `web` evidence arm. Input `{market_id, queries: list[str], today}`; tools `web_search`, `web_fetch`. Output `{market_id, results: [{query, research_data (<= 4000 chars, sourced and dated facts), error}], error}`. Price-blind: it must never report prediction-market or betting prices/odds; the Hub also redacts such lines. The Hub calls it with ONE query per call (parallel) so each query gets the full search budget. |
+| **web_extractor** | Agent for the Brave backend of the `web` arm (no tools). Input `{market_id, query, today, pages: [{url, title, page_age, text}]}` (pages fetched by the Hub); output same as web_searcher with exactly one result. Facts come only from the given pages, so the citation guard accepts exactly the fetched URLs; `| unknown` dates are filled from Brave's `page_age`. Price-blind like web_searcher. |
 | **briefer** | Input is price-blind text (`title`, `description`, `resolution_source`, `end_date`, `category`, `today`). Output `research_queries`: exactly 4 fixed-slot strings with `as of {today}`. `tools.allow` is empty; the Hub runs `execute_aiq_query`. |
 | **deep_researcher** | Price-blind input (no `q`), `mode`, `session_tag`. Complete output adds `p_low`, `p_high`, `confidence`, `resolution_checklist`, `key_assumptions`, `as_of`. JSON state machine, no agent tools. |
 | **executioner** | **Removed.** Phase 4 is deterministic Hub code. |

@@ -55,6 +55,13 @@ def _no_integrity_network(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_brave(monkeypatch):
+    """No test reaches Brave: the web arm uses the gemini path unless a test opts in."""
+    monkeypatch.delenv("BRAVE_API_KEY", raising=False)
+    monkeypatch.delenv("PMBOT_WEB_BACKEND", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _aiq_evidence_by_default(monkeypatch):
     """Existing phase tests exercise the A-IQ path; evidence tests override the env."""
     monkeypatch.setenv("PMBOT_EVIDENCE_SOURCE", "aiq")

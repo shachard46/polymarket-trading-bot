@@ -87,6 +87,24 @@ def _web_searcher_stub(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _web_extractor_stub(payload: dict[str, Any]) -> dict[str, Any]:
+    today = payload.get("today", "")
+    pages = payload.get("pages") or []
+    url = (pages[0].get("url") if pages and isinstance(pages[0], dict) else None) or "https://example.org/stub"
+    q = payload.get("query", "")
+    return {
+        "market_id": payload.get("market_id", "stub"),
+        "results": [
+            {
+                "query": q,
+                "research_data": f"- stub extracted finding for: {q} | {url} | {today or 'unknown'}",
+                "error": None,
+            }
+        ],
+        "error": None,
+    }
+
+
 def _deep_researcher_stub(payload: dict[str, Any]) -> dict[str, Any]:
     market_id = payload.get("market_id", "stub")
     today = payload.get("today") or "2026-01-01"
@@ -140,6 +158,7 @@ STUB_RESPONSES: dict[str, StubBuilder] = {
     "triage": _triage_stub,
     "briefer": _briefer_stub,
     "web_searcher": _web_searcher_stub,
+    "web_extractor": _web_extractor_stub,
     "deep_researcher": _deep_researcher_stub,
     "post_mortem_analyst": _post_mortem_stub,
     "overseer": _overseer_stub,

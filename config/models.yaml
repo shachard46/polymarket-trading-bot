@@ -11,6 +11,7 @@ roles:
   triage:          {provider: openrouter, model: deepseek/deepseek-v4.1-flash}
   briefer:         {provider: openrouter, model: deepseek/deepseek-v4.1-flash}
   web_searcher:    {provider: gemini, model: gemini-3.5-flash-lite, web_max_uses: 5, temperature: 0, reasoning: false}
+  web_extractor:   {provider: openrouter, model: deepseek/deepseek-v4.1-flash}
   deep_researcher: {provider: gemini, model: gemini-4-hydrogen}
   post_mortem_analyst: {provider: gemini, model: gemini-4-hydrogen}
   overseer:        {provider: gemini, model: gemini-4-hydrogen}

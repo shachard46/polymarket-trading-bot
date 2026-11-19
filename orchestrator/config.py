@@ -144,6 +144,32 @@ def evidence_source() -> str:
     return mode
 
 
+# Web search backend behind the "web" evidence arm: Brave Search + page fetch + extractor, or the gemini
+# web_searcher agent. Default: brave when BRAVE_API_KEY is set (live mode only), else gemini.
+WEB_BACKEND_ENV = "PMBOT_WEB_BACKEND"
+BRAVE_API_KEY_ENV = "BRAVE_API_KEY"
+WEB_BACKEND_BRAVE = "brave"
+WEB_BACKEND_GEMINI = "gemini"
+
+
+def web_backend() -> str:
+    """``brave`` | ``gemini``; read at call time. Unknown values raise.
+
+    Brave needs ``BRAVE_API_KEY`` and live runner mode; without them (or with ``PMBOT_WEB_BACKEND=gemini``)
+    the answer is gemini, so stub runs and tests never touch the network.
+    """
+    mode = os.environ.get(WEB_BACKEND_ENV, "").strip().lower()
+    if mode not in ("", WEB_BACKEND_BRAVE, WEB_BACKEND_GEMINI):
+        raise ValueError(
+            f"Invalid {WEB_BACKEND_ENV}={mode!r}; expected one of ['brave', 'gemini']"
+        )
+    if mode == WEB_BACKEND_GEMINI:
+        return WEB_BACKEND_GEMINI
+    if not os.environ.get(BRAVE_API_KEY_ENV, "").strip() or runner_mode() != RUNNER_MODE_LIVE:
+        return WEB_BACKEND_GEMINI
+    return WEB_BACKEND_BRAVE
+
+
 OVERSEER_MIN_NEW_RESOLVED_ENV = "OVERSEER_MIN_NEW_RESOLVED"
 DEFAULT_OVERSEER_MIN_NEW_RESOLVED = 30
 
@@ -266,6 +292,9 @@ __all__ = [
     "full_research_budget",
     "OVERSEER_MIN_NEW_RESOLVED_ENV",
     "overseer_min_new_resolved",
+    "WEB_BACKEND_ENV",
+    "BRAVE_API_KEY_ENV",
+    "web_backend",
     "RESEARCH_WORKERS_ENV",
     "RESEARCH_TICK_BUDGET_ENV",
     "research_workers",

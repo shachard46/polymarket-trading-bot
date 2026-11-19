@@ -123,6 +123,20 @@ KNOB_COOLDOWN_VERSIONS = 3          # a knob changed at version V may change aga
 AUTO_REVERT_MIN_SCORED = 30         # resolved scored markets a version needs before it is judged
 AUTO_REVERT_BRIER_WORSE_BY = 0.02   # current Brier worse than previous by more than this -> revert
 
+# Evidence quality: age labels on the bundle the deep researcher sees, and the Brave web backend.
+EVIDENCE_STALE_DAYS = 180           # bundle lines older than this are tagged STALE
+BRAVE_RESULTS_PER_QUERY = 10        # Brave Web Search results requested per query
+BRAVE_FETCH_PAGES = 5               # top results whose pages are fetched and read per query
+BRAVE_SEARCH_TIMEOUT_SEC = 15       # per Brave API request
+BRAVE_PAGE_TIMEOUT_SEC = 8          # per page fetch
+BRAVE_PAGE_MAX_BYTES = 500_000      # download cap per page (the rest is ignored)
+BRAVE_PAGE_TEXT_CHARS = 6000        # extracted text per page sent to the extractor
+BRAVE_QUERY_WORKERS = 4             # queries searched in parallel
+BRAVE_MAX_RETRIES = 3               # retries of one Brave request after HTTP 429
+BRAVE_BACKOFF_CAP_SEC = 10.0        # longest single wait after a 429
+BRAVE_USER_AGENT = "pmbot-research/1.0"
+GEMINI_QUERY_WORKERS = 4            # gemini backend: one web_searcher call per query, this many in parallel
+
 # Execution Safety
 PAPER_TRADE_MODE = True  # If True, execute_polymarket_trade logs the trade but does NOT hit the live API
 

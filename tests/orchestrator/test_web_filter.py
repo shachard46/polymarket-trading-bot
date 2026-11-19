@@ -261,10 +261,10 @@ def test_salvage_top_level_research_data_single_query():
 def test_salvage_multi_query_matches_by_query_or_text():
     qs = ["alpha query", "beta query"]
     raw = {"query": "Beta Query", "research_data": "- b | https://x.org | unknown"}
-    rows = evidence.fetch_web_rows(lambda role, pl: raw, "m", qs, "2026-01-01")
+    rows = evidence._fetch_web_rows_once(lambda role, pl: raw, "m", qs, "2026-01-01")
     assert rows[0]["error"] == "no result for query" and rows[1]["research_data"].startswith("- b")
     raw = {"research_data": "re alpha query: - a | https://x.org | unknown"}
-    rows = evidence.fetch_web_rows(lambda role, pl: raw, "m", qs, "2026-01-01")
+    rows = evidence._fetch_web_rows_once(lambda role, pl: raw, "m", qs, "2026-01-01")
     assert rows[0]["research_data"].startswith("re alpha") and rows[1]["error"] == "no result for query"
 
 

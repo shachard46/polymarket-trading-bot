@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 from obsidian_utils import FilterLogPayload, ObsidianManager
 from config.trading_constants import BELOW_EDGE_KEY
-from orchestrator import ledger
+from orchestrator import evidence, ledger
 
 from orchestrator.config import (
     RUNNER_MODE_LIVE,
@@ -232,7 +232,7 @@ def _dr_payload(
         **_text_fields(row, today),
         "mode": mode,
         "directives": directives,
-        "research_bundle": bundle,
+        "research_bundle": evidence.label_bundle(bundle, today),  # ids + ages at render time only
         "system_override": system_override,
         "format_validation_error": None,
         "session_tag": session_tag,

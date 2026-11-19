@@ -59,7 +59,8 @@ def test_indep_sample_fields_on_report_and_web_sanitized(world, vault):
     mid, web_calls = _setup(world, vault)
     out = phases.phase3_qualitative_pipeline(vault, runner=world.runner)
     (res,) = out
-    assert len(web_calls) == 1  # aiq main source -> web for the independent sample
+    # aiq main source -> web for the independent sample: one web_searcher call per query (gemini backend)
+    assert len(web_calls) == 4 and all(len(c["queries"]) == 1 for c in web_calls)
     indep_calls = [p for r, p in world.calls if r == "deep_researcher" and p.get("session_tag") == "indep"]
     assert len(indep_calls) == 1
     data = " ".join(e["research_data"] for e in indep_calls[0]["research_bundle"]) if "research_bundle" in indep_calls[0] else str(indep_calls[0])

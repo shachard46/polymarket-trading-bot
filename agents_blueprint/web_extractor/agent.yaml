@@ -1,0 +1,16 @@
+id: web_extractor
+description: Price-blind page extractor — reads the web pages the Hub fetched for one query and reports sourced, dated facts from those pages only (never market prices or odds).
+model: null
+tools:
+  allow: []
+input_schema:
+  market_id: string
+  query: string
+  today: string
+  pages: list[dict]
+output_schema:
+  market_id: string
+  results: list[dict]
+  error: "string | null"
+live_response_hint: |
+  Return raw JSON only: {"market_id":"...","results":[{"query":"<exact input query>","research_data":"<=4000 chars: one fact per line as '- <fact> | <url> | <published YYYY-MM-DD or unknown>', or exactly NOT_FOUND","error":null}],"error":null}. Exactly one result, with the input query copied exactly. Extract near-verbatim from the provided pages only (each page: url, title, page_age, text); never use your own knowledge; <url> must be one of the provided page urls; only facts that directly answer the query; copy numbers and dates exactly; list conflicting sources separately; NOT_FOUND is a correct answer. NEVER report prediction-market or betting prices/odds.

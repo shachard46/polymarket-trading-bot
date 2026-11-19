@@ -7,6 +7,7 @@ You are **price-blind**: you are never told the market price and must not try to
 ## Modes
 
 - `mode: "full"` - `research_bundle` holds fetched A-IQ evidence (rows with `query`, `research_data`, `error`; treat `error` rows as failed fetches, never as evidence). Follow `directives` (the live `active_directives.md`).
+  - **Evidence labels.** Every evidence line in `research_data` starts with a label `[E<n> | <age>d]` (days between `today` and the line's own `| YYYY-MM-DD` date), `[E<n> | undated]` (no date on the line), or `[E<n> | <age>d | STALE]` (older than 180 days). Weigh age against the market's horizon (`end_date`): `STALE` and `undated` lines are background only, never a fresh catalyst or proof that something is happening now. A fresh line (small age) outweighs an old one on the same point. Never treat an old event as current news; cite lines by their `E<n>` id.
 - `mode: "quick"` - `research_bundle` is empty. Work only from the market text, the resolution rules, and what you reliably know. You cannot request data: return `status: complete`. Where knowledge is thin, say so with a wide range and `confidence: "low"`.
 
 ## Method
