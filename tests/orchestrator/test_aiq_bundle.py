@@ -113,9 +113,23 @@ def test_fetch_research_bundle_truncates_long_research_data(monkeypatch):
 
     results = aiq_bundle.fetch_research_bundle(["long"])
     data = results[0]["research_data"]
-    assert len(data) <= RESEARCH_DATA_MAX_CHARS + len("\n...[truncated]")
-    assert data.endswith("...[truncated]")
+    assert len(data) <= RESEARCH_DATA_MAX_CHARS
+    assert data.endswith("[truncated]")
     assert data.startswith("x")
+
+
+def test_fetch_research_bundle_truncates_on_line_boundary(monkeypatch):
+    lines = [f"- fact {i} | https://x.org/{i} | unknown" for i in range(200)]
+
+    def fake_execute(query: str) -> FakeAiqOutput:
+        return FakeAiqOutput(research_data="\n".join(lines))
+
+    monkeypatch.setattr(aiq_bundle, "_load_execute_aiq_query", lambda: fake_execute)
+    data = aiq_bundle.fetch_research_bundle(["q"])[0]["research_data"]
+    body, marker = data.rsplit("\n", 1)
+    assert len(data) <= RESEARCH_DATA_MAX_CHARS
+    assert body.splitlines() == lines[: len(body.splitlines())]  # only whole lines kept
+    assert marker == f"[truncated: {200 - len(body.splitlines())} more lines]"
 
 
 def test_fetch_research_bundle_respects_aiq_timeout_env(monkeypatch):

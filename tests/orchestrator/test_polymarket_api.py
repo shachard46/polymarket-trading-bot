@@ -532,3 +532,20 @@ def test_integrity_fetchers_none_on_malformed_rows():
     assert api.fetch_trades("c") is None
     install(lambda url, p: {"bids": [{"price": "0.1"}], "asks": []})
     assert api.fetch_book("t") is None
+
+
+def test_list_candidates_pre_gate_refills_past_rejected_rows():
+    extreme = [gamma_market(conditionId=f"0xe{i}", bestBid=0.97, bestAsk=0.99) for i in range(3)]
+    ok = [gamma_market(conditionId=f"0xok{i}") for i in range(2)]
+    pages = [
+        {"markets": extreme, "next_cursor": "c1"},
+        {"markets": ok, "next_cursor": "c2"},
+    ]
+    sess = install(_candidates_handler(pages))
+    from orchestrator import gate
+
+    rejected: dict[str, int] = {}
+    rows = api.list_candidates(2, now=NOW, accept=lambda r: gate.eligibility(r), rejected=rejected)
+    assert [r["market_id"] for r in rows] == ["0xok0", "0xok1"]
+    assert len(sess.calls) == 2  # kept paging past the rejected first page
+    assert rejected == {"price_extreme": 3}

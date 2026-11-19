@@ -376,7 +376,7 @@ def test_phase2_uses_directive_knobs(vault):
 
 
 def test_quick_decision_uses_width_knob():
-    assert phases.quick_decision(0.3, 0.7, 0.5) == "escalate"  # width 0.4 > 0.3
+    assert phases.quick_decision(0.3, 0.7, 0.5) == "escalate"  # width 0.4 > 0.2
     assert phases.quick_decision(0.3, 0.7, 0.5, knobs_for(research_max_quick_width=0.45)["research_max_quick_width"]) == "no_divergence"
 
 

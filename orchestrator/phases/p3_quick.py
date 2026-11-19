@@ -28,12 +28,15 @@ class QuickResult(NamedTuple):
 
 
 def quick_decision(
-    p_low: float, p_high: float, q: float, max_width: float | None = None
+    p_low: float, p_high: float, q: float, max_width: float | None = None, confidence: str | None = None
 ) -> Literal["no_divergence", "escalate"]:
     """Hub decision after the QUICK stage: skip only when q sits inside a narrow range.
 
-    ``max_width`` is the directives knob ``research_max_quick_width`` (default constant).
+    ``max_width`` is the directives knob ``research_max_quick_width`` (default constant). A ``"low"``
+    confidence quick result never skips: the model says its knowledge is thin.
     """
+    if confidence == "low":
+        return "escalate"
     inside = p_low <= q <= p_high
     width = RESEARCH_MAX_QUICK_WIDTH if max_width is None else max_width
     if inside and (p_high - p_low) <= width:
@@ -81,7 +84,7 @@ def _quick_stage(
         "evidence_source": "none",  # the quick stage sees no evidence bundle
     }
     knobs = extract_filter_directives(directives)
-    if quick_decision(out.p_low, out.p_high, q, knobs["research_max_quick_width"]) == "no_divergence":
+    if quick_decision(out.p_low, out.p_high, q, knobs["research_max_quick_width"], out.confidence) == "no_divergence":
         _skip_research(vault, row, "quick", "no_divergence", **values)
         return QuickResult("skip", out.estimated_p, out.p_low, out.p_high)
     _record_attempt(vault, row, "quick", "escalate", **values)

@@ -22,7 +22,7 @@ CITES = ["https://www.example.org/a/", "http://news.com/x?id=1"]
 
 def test_no_url_dropped():
     text = "- a | https://example.org/a | unknown\n- b without source"
-    out, c = filter_research_data(text, None)
+    out, c = filter_research_data(text, None, strict=False)
     assert out == "- a | https://example.org/a | unknown"
     assert (c.kept, c.dropped_no_url, c.dropped_unretrieved) == (1, 1, 0)
 
@@ -48,12 +48,25 @@ def test_not_found_passthrough():
     assert out == NOT_FOUND and (c.kept, c.dropped_no_url, c.dropped_unretrieved) == (0, 0, 0)
 
 
-def test_citations_none_only_url_rule():
-    out, c = filter_research_data("- a | https://anything.org/q | unknown", None)
+def test_citations_none_is_unverifiable():
+    out, c = filter_research_data("- a | https://anything.org/q | unknown\n- b no url", None)
+    assert out == NOT_FOUND
+    assert (c.kept, c.dropped_no_url, c.dropped_unretrieved, c.dropped_unverifiable) == (0, 1, 0, 1)
+    # non-strict (no provider call happened, e.g. stub runner): URL rule only
+    out, c = filter_research_data("- a | https://anything.org/q | unknown", None, strict=False)
     assert out.startswith("- a") and c.kept == 1
     # empty (not None) citations list means nothing was retrieved
     out, c = filter_research_data("- a | https://anything.org/q | unknown", [])
     assert out == NOT_FOUND and c.dropped_unretrieved == 1
+
+
+def test_domain_citation_matches_host():
+    cites = ["https://vertexaisearch.cloud.google.com/grounding-api-redirect/AAA", "cec.gov.tw"]
+    text = "- a | https://db.cec.gov.tw/x | unknown\n- b | https://other.org/y | unknown"
+    out, c = filter_research_data(text, cites)
+    assert out == "- a | https://db.cec.gov.tw/x | unknown" and c.dropped_unretrieved == 1
+    redirect = "- r | https://vertexaisearch.cloud.google.com/grounding-api-redirect/AAA | unknown"
+    assert filter_research_data(redirect, cites)[0] == redirect
 
 
 def test_normalize_url():
@@ -86,6 +99,8 @@ def test_gemini_citations_and_body():
     cand = {"content": {"parts": [{"text": "hi"}]}, "finishReason": "STOP",
             "groundingMetadata": {"groundingChunks": [{"web": {"uri": "https://g.org/1"}}, {"web": {"uri": "https://g.org/1"}}, {}]}}
     assert llm._parse({"candidates": [cand]}).citations == ["https://g.org/1"]
+    cand["groundingMetadata"]["groundingChunks"] = [{"web": {"uri": "https://r/1", "title": "Cec.gov.tw"}}, {"web": {"title": "Some Title"}}]
+    assert llm._parse({"candidates": [cand]}).citations == ["https://r/1", "cec.gov.tw"]
     cand.pop("groundingMetadata")
     assert llm._parse({"candidates": [cand]}).citations is None
     llm.temperature, llm.reasoning = 0.0, False
@@ -188,6 +203,18 @@ def test_fetch_web_rows_filters_and_records(monkeypatch, tmp_path):
     assert rows[0]["research_data"] == "- a | https://ok.org/p | unknown"
     (r,) = usage.iter_web_filter(tmp_path)
     assert (r["model"], r["kept"], r["dropped_no_url"], r["dropped_unretrieved"]) == ("vendor/m", 1, 1, 1)
+    assert r["dropped_unverifiable"] == 0
+
+
+def test_fetch_web_rows_no_citations_on_web_call_dropped(monkeypatch, tmp_path):
+    monkeypatch.setenv("PMBOT_VAULT_PATH", str(tmp_path))
+    monkeypatch.setattr(direct_runner, "last_citations", lambda: None)
+    monkeypatch.setattr(direct_runner, "last_model", lambda: "vendor/m")
+    rows = evidence.fetch_web_rows(_runner("- a | https://invented.org | unknown"), "m1", ["q"], "2026-01-01")
+    assert rows[0]["research_data"] == NOT_FOUND
+    rs = usage.iter_web_filter(tmp_path)
+    assert len(rs) == 2  # no usable row -> one retry
+    assert all((r["kept"], r["dropped_unverifiable"]) == (0, 1) for r in rs)
 
 
 def test_stale_citations_reset_before_call(monkeypatch, tmp_path):
@@ -199,14 +226,14 @@ def test_stale_citations_reset_before_call(monkeypatch, tmp_path):
 
 def test_stats_web_filter_line():
     wf = [
-        {"model": "m1", "kept": 6, "dropped_no_url": 1, "dropped_unretrieved": 1},
+        {"model": "m1", "kept": 6, "dropped_no_url": 1, "dropped_unretrieved": 1, "dropped_unverifiable": 2},
         {"model": "m1", "kept": 2, "dropped_no_url": 0, "dropped_unretrieved": 0},
         {"model": "m2", "kept": 0, "dropped_no_url": 2, "dropped_unretrieved": 0},
     ]
     md = render_stats(compute_stats([], [], wf))
     assert "## Web evidence filter" in md
-    assert "Total: kept 8, dropped (no url) 3, dropped (unretrieved url) 1; drop rate" in md
-    assert "| m1 | 8 | 1 | 1 |" in md and "| m2 | 0 | 2 | 0 |" in md
+    assert "Total: kept 8, dropped (no url) 3, dropped (unretrieved url) 1, dropped (no citations) 2; drop rate" in md
+    assert "| m1 | 8 | 1 | 1 | 2 |" in md and "| m2 | 0 | 2 | 0 | 0 |" in md
     assert "No web evidence filter rows yet." in render_stats(compute_stats([], []))
 
 
@@ -214,3 +241,48 @@ def test_stub_pipeline_still_yields_web_evidence(monkeypatch, tmp_path):
     monkeypatch.setenv("PMBOT_VAULT_PATH", str(tmp_path))
     rows = evidence.fetch_web_rows(spawn_agent, "m", ["q1", "q2"], "2026-10-22")
     assert all("stub web finding" in r["research_data"] for r in rows) and evidence.rows_usable(rows)
+
+
+# ---- wrong-shaped answers, retry, usable rows ----------------------------------------------------
+
+
+def test_rows_usable_ignores_not_found_and_errors():
+    assert not evidence.rows_usable([{"research_data": "NOT_FOUND", "error": None}])
+    assert not evidence.rows_usable([{"research_data": "- a | https://x.org | unknown", "error": "boom"}])
+    assert evidence.rows_usable([{"research_data": "- a | https://x.org | unknown", "error": None}])
+
+
+def test_salvage_top_level_research_data_single_query():
+    raw = {"error": None, "market_id": "m", "query": "something else", "research_data": "- a | https://x.org | unknown"}
+    rows = evidence.fetch_web_rows(lambda role, pl: raw, "m", ["q1"], "2026-01-01")
+    assert rows[0]["query"] == "q1" and rows[0]["research_data"].startswith("- a")
+
+
+def test_salvage_multi_query_matches_by_query_or_text():
+    qs = ["alpha query", "beta query"]
+    raw = {"query": "Beta Query", "research_data": "- b | https://x.org | unknown"}
+    rows = evidence.fetch_web_rows(lambda role, pl: raw, "m", qs, "2026-01-01")
+    assert rows[0]["error"] == "no result for query" and rows[1]["research_data"].startswith("- b")
+    raw = {"research_data": "re alpha query: - a | https://x.org | unknown"}
+    rows = evidence.fetch_web_rows(lambda role, pl: raw, "m", qs, "2026-01-01")
+    assert rows[0]["research_data"].startswith("re alpha") and rows[1]["error"] == "no result for query"
+
+
+def test_web_searcher_retried_once_when_nothing_usable():
+    answers = iter([
+        {"error": "x", "research_data": ""},
+        {"results": [{"query": "q1", "research_data": "- a | https://x.org | unknown", "error": None}]},
+    ])
+    calls = []
+
+    def runner(role, pl):
+        calls.append(role)
+        return next(answers)
+
+    rows = evidence.fetch_web_rows(runner, "m", ["q1"], "2026-01-01")
+    assert len(calls) == 2 and evidence.rows_usable(rows)
+    # usable first time: no retry
+    calls.clear()
+    ok = {"results": [{"query": "q1", "research_data": "- a | https://x.org | unknown", "error": None}]}
+    evidence.fetch_web_rows(lambda r, p: (calls.append(r), ok)[1], "m", ["q1"], "2026-01-01")
+    assert len(calls) == 1

@@ -27,7 +27,7 @@ import re
 import threading
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 
 import requests
 
@@ -53,7 +53,7 @@ BACKOFF_BASE_SEC = 0.5
 BACKOFF_CAP_SEC = 8.0
 CACHE_TTL_SEC = 60.0
 PAGE_SIZE = 100
-MAX_PAGES = 10
+MAX_PAGES = 20  # keyset pages per listing (PAGE_SIZE rows each); the static pre-gate refills past rejected rows
 DEPTH_BAND = 0.02  # executable depth is measured up to best_ask + 2c
 
 MIN_LIQUIDITY_USD = MIN_ORDER_USD / LIQ_FRAC  # same floor as gate.MIN_LIQUIDITY_USD
@@ -491,12 +491,19 @@ def list_candidates(
     limit: int,
     knobs: dict[str, Any] | None = None,
     now: datetime | None = None,
+    accept: Callable[[dict[str, Any]], tuple[bool, str]] | None = None,
+    rejected: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     """Open binary Yes/No markets resolving inside the days window with enough liquidity.
 
     Server-side filters: ``active``, ``closed=false``, ``end_date_min/max`` (``min/max_days_to_resolution``
     from ``knobs`` else the constants), ``liquidity_num_min`` (the gate floor), ordered by liquidity
     descending. Pages through ``/markets/keyset`` until ``limit`` usable rows or the page cap.
+
+    ``accept(row) -> (ok, reason)`` is an optional static pre-gate evaluated on the Gamma row itself
+    (no extra API calls). Rejected rows do not count toward ``limit``, so paging continues past them;
+    their reasons are tallied into ``rejected`` when given. (Gamma's keyset endpoint has no price or
+    spread filter parameter, so this is client-side.)
     """
     knobs = knobs or {}
     min_days = float(knobs.get("min_days_to_resolution") or MIN_DAYS_TO_RESOLUTION)
@@ -527,6 +534,12 @@ def list_candidates(
                 continue
             if liq is None or liq < MIN_LIQUIDITY_USD:
                 continue
+            if accept is not None:
+                ok, reason = accept(row)
+                if not ok:
+                    if rejected is not None:
+                        rejected[reason] = rejected.get(reason, 0) + 1
+                    continue
             rows.append(row)
             if len(rows) >= limit:
                 return rows

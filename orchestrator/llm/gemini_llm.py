@@ -174,7 +174,14 @@ def _grounding_urls(cand: dict[str, Any]) -> list[str]:
     chunks = (cand.get("groundingMetadata") or {}).get("groundingChunks") or []
     urls: list[str] = []
     for ch in chunks:
-        uri = (ch.get("web") or {}).get("uri") if isinstance(ch, dict) else None
+        web = (ch.get("web") or {}) if isinstance(ch, dict) else {}
+        uri = web.get("uri")
         if isinstance(uri, str) and uri and uri not in urls:
             urls.append(uri)
+    # Grounding URIs are opaque vertexaisearch redirect links; the chunk title is the source domain, which
+    # is what a real page URL in the answer can be matched on (a bare-domain entry, see web_filter).
+    for ch in chunks:
+        title = ((ch.get("web") or {}).get("title") if isinstance(ch, dict) else None)
+        if isinstance(title, str) and "." in title and not any(c in title for c in " /:") and title not in urls:
+            urls.append(title.strip().lower())
     return urls

@@ -26,7 +26,7 @@ AIQ_TIMEOUT_SEC = 300.0
 
 # Research redesign (Phase 3). The model never sees the market price q; the Hub decides
 # whether research diverges from q and whether a result looks like a misread.
-RESEARCH_MAX_QUICK_WIDTH = 0.30     # quick range wider than this is "uninformative" -> escalate
+RESEARCH_MAX_QUICK_WIDTH = 0.20     # quick range wider than this is "uninformative" -> escalate (also escalates on confidence "low")
 RESEARCH_SAMPLES = 3                # independent Deep Researcher samples in the FULL stage
 RESEARCH_MAX_SAMPLE_SPREAD = 0.15   # max(p) - min(p) across samples above this -> sample_disagreement
 RESEARCH_MAX_Q_GAP = 0.40           # |p_median - q| above this -> probable_misread (paper-trading: wider)

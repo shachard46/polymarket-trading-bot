@@ -34,19 +34,21 @@ def _thinking_by_role(usage: list[dict[str, Any]]) -> dict[str, int]:
 
 def web_filter_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Totals and drop rate of the web-evidence filter, overall and by model."""
-    by_model: dict[str, list[int]] = defaultdict(lambda: [0, 0, 0])
+    by_model: dict[str, list[int]] = defaultdict(lambda: [0, 0, 0, 0])
     for r in rows:
         m = by_model[str(r.get("model") or "unknown")]
         m[0] += int(_num(r.get("kept")) or 0)
         m[1] += int(_num(r.get("dropped_no_url")) or 0)
         m[2] += int(_num(r.get("dropped_unretrieved")) or 0)
+        m[3] += int(_num(r.get("dropped_unverifiable")) or 0)
 
     def pack(v: list[int]) -> dict[str, Any]:
         total = sum(v)
         return {"kept": v[0], "dropped_no_url": v[1], "dropped_unretrieved": v[2],
+                "dropped_unverifiable": v[3],
                 "drop_rate": (v[1] + v[2]) / total if total else None}
 
-    tot = [sum(v[i] for v in by_model.values()) for i in range(3)]
+    tot = [sum(v[i] for v in by_model.values()) for i in range(4)]
     return {"n_calls": len(rows), "total": pack(tot), "by_model": {m: pack(v) for m, v in sorted(by_model.items())}}
 
 

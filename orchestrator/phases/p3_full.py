@@ -295,6 +295,17 @@ def _research_market_body(
         vault, runner, row, today, refresh, shared_bundle, shared_meta, shadow
     ):
         return None
+    if not _bundle_has_entries(vault.read_research_bundle(market_id)):
+        # Never send an empty / NOT_FOUND-only bundle to the Deep Researcher.
+        ev_meta = vault.read_research_bundle_meta(market_id)
+        if shadow:
+            raise ShadowFailure("no_evidence")
+        _skip_research(
+            vault, row, "full", "no_evidence", q=q,
+            evidence_source=ev_meta.get("evidence_source"),
+            evidence_fallback=bool(ev_meta.get("evidence_fallback")),
+        )
+        return None
     samples = _collect_samples(vault, runner, row, directives, today, shadow)
     if samples is None:
         return None

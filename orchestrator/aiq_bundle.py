@@ -18,11 +18,11 @@ from typing import Any, Callable
 from config.trading_constants import AIQ_CACHE_TTL_SEC
 from obsidian_utils import read_json, write_json_atomic
 from orchestrator.config import RESEARCH_DATA_MAX_CHARS
+from orchestrator.util import truncate_lines
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SKILL_PATH = _REPO_ROOT / "skills" / "execute-aiq-query" / "execute_aiq_query.py"
 _MAX_WORKERS = 3
-_TRUNCATION_SUFFIX = "\n...[truncated]"
 
 _execute_aiq_query: Callable[[str], Any] | None = None
 
@@ -63,12 +63,7 @@ def _load_execute_aiq_query() -> Callable[[str], Any]:
 
 def _truncate_research_data(research_data: str) -> str:
     """Cap per-query payload size for multi-iteration Forensic Pipeline runs."""
-    if len(research_data) <= RESEARCH_DATA_MAX_CHARS:
-        return research_data
-    keep = RESEARCH_DATA_MAX_CHARS - len(_TRUNCATION_SUFFIX)
-    if keep < 0:
-        return research_data[:RESEARCH_DATA_MAX_CHARS]
-    return research_data[:keep] + _TRUNCATION_SUFFIX
+    return truncate_lines(research_data, RESEARCH_DATA_MAX_CHARS)
 
 
 def _run_single_query(query: str) -> dict[str, Any]:

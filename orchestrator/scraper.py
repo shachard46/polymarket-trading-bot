@@ -247,11 +247,23 @@ def fetch_target_markets(knobs: dict[str, Any] | None = None) -> list[MarketRow]
     window follows the Overseer-tunable ``min/max_days_to_resolution``. Limit is
     ``PMBOT_INGEST_LIMIT``. Phase 2 still applies the full deterministic gate.
     """
+    from orchestrator import gate  # noqa: PLC0415 - lazy: gate imports this module
+
+    rejected: dict[str, int] = {}
     try:
-        data = polymarket_api.list_candidates(_ingest_limit(), knobs)
+        # Static pre-gate on the Gamma row (price band, wide spread, ... : no extra API calls) so rows
+        # the gate would reject anyway do not eat the ingest slots; paging refills up to the limit.
+        data = polymarket_api.list_candidates(
+            _ingest_limit(), knobs, accept=lambda r: gate.eligibility(r, knobs), rejected=rejected
+        )
     except PolymarketAPIError as exc:
         log.warning("Polymarket candidate listing failed: %s", exc)
         return []
+    if rejected:
+        log.info(
+            "Ingest pre-gate skipped %d rows (not ledgered; the gate would reject them): %s",
+            sum(rejected.values()), dict(sorted(rejected.items())),
+        )
 
     rows: list[MarketRow] = []
     for raw in data:

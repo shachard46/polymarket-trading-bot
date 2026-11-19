@@ -277,11 +277,11 @@ def _render_web_filter(s: dict[str, Any]) -> list[str]:
     t = w["total"]
     L.append(
         f"Total: kept {t['kept']}, dropped (no url) {t['dropped_no_url']}, "
-        f"dropped (unretrieved url) {t['dropped_unretrieved']}; drop rate {_fmt(t['drop_rate'])}."
+        f"dropped (unretrieved url) {t['dropped_unretrieved']}, dropped (no citations) {t['dropped_unverifiable']}; drop rate {_fmt(t['drop_rate'])}."
     )
-    L += ["", "| model | kept | dropped no url | dropped unretrieved | drop rate |", "|---|---|---|---|---|"]
+    L += ["", "| model | kept | dropped no url | dropped unretrieved | dropped no citations | drop rate |", "|---|---|---|---|---|---|"]
     for m, v in w["by_model"].items():
-        L.append(f"| {m} | {v['kept']} | {v['dropped_no_url']} | {v['dropped_unretrieved']} | {_fmt(v['drop_rate'])} |")
+        L.append(f"| {m} | {v['kept']} | {v['dropped_no_url']} | {v['dropped_unretrieved']} | {v['dropped_unverifiable']} | {_fmt(v['drop_rate'])} |")
     return L + [""]
 
 

@@ -15,7 +15,7 @@ from orchestrator.runner import AgentRunner, spawn_agent
 
 
 def _bundle_row_usable(entry: dict[str, Any]) -> bool:
-    return bool(str(entry.get("research_data") or "").strip()) and not entry.get("error")
+    return evidence.row_usable(entry)
 
 
 def _bundle_has_entries(bundle: list[dict[str, Any]] | None) -> bool:

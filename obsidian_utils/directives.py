@@ -14,7 +14,6 @@ from config.trading_constants import (
     F_MAX,
     BOUNDS,
     FILTERS,
-    PAPER_TRADE_MODE,
 )
 
 from .schemas import DirectivesPayload, VaultWriteError, _atomic_write_text, _dump_frontmatter
@@ -245,39 +244,28 @@ overseer_updated: false
 
 ## Research Protocol
 
-You are a fundamental analyst evaluating binary prediction markets on
-Polymarket.  For every market assigned to you, apply the following
-standard methodology before forming your probability estimate (`estimated_p`):
+Apply this methodology to every market before forming `estimated_p`:
 
-1. **News Sentiment** — Search for recent news (last 7 days) regarding the
-   market subject.  Weight negative sentiment down, positive sentiment up,
-   but penalise thin coverage regardless of direction.
-
-2. **Upcoming Catalysts** — Identify scheduled events (earnings, elections,
-   regulatory decisions, economic releases) within the market's resolution
-   window.  Flag catalysts that could sharply shift the probability.
-
-3. **Liquidity & Market Health** — Check whether the market has sufficient
-   liquidity (the Hub gate already requires liquidity >= MIN_ORDER_USD / LIQ_FRAC).  Thin markets
-   carry higher spread risk; apply a conservatism discount to `estimated_p`
-   for markets below the threshold.
-
-4. **Base Rate Anchoring** — Start from a calibrated base rate for the
-   event class (e.g., incumbent re-election rates, historical merger
-   completion rates) before adjusting for specific evidence.
-
-5. **Thesis Balance** — You MUST produce both a Bull Thesis and a Bear
-   Thesis of comparable depth.  Asymmetric output (one section trivially
-   short) is a signal of anchoring bias.
+1. **Resolution first** — Work out exactly what resolves YES, which source
+   decides, and whether YES is the event in the title or its inverse.
+2. **Base Rate Anchoring** — Start from a calibrated base rate for the event
+   class (e.g., incumbent re-election rates, historical merger completion
+   rates) over the remaining window before adjusting for specific evidence.
+3. **Verified Present Facts** — Adjust only for facts in the `research_bundle`
+   that are dated and sourced.  Treat failed fetches as missing, not as evidence.
+4. **Upcoming Catalysts** — Identify scheduled events (earnings, elections,
+   regulatory decisions, economic releases) within the resolution window that
+   could sharply shift the probability.
+5. **Disconfirm** — Look for the strongest evidence against your leading view
+   before you commit.  Inconclusive evidence means a wide range and
+   `confidence: "low"`.
 
 ---
 
 ## Filter Weightings (Neutral Defaults)
 
-The Hub's deterministic gate and research checks use the thresholds below
-(gate price band, days-to-resolution window, no-divergence width, sample
-disagreement, misread gap).  Do NOT override these in your analysis — they
-are applied by code, and only the Overseer may tune them (within bounds).
+The `filters:` block below is applied by Hub code and tuned only by the
+Overseer within bounds.  It is not an input to your estimate.
 
 ```yaml
 filters:
@@ -288,37 +276,32 @@ filters:
 
 ## Risk Constraints
 
-The following constants are active for this session.  Respect them in your
-qualitative reasoning:
-
-| Parameter | Value | Meaning |
-|---|---|---|
-| `F_MAX` | `{F_MAX}` | Hard cap on fraction of bankroll per position |
-| `PAPER_TRADE_MODE` | `{PAPER_TRADE_MODE}` | Live API disabled — all trades are simulated |
-
-When `PAPER_TRADE_MODE` is `True`, you may be slightly more exploratory
-in borderline cases since no real capital is at risk.
+Sizing is deterministic Hub code (`F_MAX` = `{F_MAX}`).  Do not factor position
+size, liquidity or trading mode into `estimated_p`.
 
 ---
 
 ## Output Requirements
 
-You MUST return your response in the exact format specified by the system:
+Follow the output format of your system prompt exactly.  The document
+frontmatter carries `market_id`, `estimated_p`, `p_low`, `p_high` and `error`:
 
 ```
 ---
 market_id: "<id>"
 estimated_p: <float between 0.0 and 1.0>
+p_low: <float, <= estimated_p>
+p_high: <float, >= estimated_p>
 error: null
 ---
 
 ## Bull Thesis
 
-<analysis>
+<2-3 fact-backed bullets>
 
 ## Bear Thesis
 
-<analysis>
+<2-3 fact-backed bullets>
 
 ## Post-Mortem
 ```

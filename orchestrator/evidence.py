@@ -17,7 +17,8 @@ from config.trading_constants import INDEP_SAMPLE_RATE, SHADOW_RATE
 from orchestrator import config
 from orchestrator.aiq_bundle import fetch_research_bundle_cached, normalize_query
 from orchestrator.config import RESEARCH_DATA_MAX_CHARS
-from orchestrator.web_filter import filter_rows
+from orchestrator.util import truncate_lines
+from orchestrator.web_filter import NOT_FOUND, filter_rows
 from orchestrator.parse import AgentOutputParseError, parse_agent_json_or_yaml
 from orchestrator.schema_validation import AgentSchemaError
 from orchestrator.state import InfraUnavailable
@@ -78,17 +79,46 @@ def sanitize_text(text: str) -> str:
 def sanitize_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out = []
     for r in rows:
-        data = sanitize_text(r.get("research_data") or "")[:RESEARCH_DATA_MAX_CHARS]
+        data = truncate_lines(sanitize_text(r.get("research_data") or ""), RESEARCH_DATA_MAX_CHARS)
         out.append({**r, "research_data": data})
     return out
 
 
+def row_usable(row: dict[str, Any]) -> bool:
+    """A row is evidence only with data, no error, and not a bare ``NOT_FOUND``."""
+    data = str(row.get("research_data") or "").strip()
+    return bool(data) and data != NOT_FOUND and not row.get("error")
+
+
 def rows_usable(rows: list[dict[str, Any]]) -> bool:
-    return any(str(r.get("research_data") or "").strip() and not r.get("error") for r in rows)
+    return any(row_usable(r) for r in rows)
 
 
 def web_cache_path(vault: Any) -> Path:
     return vault._dirs["active"] / "web_cache.json"
+
+
+def _salvage_results(parsed: dict[str, Any], queries: list[str]) -> list[dict[str, Any]] | None:
+    """Wrap a wrong-shaped answer (top-level ``research_data``, no ``results`` list) as one result.
+
+    The query is the answer's own ``query``, else the only query asked, else the asked query whose
+    text occurs in the answer; with none of those the result cannot be placed and is not salvaged.
+    """
+    if isinstance(parsed.get("results"), list) or parsed.get("research_data") is None:
+        return None
+    data = str(parsed.get("research_data") or "")
+    query = str(parsed.get("query") or "").strip()
+    asked = {normalize_query(q): q for q in queries}
+    if normalize_query(query) in asked:
+        query = asked[normalize_query(query)]
+    elif len(queries) == 1:
+        query = queries[0]
+    else:
+        hits = [q for q in queries if normalize_query(q) and normalize_query(q) in normalize_query(data)]
+        if not hits:
+            return None
+        query = hits[0]
+    return [{"query": query, "research_data": data, "error": parsed.get("error") or None}]
 
 
 def fetch_web_rows(
@@ -97,7 +127,24 @@ def fetch_web_rows(
     queries: list[str],
     today: str,
 ) -> list[dict[str, Any]]:
-    """One ``web_searcher`` call for ``queries``; rows aligned to the input, never raises."""
+    """``web_searcher`` call for ``queries``; rows aligned to the input, never raises.
+
+    If no row is usable (errors, wrong shape, only ``NOT_FOUND``) the call is retried once.
+    """
+    rows = _fetch_web_rows_once(runner, market_id, queries, today)
+    if queries and not rows_usable(rows):
+        log.warning("[WEB-RETRY] %s: no usable web evidence; retrying web_searcher once", market_id)
+        rows = _fetch_web_rows_once(runner, market_id, queries, today)
+    return rows
+
+
+def _fetch_web_rows_once(
+    runner: Callable[[str, dict[str, Any]], Any],
+    market_id: str,
+    queries: list[str],
+    today: str,
+) -> list[dict[str, Any]]:
+    """One ``web_searcher`` call and its filtered, sanitized rows."""
 
     def fail(msg: str) -> list[dict[str, Any]]:
         return [{"query": q, "research_data": "", "error": msg} for q in queries]
@@ -117,11 +164,14 @@ def fetch_web_rows(
         parsed = raw if isinstance(raw, dict) else parse_agent_json_or_yaml(raw)
     except AgentOutputParseError as exc:
         return fail(f"web_searcher parse error: {exc}")
-    if parsed.get("error"):
-        return fail(f"web_searcher error: {parsed['error']}")
+    results = _salvage_results(parsed, queries)
+    if results is None:
+        if parsed.get("error"):
+            return fail(f"web_searcher error: {parsed['error']}")
+        results = parsed.get("results") or []
     by_query = {
         normalize_query(r.get("query", "")): r
-        for r in parsed.get("results") or []
+        for r in results
         if isinstance(r, dict)
     }
     rows = []
@@ -138,16 +188,20 @@ def fetch_web_rows(
                     "error": str(err) if err else None,
                 }
             )
-    rows, counts = filter_rows(rows, direct_runner.last_citations())
+    # last_model() is None when no real provider call happened (stub / injected runner): nothing to verify.
+    web_call = direct_runner.last_model() is not None
+    rows, counts = filter_rows(rows, direct_runner.last_citations(), strict=web_call)
     model = direct_runner.last_model() or "stub"
     log.info(
-        "[WEB-FILTER] %s model=%s kept=%d dropped_no_url=%d dropped_unretrieved=%d",
+        "[WEB-FILTER] %s model=%s kept=%d dropped_no_url=%d dropped_unretrieved=%d dropped_unverifiable=%d",
         market_id, model, counts.kept, counts.dropped_no_url, counts.dropped_unretrieved,
+        counts.dropped_unverifiable,
     )
     from orchestrator.llm import usage  # noqa: PLC0415
 
     usage.record_web_filter(
-        model, counts.kept, counts.dropped_no_url, counts.dropped_unretrieved, market_id=market_id
+        model, counts.kept, counts.dropped_no_url, counts.dropped_unretrieved, market_id=market_id,
+        dropped_unverifiable=counts.dropped_unverifiable,
     )
     return sanitize_rows(rows)
 

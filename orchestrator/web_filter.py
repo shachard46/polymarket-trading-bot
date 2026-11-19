@@ -1,8 +1,10 @@
 """Code-side hallucination guard for ``web_searcher`` output.
 
 The agent must emit lines ``- <fact> | <url> | <published YYYY-MM-DD or unknown>``. A line is kept only if it
-carries a URL and, when the provider reported which URLs it retrieved (``citations``), that URL is among them.
-``NOT_FOUND`` passes through; if every line of a result is dropped the result becomes ``NOT_FOUND``.
+carries a URL that the provider reported retrieving (``citations``). A web call whose provider reported no
+citations at all (``None``) is unverifiable: every line is dropped. A citation entry without a scheme is a
+bare domain (Gemini grounding titles; its grounding URIs are opaque redirect links) and matches any URL on that
+host. ``NOT_FOUND`` passes through; if every line of a result is dropped the result becomes ``NOT_FOUND``.
 """
 
 from __future__ import annotations
@@ -21,11 +23,13 @@ class FilterCounts:
     kept: int = 0
     dropped_no_url: int = 0
     dropped_unretrieved: int = 0
+    dropped_unverifiable: int = 0  # web call without any citations: lines cannot be checked
 
     def add(self, other: "FilterCounts") -> None:
         self.kept += other.kept
         self.dropped_no_url += other.dropped_no_url
         self.dropped_unretrieved += other.dropped_unretrieved
+        self.dropped_unverifiable += other.dropped_unverifiable
 
 
 def normalize_url(url: str) -> str:
@@ -44,13 +48,25 @@ def _line_url(line: str) -> str | None:
     return m.group(0).rstrip(".,;:)") if m else None
 
 
-def filter_research_data(text: str, citations: list[str] | None) -> tuple[str, FilterCounts]:
-    """Filter one result's ``research_data``; returns (new text, counts)."""
+def _host(url: str) -> str:
+    return normalize_url(url).split("/", 1)[0].split("?", 1)[0]
+
+
+def filter_research_data(
+    text: str, citations: list[str] | None, *, strict: bool = True
+) -> tuple[str, FilterCounts]:
+    """Filter one result's ``research_data``; returns (new text, counts).
+
+    ``citations is None`` with ``strict`` (the default) means unverifiable: URL lines are dropped. Pass
+    ``strict=False`` only when no provider web call happened (stub / injected runner).
+    """
     counts = FilterCounts()
     stripped = str(text or "").strip()
     if not stripped or stripped == NOT_FOUND:
         return stripped, counts
-    allowed = None if citations is None else {normalize_url(c) for c in citations}
+    cites = citations or []
+    allowed = {normalize_url(c) for c in cites if "//" in c}
+    domains = {normalize_url(c) for c in cites if "//" not in c and "." in c and " " not in c}
     kept: list[str] = []
     for line in stripped.splitlines():
         if not line.strip():
@@ -58,7 +74,11 @@ def filter_research_data(text: str, citations: list[str] | None) -> tuple[str, F
         url = _line_url(line)
         if url is None:
             counts.dropped_no_url += 1
-        elif allowed is not None and normalize_url(url) not in allowed:
+        elif citations is None and strict:
+            counts.dropped_unverifiable += 1
+        elif citations is not None and normalize_url(url) not in allowed and not any(
+            _host(url) == d or _host(url).endswith("." + d) for d in domains
+        ):
             counts.dropped_unretrieved += 1
         else:
             kept.append(line)
@@ -67,7 +87,7 @@ def filter_research_data(text: str, citations: list[str] | None) -> tuple[str, F
 
 
 def filter_rows(
-    rows: list[dict[str, Any]], citations: list[str] | None
+    rows: list[dict[str, Any]], citations: list[str] | None, *, strict: bool = True
 ) -> tuple[list[dict[str, Any]], FilterCounts]:
     """Apply :func:`filter_research_data` to every non-error row."""
     total = FilterCounts()
@@ -76,7 +96,7 @@ def filter_rows(
         if r.get("error") or not str(r.get("research_data") or "").strip():
             out.append(r)
             continue
-        data, c = filter_research_data(r["research_data"], citations)
+        data, c = filter_research_data(r["research_data"], citations, strict=strict)
         total.add(c)
         out.append({**r, "research_data": data})
     return out, total

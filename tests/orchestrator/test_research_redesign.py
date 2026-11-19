@@ -214,7 +214,10 @@ def test_quick_q_outside_range_escalates(world, vault):
 
 def test_quick_wide_range_escalates_even_if_it_contains_q(world, vault):
     assert phases.quick_decision(0.2, 0.8, 0.5) == "escalate"
-    assert phases.quick_decision(0.4, 0.7, 0.5) == "no_divergence"  # width exactly 0.3
+    assert phases.quick_decision(0.4, 0.7, 0.5) == "escalate"  # width 0.3 > 0.20
+    assert phases.quick_decision(0.4, 0.6, 0.5) == "no_divergence"  # width exactly 0.20
+    assert phases.quick_decision(0.4, 0.6, 0.5, confidence="medium") == "no_divergence"
+    assert phases.quick_decision(0.4, 0.6, 0.5, confidence="low") == "escalate"  # low confidence never skips
     assert phases.quick_decision(0.4, 0.5, 0.52) == "escalate"
     world.market("m1", 0.5)
     _seed(vault, "m1")
@@ -587,3 +590,19 @@ def test_edge_refresh_machinery_removed():
     assert not hasattr(orch_config, "max_edge_research_refreshes")
     fm = __import__("obsidian_utils").ResearchFrontmatter(market_id="m", estimated_p=0.5)
     assert "edge_research_refresh_count" not in fm.model_dump()
+
+
+def test_no_usable_evidence_skips_without_deep_researcher(world, vault, monkeypatch):
+    world.market("m1", 0.42)
+    _seed(vault, "m1")
+    world.dr_p = (0.6, 0.1, 0.9)  # wide quick range -> escalate to FULL
+    monkeypatch.setattr(
+        p3_evidence, "fetch_research_bundle",
+        lambda qs: [{"query": q, "research_data": "NOT_FOUND", "error": None} for q in qs],
+    )
+    out = phases.phase3_qualitative_pipeline(vault, runner=world.runner)
+    assert out == []
+    assert world.of("deep_researcher", "full") == []  # never priced on an empty bundle
+    (skip,) = [s for s in _skips(vault, "m1") if s["research_stage"] == "full"]
+    assert skip["reason"] == "no_evidence"
+    assert vault.read_filter_log("m1")["research_state"]["outcome"] == "no_evidence"
