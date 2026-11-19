@@ -1,0 +1,14 @@
+{
+  "brier_p": null,
+  "brier_q": null,
+  "counterfactual_pnl_after_tax": 0,
+  "date": "2026-11-19",
+  "generated_at": "2026-11-19T08:13:07.387493+00:00",
+  "integrity_rejects": {},
+  "n_resolved": 0,
+  "new_offers": 1,
+  "new_trades": 1,
+  "pending_directive_proposal": null,
+  "realised_pnl_after_tax": 0,
+  "resolved_this_week": 0
+}

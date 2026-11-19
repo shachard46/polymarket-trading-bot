@@ -8,9 +8,9 @@ web_max_uses: 8       # cap on web search/fetch uses per web call (per-role over
 default: {provider: openrouter, model: deepseek/deepseek-v4.1-flash}
 
 roles:
-  triage:          {provider: openrouter, model: deepseek/deepseek-v4.1-flash}
-  briefer:         {provider: openrouter, model: deepseek/deepseek-v4.1-flash}
-  web_searcher:    {provider: openrouter, model: deepseek/deepseek-v4.1-flash, web_max_uses: 5, temperature: 0, reasoning: false}
+  triage:          {provider: openrouter, model: deepseek/deepseek-v4.1-flash, batch: true}
+  briefer:         {provider: openrouter, model: deepseek/deepseek-v4.1-flash, batch: true}
+  web_searcher:    {provider: gemini, model: gemini-3.5-flash-lite, web_max_uses: 5, temperature: 0, reasoning: false}
   deep_researcher: {provider: gemini, model: gemini-4-hydrogen}
   post_mortem_analyst: {provider: gemini, model: gemini-4-hydrogen}
   overseer:        {provider: gemini, model: gemini-4-hydrogen}

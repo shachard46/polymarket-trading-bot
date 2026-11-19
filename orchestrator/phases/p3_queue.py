@@ -28,6 +28,7 @@ from orchestrator.phases.common import (
     _as_float,
     _carry_filter_signals,
     _open_trade_shows_bet_not_edge_dq,
+    _text_fields,
     _write_filter_state,
     log,
 )
@@ -202,6 +203,16 @@ def _run_full_stage(
     groups: dict[Any, list[_Job]] = {}
     for job in jobs:
         groups.setdefault(job.event_id or ("solo", job.market_id), []).append(job)
+
+    # Briefer calls go out as one (batchable) call set: same payload _plan_research_queries builds.
+    # Same-event followers normally reuse the leader's bundle, so only each group's first job counts.
+    if not over_budget():
+        today = today_date()
+        briefs = [
+            _text_fields(g[0].row, today) for g in groups.values()
+            if g[0].refresh or not _bundle_has_entries(vault.read_research_bundle(g[0].market_id))
+        ]
+        runner = prefetch_runner(runner, "briefer", briefs)
 
     abort = threading.Event()
 

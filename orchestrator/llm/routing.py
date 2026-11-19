@@ -5,9 +5,9 @@ Precedence for a role: ``LLM_ROLE_<ROLE>=provider:model`` env, then the YAML ``r
 :class:`LLMError`.
 
 Optional per-role ``batch: true`` (default false) in the ``roles:`` entry of models.yaml sends latency-insensitive
-single-shot calls (triage, the triage-shadow quick estimate) through the provider's Batch API (Anthropic
-Message Batches, Gemini batchGenerateContent; ~50% cheaper, minutes of latency) via ``LLM.complete_many``.
-Providers without a batch API (OpenRouter) ignore it. ``PMBOT_LLM_BATCH_POLL_SEC`` (30) and
+single-shot calls (triage, the triage-shadow quick estimate, the FULL-stage briefer) through the provider's Batch API (Anthropic
+Message Batches, Gemini batchGenerateContent, OpenRouter /batches; ~50% cheaper, minutes of latency) via ``LLM.complete_many``.
+Providers without a batch API ignore it. OpenRouter batches cannot be cancelled (a timed-out batch may still be billed). ``PMBOT_LLM_BATCH_POLL_SEC`` (30) and
 ``PMBOT_LLM_BATCH_MAX_WAIT_SEC`` (1200) bound the wait; on timeout the batch is cancelled and the
 unfinished items run synchronously. The flag is read from the YAML role entry even when an env override
 swaps the provider/model.

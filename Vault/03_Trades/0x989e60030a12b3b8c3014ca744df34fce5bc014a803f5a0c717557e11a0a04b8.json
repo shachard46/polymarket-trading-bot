@@ -1,0 +1,22 @@
+{
+  "market_id": "0x989e60030a12b3b8c3014ca744df34fce5bc014a803f5a0c717557e11a0a04b8",
+  "allocation_usd": 43.63636363636366,
+  "score": 0.13440000000000005,
+  "below_edge_threshold": false,
+  "executed": false,
+  "transaction_hash": "PAPER-40C99DF2C12343A5",
+  "error": null,
+  "status": null,
+  "error_log": null,
+  "p": 0.55,
+  "p_low": 0.51,
+  "p_high": 0.59,
+  "q_entry": 0.22,
+  "side": "YES",
+  "shares": 189.72332015810287,
+  "price": 0.23,
+  "ask": 0.23,
+  "depth_usd": 27020.8422,
+  "directive_version": 0,
+  "event_id": "1138701"
+}

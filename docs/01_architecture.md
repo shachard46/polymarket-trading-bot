@@ -2,7 +2,7 @@
 
 ## 1. Core Infrastructure
 
-- **Framework:** Python backend. Live mode calls the LLM providers directly (`orchestrator/llm/`: Anthropic, OpenRouter, Gemini), with the provider and model chosen per role in `config/models.yaml`. Latency-insensitive triage calls can use the providers' Batch APIs (per-role `batch: true`). The Discord bot (`orchestrator/discord_bot.py`) is the only front-end.
+- **Framework:** Python backend. Live mode calls the LLM providers directly (`orchestrator/llm/`: Anthropic, OpenRouter, Gemini), with the provider and model chosen per role in `config/models.yaml`. Latency-insensitive triage calls can use the providers' Batch APIs (Anthropic, Gemini, OpenRouter) (per-role `batch: true`). The Discord bot (`orchestrator/discord_bot.py`) is the only front-end.
 - **Design Pattern:** Hub + LLM agents. The central Orchestrator (`main.py`) controls execution flow. Agents are stateless: one model call per spawn.
 - **Lifecycle:** Orchestrator builds the prompt (system prompt from the role's `AGENTS.md`, user message from its `agent.yaml` schemas) -> calls the role's provider -> the model returns JSON or markdown -> Orchestrator parses and validates the output.
 - **Tooling:** Agents do not perform math, execute API calls natively, or manage state. Math and trading are deterministic Hub code over the skills in `04_skills_contracts.md` (Phase 4 has no agent).

@@ -525,3 +525,29 @@ def test_p3_triage_shadow_batched_equals_unbatched_and_item_failure_falls_back(t
     # the failing item went through the one-by-one sync path; ledger rows still identical
     assert batches_f == [2] and len(direct_f) == 1
     assert rows_fail == rows_single
+
+
+# ---- p3: briefer prefetched as one spawn_many --------------------------------------------------
+
+
+def test_full_stage_prefetches_briefers_in_one_batch(tmp_path, monkeypatch):
+    from orchestrator.live_prompt import today_date
+    from orchestrator.phases import p3_full, p3_queue
+    from orchestrator.phases.common import Phase3Candidate
+
+    vault = ObsidianManager(vault_base=tmp_path)
+    vault.cold_start_protocol()
+    many, served = [], []
+    monkeypatch.setattr(runner, "spawn_many", lambda role, ps: many.append((role, ps)) or [{"ok": i} for i in range(len(ps))])
+
+    def fake_research(vault_, rn, row, directives, **kw):
+        served.append(rn("briefer", p3_full._text_fields(row, str(today_date()))))
+
+    monkeypatch.setattr(p3_full, "_research_market", fake_research)
+    jobs = []
+    for i in range(2):
+        row = {"market_id": f"m{i}", "market_title": f"t{i}", "market_description": "d", "market_data": {"event_id": f"e{i}"}}
+        jobs.append(p3_queue._Job(Phase3Candidate(f"m{i}", "initial", {}), row))
+    p3_queue._run_full_stage(vault, runner.spawn_agent, "", jobs, lambda: False)
+    assert [(r, len(ps)) for r, ps in many] == [("briefer", 2)]
+    assert sorted(s["ok"] for s in served) == [0, 1]
