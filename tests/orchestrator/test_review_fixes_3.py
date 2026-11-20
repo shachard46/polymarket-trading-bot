@@ -225,3 +225,36 @@ def test_quick_stage_logs_one_line(vault, caplog, p, low, high, expect):
     assert len(lines) == 1
     assert lines[0].startswith("[QUICK] 0xabcdef12:") and f"p={p:.3f}" in lines[0]
     assert f"range={low:.3f}-{high:.3f}" in lines[0] and "q=0.420" in lines[0] and lines[0].endswith(expect)
+
+
+def test_j2_prior_and_base_rate_are_flipped_to_yes_terms():
+    j1 = _complete(prior=0.3, prior_kind="reference_class", base_rate=0.3, base_rate_n=10, base_rate_source="E1")
+    j2 = _complete(prior=0.8, prior_kind="reference_class", base_rate=0.8, base_rate_n=10, base_rate_source="E1")
+    out = p3_research.prior_fields([(j1, None, "yes"), (j2, None, "no")])
+    assert out["base_rate"] == 0.3 and out["prior_j2"] == pytest.approx(0.2)
+    only_no = p3_research.prior_fields([(j2, None, "no")])
+    assert only_no["prior"] == pytest.approx(0.2) and only_no["base_rate"] == pytest.approx(0.2)
+    assert only_no["base_rate_n"] == 10
+
+
+def test_hub_builds_frontmatter_and_strips_model_frontmatter():
+    from orchestrator.phases.agent_call import build_research_markdown
+    from orchestrator.research import parse_deep_researcher
+    md = ('---\nmarket_id: "WRONG"\nestimated_p: 0.99\np_low: 0.9\np_high: 1.0\nerror: null\n---\n\n'
+          "## Bull Thesis\n\n- a\n\n## Bear Thesis\n\n- b\n\n## Post-Mortem\n\nstray text\n")
+    c = _complete(markdown=md, market_id="0xabc", estimated_p=0.4, p_low=0.3, p_high=0.5)
+    out = build_research_markdown(c)
+    assert out.count("---") == 2 and "WRONG" not in out and "stray" not in out
+    r = parse_deep_researcher(out)
+    assert r.market_id == "0xabc" and r.estimated_p == 0.4 and r.p_low == 0.3 and r.p_high == 0.5
+    body_only = build_research_markdown(_complete(markdown="## Bull Thesis\n\n- a\n\n## Bear Thesis\n\n- b\n",
+                                                  market_id="0xabc", estimated_p=0.4, p_low=0.3, p_high=0.5))
+    assert parse_deep_researcher(body_only).estimated_p == 0.4
+
+
+def test_live_prompt_puts_input_before_response_hint():
+    from orchestrator.runner import _build_live_prompt
+    prompt = _build_live_prompt("deep_researcher", {"output_is_state_machine": True, "live_response_hint": "HINT_X"},
+                                {"market_id": "m"})
+    assert prompt.index("Input JSON:") < prompt.index("Return ONLY") < prompt.index("HINT_X")
+    assert prompt.rstrip().endswith("HINT_X")

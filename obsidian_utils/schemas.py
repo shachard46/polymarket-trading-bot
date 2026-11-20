@@ -265,13 +265,19 @@ class DirectivesPayload(BaseModel):
     prior directives in place rather than poisoning every downstream agent.
     """
 
-    new_directives_markdown: str
+    new_directives_markdown: Optional[str] = None  # set by the Hub (rendered) or a legacy full document
+    filters: Optional[dict] = None
+    research_protocol: Optional[str] = None
+    risk_constraints: Optional[str] = None
+    output_requirements: Optional[str] = None
     rationale: str
     error: Optional[str] = None
 
     @field_validator("new_directives_markdown")
     @classmethod
-    def _validate_structure(cls, value: str) -> str:
+    def _validate_structure(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
         # Local import avoids a top-level cycle with the orchestrator package.
         from orchestrator.research import split_yaml_frontmatter_markdown
 
@@ -295,6 +301,12 @@ class DirectivesPayload(BaseModel):
                 "a parseable ```yaml block with a 'filters:' mapping"
             )
         return value
+
+    @model_validator(mode="after")
+    def _needs_content(self) -> "DirectivesPayload":
+        if self.new_directives_markdown is None and self.filters is None:
+            raise ValueError("directives payload needs structured fields (filters, ...) or new_directives_markdown")
+        return self
 
 
 # ---------------------------------------------------------------------------

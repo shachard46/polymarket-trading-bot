@@ -90,21 +90,24 @@ class DirectivesMixin:
         from orchestrator.directives import (
             DirectiveBoundsError,
             changed_knobs,
+            normalize_overseer_output,
             validate_directive_change,
+            validate_directive_text,
         )
         from orchestrator.research import split_yaml_frontmatter_markdown
 
+        old = self.read_directives()
         try:
-            validated = DirectivesPayload.model_validate(payload)
+            validated = DirectivesPayload.model_validate(normalize_overseer_output(payload, old))
         except ValidationError as exc:
             raise VaultWriteError("__system__", exc) from exc
 
-        old = self.read_directives()
         new_version = self._next_directives_version()
         new_md = validated.new_directives_markdown
         try:
             if enforce_bounds:
                 changed = validate_directive_change(old, new_md, new_version)
+                validate_directive_text(old, new_md)
             else:
                 changed = changed_knobs(old, new_md)
         except DirectiveBoundsError as exc:
@@ -118,6 +121,8 @@ class DirectivesMixin:
         for key in ("restored_from", "restore_note", "migrated_from",
                     "last_overseer_ledger_count", "last_overseer_at"):
             fm.pop(key, None)
+        if "research_pipeline" in old_fm:
+            fm.setdefault("research_pipeline", old_fm["research_pipeline"])
         for key in ("last_overseer_ledger_count", "last_overseer_at"):
             if key in old_fm:
                 fm[key] = old_fm[key]
@@ -323,7 +328,7 @@ size, liquidity or trading mode into `estimated_p`.
 
 ## Output Requirements
 
-Follow the output format of your system prompt exactly.  The document
+Follow the required output format exactly.  The document
 frontmatter carries `market_id`, `estimated_p`, `p_low`, `p_high` and `error`:
 
 ```

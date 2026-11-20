@@ -118,6 +118,19 @@ BOUNDS = {
 }
 MAX_KNOBS_CHANGED_PER_RUN = 2       # more than this in one directives doc -> reject the whole doc
 KNOB_COOLDOWN_VERSIONS = 3          # a knob changed at version V may change again at V + 3
+# Directive TEXT guard (fixed group, NOT Overseer knobs, not in BOUNDS). The knobs are bounded; the free text of
+# the Research Protocol / Risk Constraints / Output Requirements sections goes into every deep_researcher call, so
+# the Hub checks it deterministically and rejects the WHOLE version on any violation.
+DIRECTIVE_TEXT_SECTIONS = ("Research Protocol", "Risk Constraints", "Output Requirements")
+DIRECTIVE_TEXT_MAX_CHARS = 4000          # max length of one text section
+DIRECTIVE_TEXT_MIN_SIMILARITY = 0.6      # difflib ratio vs the current section: below this = rewrite, rejected
+DIRECTIVE_TEXT_RATIO_MIN_LEN = 200       # the ratio check applies only to new sections longer than this
+DIRECTIVE_TEXT_FORBIDDEN_PATTERNS = (    # (reason, case-insensitive regex)
+    ("url", r"https?://|\bwww\.|\bftp://"),
+    ("market_talk", r"polymarket|kalshi|predictit|manifold|metaculus|market[\s_-]+price|implied[\s_-]+probabilit|\bodds\b"),
+    ("instruction_override", r"ignore\s+(?:all|any|the|previous|prior|above|earlier)(?:\s+\w+){0,2}\s+(?:instructions?|rules|prompts?)"
+                             r"|system\s+prompt|you\s+are\s+now|disregard|new\s+instructions"),
+)
 AUTO_REVERT_MIN_SCORED = 30         # resolved scored markets a version needs before it is judged
 AUTO_REVERT_BRIER_WORSE_BY = 0.02   # current Brier worse than previous by more than this -> revert
 

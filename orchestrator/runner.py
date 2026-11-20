@@ -297,8 +297,7 @@ def _build_live_prompt(
         )
     elif spec.get("output_is_state_machine"):
         response_hint = (
-            "Return ONLY a raw JSON object discriminated by status "
-            "(needs_more_data or complete). No markdown fences."
+            "Return ONLY a raw JSON object with status complete. No markdown fences."
         )
         extra = spec.get("live_response_hint")
         if extra:
@@ -315,9 +314,9 @@ def _build_live_prompt(
     return (
         f"{today_line()}\n\n"
         f"{header}\n\n"
-        f"{response_hint}\n\n"
         "Input JSON:\n"
-        f"{json.dumps(payload, indent=2, sort_keys=True, default=str)}"
+        f"{json.dumps(payload, indent=2, sort_keys=True, default=str)}\n\n"
+        f"{response_hint}"
     )
 
 

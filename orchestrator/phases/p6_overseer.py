@@ -21,8 +21,12 @@ from orchestrator.config import OVERSEER_INTERVAL_SEC, overseer_min_new_resolved
 from orchestrator.directives import (
     DirectiveBoundsError,
     changed_knobs,
+    directive_sections,
+    directives_equivalent,
     effective_knobs,
+    normalize_overseer_output,
     validate_directive_change,
+    validate_directive_text,
 )
 from orchestrator.phases.agent_call import run_structured_agent
 from orchestrator.phases.common import log
@@ -182,16 +186,11 @@ def phase6_macro_learning_loop(
         log.error("Overseer failed: %s — keeping prior directives", reason)
         return
 
-    from orchestrator.research import split_yaml_frontmatter_markdown
-
+    parsed = normalize_overseer_output(parsed, current)  # Hub renders the structured reply
     proposal = parsed.get("new_directives_markdown")
     unchanged = False
     try:
-        unchanged = (
-            not changed_knobs(current, proposal)
-            and split_yaml_frontmatter_markdown(current)[1]
-            == split_yaml_frontmatter_markdown(proposal)[1]
-        )
+        unchanged = directives_equivalent(current, proposal)
     except (ValueError, TypeError, AttributeError):
         pass  # malformed: let write_directives reject it
     version = ledger.current_directive_version(vault)
@@ -220,6 +219,28 @@ def phase6_macro_learning_loop(
 # ---------------------------------------------------------------- directive approval (concierge)
 
 _PROPOSAL_STATS_CHARS = 1500
+_PROPOSAL_DIFF_CHARS = 4000
+
+
+def _text_diff(old_md: str, new_md: str) -> str:
+    """Compact unified diff of the changed text sections (capped), for the proposal."""
+    import difflib
+
+    old_s, new_s = directive_sections(old_md), directive_sections(new_md)
+    chunks = []
+    for name in ("Research Protocol", "Risk Constraints", "Output Requirements"):
+        a, b = old_s.get(name, ""), new_s.get(name, "")
+        if a == b:
+            continue
+        lines = difflib.unified_diff(a.splitlines(), b.splitlines(), f"{name} (current)", f"{name} (proposed)",
+                                     n=1, lineterm="")
+        chunks.append("\n".join(lines))
+    if not chunks:
+        return "- (no text change)"
+    out = "```diff\n" + "\n".join(chunks) + "\n```"
+    if len(out) > _PROPOSAL_DIFF_CHARS:
+        out = out[:_PROPOSAL_DIFF_CHARS] + "\n... (diff truncated)\n```"
+    return out
 
 
 def _pending_dir(vault: ObsidianManager):
@@ -246,6 +267,7 @@ def _write_directive_proposal(
         base_version = vault.latest_directives_version()
         new_version = base_version + 1
         validate_directive_change(current_md, new_md, new_version)
+        validate_directive_text(current_md, new_md)
     except (DirectiveBoundsError, ValueError) as exc:
         log.error("Directives rejected: %s - keeping prior directives (v%d)", exc,
                   ledger.current_directive_version(vault))
@@ -256,6 +278,7 @@ def _write_directive_proposal(
         return None
     old_k, new_k = effective_knobs(current_md), effective_knobs(new_md)
     diff = [f"- {k}: {old_k[k]} -> {new_k[k]}" for k in changed_knobs(current_md, new_md)]
+    text_diff = _text_diff(current_md, new_md)
     proposal_id = f"{notify.DIRECTIVE_ID_PREFIX}v{new_version}"
     expires_at = now + timedelta(seconds=notify.directive_ttl_sec())
     rationale = str(parsed.get("rationale") or "").strip()
@@ -264,6 +287,7 @@ def _write_directive_proposal(
         f"created_at: {now.isoformat()}\nexpires_at: {expires_at.isoformat()}\n---\n\n"
         f"# Overseer directive proposal {proposal_id}\n\n"
         f"## Knob changes\n\n" + ("\n".join(diff) or "- (no knob change; text only)") + "\n\n"
+        f"## Text changes\n\n{text_diff}\n\n"
         f"## Reason\n\n{rationale or '(none given)'}\n\n"
         f"## Stats excerpt\n\n{stats_md[:_PROPOSAL_STATS_CHARS]}\n\n"
         f"Reply yes or no. Vote file: inbox/vote-{proposal_id}.json\n"

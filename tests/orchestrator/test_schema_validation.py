@@ -132,7 +132,7 @@ def test_spawn_agent_overseer_accepts_valid_payload():
         },
     )
     assert isinstance(out, dict)
-    assert "new_directives_markdown" in out
+    assert "filters" in out and "research_protocol" in out
     assert out["rationale"]
     assert out.get("error") is None
     assert "market_id" not in out
@@ -168,7 +168,7 @@ def test_spawn_agent_overseer_rejects_evaluator_shape(monkeypatch):
             },
         )
     msg = str(exc_info.value)
-    assert "new_directives_markdown" in msg or "rationale" in msg
+    assert "filters" in msg or "rationale" in msg
 
 
 def test_build_live_response_hint_lists_schema_keys():
@@ -215,9 +215,9 @@ def test_build_live_prompt_overseer_includes_yaml_hint():
         spec,
         {"post_mortems": [], "current_directives": "x"},
     )
-    assert "new_directives_markdown" in prompt
+    assert "research_protocol" in prompt
     assert "rationale" in prompt
-    assert "## Research Protocol" in prompt
+    assert "filters" in prompt
     assert "Do NOT include market_id" in prompt
     assert spec.get("live_response_hint")
 

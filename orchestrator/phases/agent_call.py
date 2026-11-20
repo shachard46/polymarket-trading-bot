@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 from typing import Any, Callable
 
 from obsidian_utils import ObsidianManager
@@ -84,6 +86,30 @@ def run_structured_or_flag(
     return parsed
 
 
+_FRONTMATTER_RE = re.compile(r"\A\s*---[ \t]*\n.*?\n---[ \t]*(?:\n|\Z)", re.DOTALL)
+_POST_MORTEM_RE = re.compile(r"^##\s*Post-Mortem\b.*\Z", re.DOTALL | re.MULTILINE)
+
+
+def build_research_markdown(complete: DeepResearcherComplete) -> str:
+    """Hub-owned research document: frontmatter from the JSON fields + the model's body (sections only).
+
+    Any frontmatter the model wrote is stripped, and the reserved empty ``## Post-Mortem`` header is appended
+    (the model's own copy, if any, is dropped), so JSON and frontmatter can never disagree.
+    """
+    body = _FRONTMATTER_RE.sub("", complete.markdown or "", count=1)
+    body = _POST_MORTEM_RE.sub("", body).strip()
+    front = (
+        "---\n"
+        f"market_id: {json.dumps(complete.market_id)}\n"
+        f"estimated_p: {complete.estimated_p}\n"
+        f"p_low: {complete.p_low}\n"
+        f"p_high: {complete.p_high}\n"
+        "error: null\n"
+        "---\n\n"
+    )
+    return f"{front}{body}\n\n## Post-Mortem\n"
+
+
 def invoke_deep_researcher(
     runner: AgentRunner,
     dr_in: dict[str, Any],
@@ -109,7 +135,10 @@ def invoke_deep_researcher(
             parsed,
             output_schema=None,
         )
-        return parse_deep_researcher_json(normalized)
+        out = parse_deep_researcher_json(normalized)
+        if isinstance(out, DeepResearcherComplete):
+            out = out.model_copy(update={"markdown": build_research_markdown(out)})
+        return out
 
     return run_agent_with_format_retries(
         runner,

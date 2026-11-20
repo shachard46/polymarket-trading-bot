@@ -380,3 +380,28 @@ def test_build_phase3_queue_logs_skip_counter(vault, caplog):
         "[PHASE 3 queue] candidates=1 skip_fresh=0 skip_cooldown=0 skip_open_bet=0" in r.getMessage()
         for r in caplog.records
     )
+
+
+def _triage_with(researchable):
+    def run(role, payload):
+        return {"market_id": payload["market_id"], "researchable": researchable, "category": "x",
+                "reason": "r", "manipulation_risk": "low", "manipulation_reason": "mr", "error": None}
+    return run
+
+
+@pytest.mark.parametrize("value", ["false", "False", " FALSE "])
+def test_triage_string_false_is_not_researchable(vault, value):
+    phases.phase2_quantitative_routing(vault, [mk("a")], runner=_triage_with(value))
+    assert vault.read_filter_log("a")["triage"]["researchable"] is False
+    assert stages(vault, "a") == ["triage_reject"]
+
+
+def test_triage_string_true_is_researchable(vault):
+    phases.phase2_quantitative_routing(vault, [mk("a")], runner=_triage_with("true"))
+    assert vault.read_filter_log("a")["passed"] is True
+
+
+@pytest.mark.parametrize("value", ["<JSON boolean true or false>", "maybe", None, 1])
+def test_triage_garbage_researchable_flags_inactive(vault, value):
+    phases.phase2_quantitative_routing(vault, [mk("a")], runner=_triage_with(value))
+    assert vault.is_market_inactive("a")

@@ -181,6 +181,69 @@ def _post_mortem_failed(
         )
 
 
+CITED_EVIDENCE_MAX_LINES = 40
+CITED_EVIDENCE_MAX_CHARS = 8000
+CRUX_TABLE_KEYS = ("crux_id", "role", "question", "status", "missing")
+
+
+def _crux_table_for_pm(crux_meta: Any) -> list[dict[str, Any]] | None:
+    cruxes = crux_meta.get("cruxes") if isinstance(crux_meta, dict) else None
+    if not isinstance(cruxes, list):
+        return None
+    rows = [{k: c.get(k) for k in CRUX_TABLE_KEYS} for c in cruxes if isinstance(c, dict)]
+    return rows or None
+
+
+def _cited_evidence_for_pm(
+    vault: ObsidianManager, market_id: str, research: dict[str, Any], researched_at: Any
+) -> list[dict[str, Any]] | None:
+    """Verbatim lines the judges cited (frontmatter ``evidence_bull``/``evidence_bear``), capped.
+
+    When the persisted bundle still holds a matching line, its E id, age/quality label and URL/date are added.
+    """
+    from orchestrator import evidence  # noqa: PLC0415
+
+    sides = (("yes", research.get("evidence_bull")), ("no", research.get("evidence_bear")))
+    if not any(isinstance(v, list) and v for _, v in sides):
+        return None
+    recs: dict[str, dict[str, Any]] = {}
+    try:
+        bundle = vault.read_research_bundle(market_id) or []
+        today = str(researched_at or "")[:10]
+        if bundle and today:
+            for r in evidence.label_lines(bundle, today):
+                recs.setdefault(r["text"].strip().lstrip("- ").strip(), r)
+    except Exception:  # noqa: BLE001 - advisory context only
+        recs = {}
+    out: list[dict[str, Any]] = []
+    total = 0
+    for direction, lines in sides:
+        for raw in lines if isinstance(lines, list) else []:
+            if not isinstance(raw, str):
+                continue
+            unverified = raw.endswith("(unverified)")
+            text = raw[: -len("(unverified)")].strip() if unverified else raw.strip()
+            rec = recs.get(text)
+            parts = [x.strip() for x in text.split(" | ")]
+            item = {
+                "cited_for": direction,
+                "id": rec["id"] if rec else None,
+                "label": None if not rec else (
+                    "undated" if rec["age_days"] is None else f"{rec['age_days']}d"
+                ) + (" STALE" if rec["stale"] else "") + f" | {rec['quality']}",
+                "fact": parts[0],
+                "url": rec["url"] if rec and rec.get("url") else (parts[1] if len(parts) > 2 else None),
+                "date": parts[-1] if len(parts) > 2 else None,
+                "unverified": unverified,
+            }
+            size = len(str(item))
+            if len(out) >= CITED_EVIDENCE_MAX_LINES or total + size > CITED_EVIDENCE_MAX_CHARS:
+                return out or None
+            out.append(item)
+            total += size
+    return out or None
+
+
 def _post_mortem_payload(
     vault: ObsidianManager, market_id: str, resolution: dict[str, Any]
 ) -> dict[str, Any]:
@@ -209,6 +272,12 @@ def _post_mortem_payload(
             outcome_yes,
         )
     checklist = research.get("resolution_checklist")
+    try:
+        crux_meta = vault.read_research_bundle_meta(market_id).get("crux_meta")
+    except Exception:  # noqa: BLE001 - optional context never fails the post-mortem
+        crux_meta = None
+    known = (crux_meta or {}).get("known_unknowns") if isinstance(crux_meta, dict) else None
+    researched_at = research.get("researched_at") or research.get("as_of")
     return {
         "market_id": market_id,
         "original_research": vault.read_post_mortem(market_id),
@@ -228,6 +297,12 @@ def _post_mortem_payload(
         "gate_score": _as_float(first(filt.get("score"), filt.get("confidence_multiplier"))),
         "research_confidence": research.get("confidence"),
         "resolution_checklist": checklist if isinstance(checklist, list) else None,
+        "crux_table": _crux_table_for_pm(crux_meta),
+        "known_unknowns": known if isinstance(known, list) and known else None,
+        "cited_evidence": _cited_evidence_for_pm(vault, market_id, research, researched_at),
+        "researched_at": researched_at,
+        "resolved_at": resolution.get("resolved_at"),
+        "end_date": research.get("end_date"),
     }
 
 

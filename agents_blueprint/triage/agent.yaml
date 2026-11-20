@@ -1,5 +1,5 @@
 id: triage
-description: Researchability triage - decides from the question alone (no price) whether public-information research could beat a liquid market. Cached per market/event by the Hub.
+description: Researchability triage - decides from the question alone (no price) whether public-information research could beat this market's traders. Cached per market/event by the Hub.
 model: null
 tools:
   allow: []

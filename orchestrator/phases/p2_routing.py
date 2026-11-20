@@ -253,8 +253,19 @@ def _triage_verdict(
             },
         )
         return None
+    researchable = _parse_bool(parsed.get("researchable"))
+    if researchable is None:
+        err = f"triage researchable invalid: {parsed.get('researchable')!r}"
+        flag_inactive(
+            vault, market_id, "phase2", err,
+            {
+                **(prior or {}), "market_id": market_id, "passed": False,
+                "confidence_multiplier": 0.0, "details": err,
+            },
+        )
+        return None
     triage = {
-        "researchable": bool(parsed.get("researchable")),
+        "researchable": researchable,
         "category": parsed.get("category"),
         "reason": parsed.get("reason"),
         "manipulation_risk": risk,
@@ -265,6 +276,15 @@ def _triage_verdict(
     if event_id:
         event_cache[str(event_id)] = triage
     return triage
+
+
+def _parse_bool(value: Any) -> bool | None:
+    """A real bool, or the strings "true"/"false" (any case); anything else is None (content error)."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.strip().lower() in ("true", "false"):
+        return value.strip().lower() == "true"
+    return None
 
 
 def _rank_and_triage(

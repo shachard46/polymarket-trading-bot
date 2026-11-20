@@ -210,20 +210,12 @@ def _post_mortem_stub(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _overseer_stub(payload: dict[str, Any]) -> dict[str, Any]:
-    # Re-emit the existing directives so the structural validator still passes.
-    current = payload.get("current_directives") or ""
+    # No change: empty filters and null text sections keep the current directives.
     return {
-        "new_directives_markdown": current
-        or (
-            "---\n"
-            "title: stub\n"
-            "---\n\n"
-            "## Research Protocol\n\nstub.\n\n"
-            "## Filter Weightings\n\nstub.\n\n"
-            "```yaml\nfilters:\n  gate_min_q: 0.05\n```\n\n"
-            "## Risk Constraints\n\nstub.\n\n"
-            "## Output Requirements\n\nstub.\n"
-        ),
+        "filters": {},
+        "research_protocol": None,
+        "risk_constraints": None,
+        "output_requirements": None,
         "rationale": "stub: no changes recommended",
         "error": None,
     }

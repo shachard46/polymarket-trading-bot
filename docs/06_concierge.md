@@ -51,7 +51,7 @@ One per UTC day, written by the first tick of that day.
 
 ### Directive proposal: `outbox/directive-v<N>.md`
 
-Written only when `CONCIERGE_APPROVE_DIRECTIVES=1` and the Overseer proposes a change. Frontmatter: `proposal_id` (`directive-v<N>`), `base_version`, `new_version`, `created_at`, `expires_at` (`CONCIERGE_DIRECTIVE_TTL_SEC`). Body: knob changes, reason, stats excerpt, then `Reply yes or no. Vote file: inbox/vote-directive-v<N>.json`.
+Written only when `CONCIERGE_APPROVE_DIRECTIVES=1` and the Overseer proposes a change. Frontmatter: `proposal_id` (`directive-v<N>`), `base_version`, `new_version`, `created_at`, `expires_at` (`CONCIERGE_DIRECTIVE_TTL_SEC`). Body: knob changes, reason, a `Text changes` unified diff, stats excerpt, then `Reply yes or no. Vote file: inbox/vote-directive-v<N>.json`.
 
 ### Votes
 

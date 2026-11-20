@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import difflib
 import logging
 import math
+from datetime import datetime, timezone
 import re
 from typing import Any
 
@@ -11,6 +13,11 @@ import yaml
 
 from config.trading_constants import (
     BOUNDS,
+    DIRECTIVE_TEXT_FORBIDDEN_PATTERNS,
+    DIRECTIVE_TEXT_MAX_CHARS,
+    DIRECTIVE_TEXT_MIN_SIMILARITY,
+    DIRECTIVE_TEXT_RATIO_MIN_LEN,
+    DIRECTIVE_TEXT_SECTIONS,
     FILTERS,
     KNOB_COOLDOWN_VERSIONS,
     MAX_KNOBS_CHANGED_PER_RUN,
@@ -192,9 +199,160 @@ def validate_directive_change(old_markdown: str, new_markdown: str, new_version:
     return changed
 
 
+# ---------------------------------------------------------------------------
+# Text sections: parsing, guard, rendering of the structured Overseer output
+# ---------------------------------------------------------------------------
+
+_SECTION_KEYS = {
+    "Research Protocol": "research_protocol",
+    "Risk Constraints": "risk_constraints",
+    "Output Requirements": "output_requirements",
+}
+
+
+def directive_sections(markdown: str) -> dict[str, str]:
+    """Level-2 sections of the body, ``{header text: stripped content}`` (fence-aware).
+
+    A ``## `` line inside a fenced code block is content, not a header.
+    """
+    from orchestrator.research import split_yaml_frontmatter_markdown
+
+    try:
+        body = split_yaml_frontmatter_markdown(markdown)[1] if markdown.strip() else ""
+    except ValueError:
+        return {}
+    sections: dict[str, list[str]] = {}
+    current: str | None = None
+    in_fence = False
+    for line in body.splitlines():
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+        if not in_fence and line.startswith("## "):
+            current = line[3:].strip()
+            sections[current] = []
+        elif current is not None:
+            sections[current].append(line)
+    return {k: "\n".join(v).strip() for k, v in sections.items()}
+
+
+def _headers_outside_fences(text: str) -> bool:
+    in_fence = False
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+        elif not in_fence and re.match(r"#{1,2}\s", line):
+            return True
+    return False
+
+
+def validate_directive_text(old_markdown: str, new_markdown: str) -> None:
+    """Deterministic guard for the free-text sections; raises :class:`DirectiveBoundsError`.
+
+    Per text section: max length, no URL / prediction-market talk / instruction-override phrase,
+    no level 1-2 header (it would break the document structure), and a bounded change versus the
+    current section (difflib ratio; only for new sections longer than ``DIRECTIVE_TEXT_RATIO_MIN_LEN``).
+    """
+    old_s, new_s = directive_sections(old_markdown), directive_sections(new_markdown)
+    extra = [k for k in new_s if k not in DIRECTIVE_TEXT_SECTIONS and not k.startswith("Filter Weightings")]
+    if extra:
+        raise DirectiveBoundsError(f"unexpected sections (unchecked text): {extra}")
+    for name in DIRECTIVE_TEXT_SECTIONS:
+        new_t = new_s.get(name, "")
+        old_t = old_s.get(name, "")
+        if len(new_t) > DIRECTIVE_TEXT_MAX_CHARS:
+            raise DirectiveBoundsError(f"text section '{name}': {len(new_t)} chars > {DIRECTIVE_TEXT_MAX_CHARS}")
+        if _headers_outside_fences(new_t):
+            raise DirectiveBoundsError(f"text section '{name}': contains a markdown header")
+        for reason, pattern in DIRECTIVE_TEXT_FORBIDDEN_PATTERNS:
+            # a phrase already present in the current section is grandfathered (older seeds say "system prompt")
+            old_hits = {h.lower() for h in re.findall(pattern, old_t, re.IGNORECASE)}
+            for m in re.finditer(pattern, new_t, re.IGNORECASE):
+                if m.group(0).lower() not in old_hits:
+                    raise DirectiveBoundsError(f"text section '{name}': forbidden {reason} ({m.group(0)!r})")
+        if old_t and new_t != old_t and len(new_t) > DIRECTIVE_TEXT_RATIO_MIN_LEN:
+            ratio = difflib.SequenceMatcher(None, old_t, new_t, autojunk=False).ratio()
+            if ratio < DIRECTIVE_TEXT_MIN_SIMILARITY:
+                raise DirectiveBoundsError(
+                    f"text section '{name}': rewrite too large (similarity {ratio:.2f} < {DIRECTIVE_TEXT_MIN_SIMILARITY})"
+                )
+
+
+def directives_equivalent(old_markdown: str, new_markdown: str) -> bool:
+    """Same knobs and same text sections (ignores frontmatter and layout)."""
+    if changed_knobs(old_markdown, new_markdown):
+        return False
+    a, b = directive_sections(old_markdown), directive_sections(new_markdown)
+    return all(a.get(n, "") == b.get(n, "") for n in DIRECTIVE_TEXT_SECTIONS)
+
+
+def render_directives(
+    current_markdown: str,
+    *,
+    filters: dict[str, Any] | None,
+    research_protocol: str | None = None,
+    risk_constraints: str | None = None,
+    output_requirements: str | None = None,
+) -> str:
+    """Render ``active_directives.md`` from the structured Overseer output.
+
+    Knobs omitted from ``filters`` keep their current value; omitted (null) text sections keep the
+    current text. Unknown filter keys are kept so the bounds check rejects them.
+    """
+    merged: dict[str, Any] = dict(effective_knobs(current_markdown))
+    merged.update(filters or {})
+    cur = directive_sections(current_markdown)
+    texts = {
+        "Research Protocol": research_protocol,
+        "Risk Constraints": risk_constraints,
+        "Output Requirements": output_requirements,
+    }
+    parts = ["# Active Directives"]
+    for name in ("Research Protocol", "Filter Weightings", "Risk Constraints", "Output Requirements"):
+        if name == "Filter Weightings":
+            block = yaml.safe_dump({"filters": merged}, sort_keys=False, default_flow_style=False).rstrip()
+            parts.append(f"## Filter Weightings\n\n```yaml\n{block}\n```")
+            continue
+        text = texts[name]
+        text = cur.get(name, "") if text is None else str(text).strip()
+        parts.append(f"## {name}\n\n{text}")
+    head = f"---\ntitle: Active Directives\nlast_updated: {datetime.now(timezone.utc).date().isoformat()}\n"
+    pipeline = _frontmatter(current_markdown).get("research_pipeline")
+    if pipeline:
+        head += f"research_pipeline: {pipeline}\n"
+    return head + "---\n\n" + "\n\n".join(parts) + "\n"
+
+
+def normalize_overseer_output(parsed: dict[str, Any], current_markdown: str) -> dict[str, Any]:
+    """Return ``parsed`` with ``new_directives_markdown`` set (rendered from the structured fields).
+
+    A legacy reply that already carries ``new_directives_markdown`` is passed through untouched.
+    Without either, ``parsed`` is returned as is and payload validation rejects it.
+    """
+    if not isinstance(parsed, dict):
+        return parsed
+    if isinstance(parsed.get("new_directives_markdown"), str) and parsed["new_directives_markdown"].strip():
+        return parsed
+    if not isinstance(parsed.get("filters"), dict):
+        return parsed
+    out = dict(parsed)
+    out["new_directives_markdown"] = render_directives(
+        current_markdown,
+        filters=parsed["filters"],
+        research_protocol=parsed.get("research_protocol"),
+        risk_constraints=parsed.get("risk_constraints"),
+        output_requirements=parsed.get("output_requirements"),
+    )
+    return out
+
+
 __all__ = [
     "DirectiveBoundsError",
     "changed_knobs",
+    "directive_sections",
+    "directives_equivalent",
+    "normalize_overseer_output",
+    "render_directives",
+    "validate_directive_text",
     "directive_version",
     "effective_knobs",
     "extract_filter_directives",

@@ -476,6 +476,49 @@ def test_post_mortem_payload_fields_and_persistence(vault, monkeypatch):
     assert ledger.latest_decision_by_market(vault)["0xpm"]["stage"] == "traded"
 
 
+def _res(mid, outcome="yes"):
+    return {"market_id": mid, "status": "closed", "outcome": outcome, "resolved_at": "2026-02-01T00:00:00+00:00"}
+
+
+def test_post_mortem_payload_new_fields_null_when_missing(vault, monkeypatch):
+    _seed_traded_market(vault)
+    monkeypatch.setattr(scraper, "fetch_resolution", lambda mid: _res(mid))
+    seen: list = []
+    phases.phase5_resolution_and_post_mortem(vault, runner=_runner(seen))
+    (p,) = seen
+    assert p["crux_table"] is None and p["known_unknowns"] is None and p["cited_evidence"] is None
+    assert p["researched_at"] is None and p["end_date"] is None
+    assert p["resolved_at"] == "2026-02-01T00:00:00+00:00"
+
+
+def test_post_mortem_payload_new_fields_present_and_capped(vault, monkeypatch):
+    mid = "0xpm"
+    vault.write_trade_log(mid, {
+        "market_id": mid, "allocation_usd": 10.0, "executed": False, "transaction_hash": None,
+        "error": None, "p": 0.7, "q_entry": 0.4, "side": "YES", "price": 0.4, "shares": 25.0,
+    })
+    bull = [f"fact {i} | https://example.com/{i} | 2026-01-0{1 + i % 9}" for i in range(60)]
+    vault.write_research_report(mid, {
+        "market_id": mid, "estimated_p": 0.7, "error": None, "researched_at": "2026-01-10T00:00:00+00:00",
+        "end_date": "2026-02-01", "evidence_bull": bull, "evidence_bear": ["x | https://example.org/x | 2026-01-02 (unverified)"],
+    }, "## Bull Thesis\n\nb\n\n## Bear Thesis\n\nb\n\n## Post-Mortem\n")
+    vault.write_research_bundle(mid, [{"query": "q", "crux_id": "c1", "role": "evidence", "result": "- fact 0 | https://example.com/0 | 2026-01-01"}], {
+        "crux_meta": {"cruxes": [{"crux_id": "c1", "role": "evidence", "question": "Q?", "status": "unanswered",
+                                   "missing": "no poll", "followed_up": False}],
+                      "known_unknowns": ["Q? (no poll)"]},
+    })
+    monkeypatch.setattr(scraper, "fetch_resolution", lambda mid: _res(mid))
+    seen: list = []
+    phases.phase5_resolution_and_post_mortem(vault, runner=_runner(seen))
+    (p,) = seen
+    assert p["crux_table"] == [{"crux_id": "c1", "role": "evidence", "question": "Q?", "status": "unanswered", "missing": "no poll"}]
+    assert p["known_unknowns"] == ["Q? (no poll)"]
+    assert p["researched_at"].startswith("2026-01-10") and p["end_date"] == "2026-02-01"
+    ev = p["cited_evidence"]
+    assert 0 < len(ev) <= 40 and len(str(ev)) <= 8000 + 500
+    assert ev[0]["cited_for"] == "yes" and ev[0]["fact"] == "fact 0" and ev[0]["url"].startswith("https://example.com/0")
+
+
 def test_post_mortem_losing_bet_pnl_and_invalid_failure_class(vault, monkeypatch):
     _seed_traded_market(vault)
     monkeypatch.setattr(
@@ -497,7 +540,8 @@ def test_post_mortem_schema_requires_failure_class_and_inputs():
     assert "failure_class" in spec["output_schema"]
     for key in ("p", "p_low", "p_high", "q_entry", "side", "price", "size_usd", "outcome_yes",
                 "realised_pnl_usd", "category", "gate_score", "research_confidence",
-                "resolution_checklist"):
+                "resolution_checklist", "crux_table", "known_unknowns", "cited_evidence",
+                "researched_at", "resolved_at", "end_date"):
         assert key in spec["input_schema"]
     prompt = spec["system_prompt"]
     assert "70% call that loses can be *correct*" in prompt
