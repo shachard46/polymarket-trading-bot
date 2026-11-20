@@ -48,11 +48,12 @@ def fetch_rows(
     runner: AgentRunner,
     today: str,
     source: str,
+    locale: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], str, bool]:
     """Evidence rows for ``queries`` from ``source``; returns ``(rows, source_used, fell_back)``.
 
     Pure with respect to the vault (nothing is written), so it is safe to call from worker threads. In ``ab``
-    mode an A-IQ arm whose rows all failed falls back to web.
+    mode an A-IQ arm whose rows all failed falls back to web. ``locale`` only affects web (Brave) searches.
     """
     cleaned = [str(q).strip() for q in queries if str(q).strip()]
     if not cleaned:
@@ -63,9 +64,15 @@ def fetch_rows(
         )
         if evidence_source() == EVIDENCE_AB and not evidence.rows_usable(rows):
             log.warning("[PHASE 3] A-IQ arm failed for %s; falling back to web search", market_id)
-            return evidence.fetch_web_bundle(runner, vault, market_id, cleaned, today), evidence.WEB, True
+            return _web_bundle(runner, vault, market_id, cleaned, today, locale), evidence.WEB, True
         return rows, source, False
-    return evidence.fetch_web_bundle(runner, vault, market_id, cleaned, today), source, False
+    return _web_bundle(runner, vault, market_id, cleaned, today, locale), source, False
+
+
+def _web_bundle(runner, vault, market_id, queries, today, locale):  # noqa: ANN001
+    if locale:
+        return evidence.fetch_web_bundle(runner, vault, market_id, queries, today, locale)
+    return evidence.fetch_web_bundle(runner, vault, market_id, queries, today)
 
 
 def _fetch_and_persist_bundle(

@@ -143,14 +143,19 @@ def fetch_web_rows(
     market_id: str,
     queries: list[str],
     today: str,
+    locale: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Web evidence rows for ``queries`` (aligned to the input, never raises except ``InfraUnavailable``).
 
     Backend (``config.web_backend()``): Brave search + page fetch + ``web_extractor``, or the gemini
     ``web_searcher`` (one query per call, in parallel). A query whose Brave path errors falls back to gemini.
+    ``locale`` (``{"country", "language"}``, local-language queries) is passed to Brave only.
     """
     if config.web_backend() == config.WEB_BACKEND_BRAVE:
-        rows = _brave_rows(runner, market_id, queries, today)
+        rows = (
+            _brave_rows(runner, market_id, queries, today, locale) if locale
+            else _brave_rows(runner, market_id, queries, today)
+        )
         backends = [config.WEB_BACKEND_BRAVE] * len(rows)
         failed = [i for i, r in enumerate(rows) if r.get("error")]
         if failed:
@@ -366,10 +371,16 @@ def _log_page_diagnostics(market_id: str, query: str, pages: list[Any]) -> None:
 
 
 def _brave_one(
-    runner: Callable[[str, dict[str, Any]], Any], market_id: str, query: str, today: str
+    runner: Callable[[str, dict[str, Any]], Any], market_id: str, query: str, today: str,
+    locale: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     try:
-        pages = brave_search.search_pages(query)
+        if locale:
+            pages = brave_search.search_pages(
+                query, country=locale.get("country"), search_lang=locale.get("language")
+            )
+        else:
+            pages = brave_search.search_pages(query)
     except brave_search.BraveError as exc:
         return {"query": query, "research_data": "", "error": f"brave: {exc}"}
     except Exception as exc:  # noqa: BLE001 - any search/fetch bug must fall back, not abort the tick
@@ -408,9 +419,10 @@ def _brave_rows(
     market_id: str,
     queries: list[str],
     today: str,
+    locale: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     rows = _run_parallel(
-        lambda q: _brave_one(runner, market_id, q, today), list(queries), BRAVE_QUERY_WORKERS
+        lambda q: _brave_one(runner, market_id, q, today, locale), list(queries), BRAVE_QUERY_WORKERS
     )
     log.info(
         "[BRAVE-PAGES] %s pages_fetched_per_query=%s", market_id, [r.get("pages_fetched", 0) for r in rows]
@@ -551,11 +563,15 @@ def fetch_web_bundle(
     market_id: str,
     queries: list[str],
     today: str,
+    locale: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     return fetch_research_bundle_cached(
         queries,
         web_cache_path(vault),
-        fetch=lambda qs: fetch_web_rows(runner, market_id, qs, today),
+        fetch=lambda qs: (
+            fetch_web_rows(runner, market_id, qs, today, locale) if locale
+            else fetch_web_rows(runner, market_id, qs, today)
+        ),
     )
 
 

@@ -18,6 +18,7 @@ def _triage_stub(payload: dict[str, Any]) -> dict[str, Any]:
         "reason": "stub: researchable",
         "manipulation_risk": "low",
         "manipulation_reason": "stub",
+        "country": "global",
         "error": None,
     }
 
@@ -65,6 +66,7 @@ def _scout_stub(payload: dict[str, Any]) -> dict[str, Any]:
         "scheduled": [],
         "contested": [],
         "main_sources": ["example.org"],
+        "locale": {"country": None, "language": "en"},
         "error": None,
     }
 

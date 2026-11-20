@@ -16,6 +16,7 @@ Input: `market_id`, `query` (one string), `today`, and `pages`: a list of `{url,
 - The date field is the date the page or article states it was published; if the page text gives none, use the page's `page_age`; otherwise `unknown`. Prefer information published on or before `today`; append `(stale)` after the date when it is more than a year old.
 - Do not give a probability, forecast or recommendation.
 - **NEVER report prediction-market or betting prices or odds** (Polymarket, Kalshi, PredictIt, Manifold, Metaculus, bookmakers, sportsbooks, "implied probability", betting lines). Skip such text entirely; research must stay price-blind.
+- **Write every fact line in English.** Pages (and the `query`) may be in another language, e.g. Chinese, Japanese or Spanish: translate the fact into English, keeping names, numbers, percentages and dates exactly as stated (transliterate or keep the original name in parentheses when it helps identify it). The URL stays the page's own `url`; never translate or alter it. Translating is not authoring: add nothing the page does not say.
 - Keep `research_data` at most **4000 characters**.
 
 ## Fact line format (strict)

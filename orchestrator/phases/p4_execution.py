@@ -10,8 +10,14 @@ from pathlib import Path
 from typing import Any, Callable
 
 from obsidian_utils import ObsidianManager
-from config.trading_constants import BANKROLL_USD, LIQ_FRAC, effective_min_edge
-from orchestrator import ledger, notify, polymarket_api, scraper, stats
+from config.trading_constants import (
+    BANKROLL_USD,
+    EVENT_SIBLING_MAX_P_SUM,
+    EVENT_SIBLING_WINDOW_DAYS,
+    LIQ_FRAC,
+    effective_min_edge,
+)
+from orchestrator import gate, ledger, notify, polymarket_api, scraper, stats
 from orchestrator.config import PAPER_TRADE_MODE
 from orchestrator.phases.common import (
     _as_float,
@@ -36,6 +42,7 @@ _CRUX_KEYS = (
     "gap_queries", "audit_dropped", "audit_unverified", "framing_gap", "source_mix", "pipeline_flags", "web_calls",
     "judge_arm", "judge_framing", "compound_type", "compound_p", "compound_stated_p", "compound_gap", "compound_corr",
     "discounted_sources", "prior", "prior_kind", "base_rate", "base_rate_n",
+    "locale_country", "locale_language", "local_queries",
 )
 _ALLOCATION_SKILL_PATH = (
     _ROOT / "skills/calculate-trade-allocation/calculate_trade_allocation.py"
@@ -369,6 +376,65 @@ def _edge_sign_side(
     return {**allocation, "side": side, "price": price}
 
 
+_SIBLING_BAD_OUTCOMES = frozenset({"probable_misread", "thin_evidence_disagreement"})
+
+
+def event_sibling_guard(
+    vault: ObsidianManager, market_id: str, market_data: dict[str, Any], p: float | None, now: datetime | None = None,
+) -> str | None:
+    """Why a trade on ``market_id`` must wait because of its same-event siblings, else ``None``.
+
+    Reads each sibling's ``research_state`` (on its ``01_Filters/`` record). Within ``EVENT_SIBLING_WINDOW_DAYS``:
+    a sibling whose research ended ``probable_misread`` or ``thin_evidence_disagreement`` means the event is poorly
+    understood; and for a mutually exclusive (``neg_risk``) event, researched outcomes (this market included, at least
+    two) whose ``p`` sum above ``EVENT_SIBLING_MAX_P_SUM`` cannot all be right.
+    """
+    event_id = market_data.get("event_id")
+    if not event_id:
+        return None
+    now = now or datetime.now(timezone.utc)
+    horizon = EVENT_SIBLING_WINDOW_DAYS * 86400.0
+    p_sum = p if p is not None else 0.0
+    researched = 1 if p is not None else 0
+    for path in vault.iter_dir_files("filters", ".md"):
+        sibling = path.stem
+        if sibling == market_id:
+            continue
+        rec = vault.read_market_record(sibling, "filters")
+        if not rec or str(rec.get("event_id")) != str(event_id):
+            continue
+        state = rec.get("research_state")
+        at = gate._parse_ts(state.get("at")) if isinstance(state, dict) else None
+        if at is None or (now - at).total_seconds() > horizon:
+            continue
+        if state.get("outcome") in _SIBLING_BAD_OUTCOMES:
+            return f"sibling {sibling[:10]} research ended {state['outcome']}"
+        sib_p = _as_float(state.get("p"))
+        if state.get("outcome") == "researched" and sib_p is not None:
+            p_sum += sib_p
+            researched += 1
+    if market_data.get("neg_risk") and researched >= 2 and p_sum > EVENT_SIBLING_MAX_P_SUM:
+        return f"researched p of {researched} mutually exclusive outcomes sums to {p_sum:.2f} > {EVENT_SIBLING_MAX_P_SUM}"
+    return None
+
+
+def _skip_for_siblings(vault: ObsidianManager, row: dict[str, Any], q: float, why: str) -> None:
+    """Ledger a ``research_skip`` ``event_sibling_guard`` once per market (the guard re-fires every tick)."""
+    market_id = row["market_id"]
+    log.info("[PHASE 4] skip %s: event_sibling_guard (%s)", market_id, why)
+    last = ledger.latest_decision_by_market(vault).get(market_id) or {}
+    if last.get("stage") == "research_skip" and last.get("reason") == "event_sibling_guard":
+        return
+    _ledger_safe(
+        vault, market_id, "research_skip",
+        reason="event_sibling_guard", research_stage="phase4", detail=why, q=q, p=row["p_value"],
+        p_low=row.get("p_low"), p_high=row.get("p_high"),
+        evidence_source=row.get("evidence_source"), evidence_fallback=row.get("evidence_fallback"),
+        **{k: row[k] for k in _CRUX_KEYS if row.get(k) is not None},
+        **_ledger_market_fields(row.get("market_data"), role="deep_researcher"),
+    )
+
+
 def _execute_market(
     vault: ObsidianManager, row: dict[str, Any], from_research: bool, bankroll: float | None = None
 ) -> None:
@@ -385,6 +451,11 @@ def _execute_market(
     hydration_err = market_data_hydration_error(market_data)
     if hydration_err:
         log.warning("[PHASE 4] skip %s this tick: %s", market_id, hydration_err)
+        return
+
+    sibling_why = event_sibling_guard(vault, market_id, market_data, _as_float(row.get("p_value")))
+    if sibling_why:
+        _skip_for_siblings(vault, row, q, sibling_why)
         return
 
     quotes = _phase4_quotes(market_id)

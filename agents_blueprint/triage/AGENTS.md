@@ -34,6 +34,7 @@ Separately from `researchable`, rate how easily the resolution could be manipula
 - `reason`: one sentence naming the deciding factor.
 - `manipulation_risk`: exactly one of `low`, `medium`, `high`.
 - `manipulation_reason`: one sentence naming the deciding factor for the manipulation risk.
+- `country`: the single country whose institutions, voters or events decide the question, as an uppercase ISO 3166-1 alpha-2 code (e.g. `TW`, `US`, `BR`), or `global` when no one country dominates (worldwide or multinational questions). Use `null` if you cannot tell. Judge from the question text only.
 
 EXECUTION FLOW: single turn. Read `title`, `description`, `resolution_source`, `category`, `end_date`, `today`; emit the JSON below.
 
@@ -52,6 +53,7 @@ OUTPUT SCHEMA:
   "reason": "<one sentence>",
   "manipulation_risk": "low",
   "manipulation_reason": "<one sentence>",
+  "country": "<ISO-2 code, \"global\", or null>",
   "error": null
 }
 ```

@@ -89,13 +89,49 @@ def _retry_wait(resp: Any, attempt: int) -> float:
     return min(2.0 ** attempt, BRAVE_BACKOFF_CAP_SEC)
 
 
-def search(query: str, freshness: str | None = None) -> list[dict[str, Any]]:
+# Values Brave's Web Search API documents for `country` (ISO-2) and `search_lang`; anything else is dropped.
+BRAVE_COUNTRIES = frozenset({
+    "AR", "AU", "AT", "BE", "BR", "CA", "CL", "DK", "FI", "FR", "DE", "GR", "HK", "IN", "ID", "IT", "JP", "KR",
+    "MY", "MX", "NL", "NZ", "NO", "CN", "PL", "PT", "PH", "RU", "SA", "ZA", "ES", "SE", "CH", "TW", "TR", "GB", "US",
+})
+BRAVE_SEARCH_LANGS = frozenset({
+    "ar", "eu", "bn", "bg", "ca", "zh-hans", "zh-hant", "hr", "cs", "da", "nl", "en", "en-gb", "et", "fi", "fr", "gl",
+    "de", "gu", "he", "hi", "hu", "is", "it", "jp", "kn", "ko", "lv", "lt", "ms", "ml", "mr", "nb", "pl", "pt-br",
+    "pt-pt", "pa", "ro", "ru", "sr", "sk", "sl", "es", "sv", "ta", "te", "th", "tr", "uk", "vi",
+})
+_LANG_ALIASES = {
+    "zh": "zh-hans", "zh-cn": "zh-hans", "zh-sg": "zh-hans", "zh-tw": "zh-hant", "zh-hk": "zh-hant",
+    "ja": "jp", "ja-jp": "jp", "no": "nb", "pt": "pt-br", "en-us": "en", "iw": "he", "ua": "uk",
+}
+
+
+def valid_country(country: Any) -> str | None:
+    """Upper-case ISO-2 when Brave supports it as `country`, else None (the param is then left out)."""
+    c = str(country or "").strip().upper()
+    return c if c in BRAVE_COUNTRIES else None
+
+
+def valid_search_lang(lang: Any) -> str | None:
+    """Brave `search_lang` value for `lang` (aliases such as `zh-tw` / `ja` mapped), else None."""
+    key = str(lang or "").strip().lower().replace("_", "-")
+    key = _LANG_ALIASES.get(key, key)
+    return key if key in BRAVE_SEARCH_LANGS else None
+
+
+def search(
+    query: str, freshness: str | None = None, country: str | None = None, search_lang: str | None = None
+) -> list[dict[str, Any]]:
     """Brave Web Search results (web.results) for query; backs off and retries on HTTP 429.
 
-    freshness (optional): pd/pw/pm/py or a date range "YYYY-MM-DDtoYYYY-MM-DD".
+    freshness (optional): pd/pw/pm/py or a date range "YYYY-MM-DDtoYYYY-MM-DD". `country` / `search_lang` are
+    validated against Brave's supported values and left out when unsupported.
     """
     headers = _headers()
     params = {"q": query, "count": BRAVE_RESULTS_PER_QUERY, "extra_snippets": "true"}
+    if valid_country(country):
+        params["country"] = valid_country(country)
+    if valid_search_lang(search_lang):
+        params["search_lang"] = valid_search_lang(search_lang)
     freshness = freshness or _FRESHNESS_OVERRIDE
     if freshness:
         params["freshness"] = freshness
@@ -248,6 +284,14 @@ _QUESTION_LEAD_RE = re.compile(
     re.IGNORECASE,
 )
 KEYWORD_QUERY_MAX_WORDS = 24
+_CJK_RANGES = ((0x3040, 0x30FF), (0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xAC00, 0xD7AF), (0xF900, 0xFAFF))
+_CJK_RE = re.compile("[" + "".join(f"{chr(a)}-{chr(b)}" for a, b in _CJK_RANGES) + "]")
+_FULLWIDTH_QMARK = chr(0xFF1F)
+_FULLWIDTH_PUNCT = "".join(chr(c) for c in (0xFF0C, 0xFF1B, 0xFF1A, 0x3001))
+
+
+def _has_cjk(text: str) -> bool:
+    return bool(_CJK_RE.search(text))
 
 
 def keyword_query(question: str) -> str:
@@ -257,16 +301,24 @@ def keyword_query(question: str) -> str:
     question. Falls back to the original text when stripping leaves nothing.
     """
     q = _AS_OF_RE.sub(" ", str(question or ""))
-    q = _QUESTION_LEAD_RE.sub("", q.strip())
-    q = re.sub(r"[?]+", " ", q)
+    if not _has_cjk(q):  # English question words only exist in Latin text; CJK queries are left as written
+        q = _QUESTION_LEAD_RE.sub("", q.strip())
+    q = re.sub("[?" + _FULLWIDTH_QMARK + "]+", " ", q)
     words = q.split()[:KEYWORD_QUERY_MAX_WORDS]
-    out = " ".join(words).strip(" ,;:")
+    out = " ".join(words).strip(" ,;:" + _FULLWIDTH_PUNCT)
     return out or str(question or "").strip()
 
 
-def search_pages(query: str, fetch_pages: int = BRAVE_FETCH_PAGES, freshness: str | None = None) -> list[Page]:
-    """Search ``query`` and read the top ``fetch_pages`` results; raises :class:`BraveError` on a failed search."""
-    results = search(keyword_query(query), freshness=freshness)[: max(0, fetch_pages)]
+def search_pages(
+    query: str, fetch_pages: int = BRAVE_FETCH_PAGES, freshness: str | None = None,
+    country: str | None = None, search_lang: str | None = None,
+) -> list[Page]:
+    """Search ``query`` and read the top ``fetch_pages`` results; raises :class:`BraveError` on a failed search.
+
+    ``country`` / ``search_lang`` (local-language queries) go to Brave when they are supported values.
+    """
+    extra = {k: v for k, v in (("country", country), ("search_lang", search_lang)) if v}
+    results = search(keyword_query(query), freshness=freshness, **extra)[: max(0, fetch_pages)]
     if not results:
         return []
     with ThreadPoolExecutor(max_workers=len(results)) as pool:
@@ -274,4 +326,4 @@ def search_pages(query: str, fetch_pages: int = BRAVE_FETCH_PAGES, freshness: st
     return [p for p in pages if p is not None]
 
 
-__all__ = ["BraveError", "keyword_query", "Page", "fetch_page_text", "freshness_override", "html_to_text", "search", "search_pages"]
+__all__ = ["BraveError", "valid_country", "valid_search_lang", "keyword_query", "Page", "fetch_page_text", "freshness_override", "html_to_text", "search", "search_pages"]

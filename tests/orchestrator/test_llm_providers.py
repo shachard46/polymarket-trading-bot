@@ -240,6 +240,7 @@ def test_openrouter_payload_and_usage(http):
         "model": "vendor/m", "max_tokens": 7,
         "messages": [{"role": "system", "content": "SYS"}, {"role": "user", "content": "USER"}],
         "response_format": {"type": "json_object"},
+        "provider": {"ignore": ["Alibaba"]},
     }
 
 
@@ -322,3 +323,32 @@ def test_httpllm_hooks_template(http):
     assert _H("m").complete("S", "U", json_mode=True).text == "ok"
     assert http.calls[0]["url"] == "http://x/y" and http.calls[0]["json"] == {"s": "S", "j": True}
     assert isinstance(HttpStatusError(400, "b"), Exception) and HttpStatusError(400, "b").status == 400
+
+
+def test_openrouter_provider_ignore_env(http, monkeypatch):
+    http.script[:] = [_or_ok(), _or_ok(), _or_ok()]
+    OpenRouterLLM("m").complete("s", "u")
+    assert http.calls[0]["json"]["provider"] == {"ignore": ["Alibaba"]}  # default
+    monkeypatch.setenv("OPENROUTER_PROVIDER_IGNORE", " Alibaba , Foo ,")
+    OpenRouterLLM("m").complete("s", "u")
+    assert http.calls[1]["json"]["provider"] == {"ignore": ["Alibaba", "Foo"]}
+    monkeypatch.setenv("OPENROUTER_PROVIDER_IGNORE", "")
+    OpenRouterLLM("m").complete("s", "u")
+    assert "provider" not in http.calls[2]["json"]  # empty = ignore none
+
+
+def test_openrouter_inappropriate_content_403_retries_once(http):
+    msg = "Upstream error from Alibaba: Output data may contain inappropriate content"
+    http.script[:] = [_or_err(403, msg), _or_ok("fine")]
+    assert OpenRouterLLM("m").complete("s", "u").text == "fine"
+    assert len(http.calls) == 2
+    http.calls.clear()
+    http.script[:] = [_or_err(403, msg), _or_err(403, msg)]
+    with pytest.raises(LLMError, match="inappropriate content"):
+        OpenRouterLLM("m").complete("s", "u")
+    assert len(http.calls) == 2  # one retry only
+    http.calls.clear()
+    http.script[:] = [_or_err(403, "forbidden key")]
+    with pytest.raises(LLMError):
+        OpenRouterLLM("m").complete("s", "u")
+    assert len(http.calls) == 1  # other 403s are not retried

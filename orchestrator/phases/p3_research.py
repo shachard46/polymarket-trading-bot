@@ -42,6 +42,8 @@ from config.trading_constants import (
     EVIDENCE_QUALITY_TIERS,
     GAP_MAX_QUERIES,
     JUDGE_LINES_PER_CRUX,
+    LOCAL_QUERY_ROLES,
+    RESEARCH_LOCAL_EXTRA_WEB_CALLS,
     SOURCE_CLASSIFIER_MAX_DOMAINS,
     LIQ_FRAC,
     JUDGE_PARTIAL_LINES,
@@ -52,7 +54,7 @@ from config.trading_constants import (
 )
 from obsidian_utils import ObsidianManager
 from orchestrator import compound as compound_mod
-from orchestrator import evidence, source_quality
+from orchestrator import brave_search, evidence, source_quality
 from orchestrator.agent_outputs import (
     REQUIRED_CRUX_ROLES,
     AuditOutput,
@@ -107,9 +109,38 @@ class WebBudget:
                 return True
             return False
 
+    def extend(self, n: int) -> None:
+        """Raise the cap by ``n`` calls (non-English locale: local-language queries)."""
+        with self._lock:
+            self.total += n
+            self.left += n
+
     @property
     def used(self) -> int:
         return self.total - self.left
+
+
+# ---- market locale ----------------------------------------------------------------------------------------
+
+_ENGLISH_LANGS = frozenset({"en", "en-gb", "en-us", "eng", "english"})
+
+
+def normalize_locale(raw: Any) -> dict[str, Any] | None:
+    """``{"country": ISO-2 or None, "language": lowercase code}`` from a scout / architect locale, else ``None``.
+
+    The country must be a value Brave supports (else None); the language is kept as the model wrote it (lower
+    case) and validated against Brave only when a search is sent. A missing language means no locale.
+    """
+    if not isinstance(raw, dict):
+        return None
+    lang = str(raw.get("language") or "").strip().lower().replace("_", "-")
+    if not lang:
+        return None
+    return {"country": brave_search.valid_country(raw.get("country")), "language": lang}
+
+
+def is_non_english(locale: dict[str, Any] | None) -> bool:
+    return bool(locale) and str(locale["language"]) not in _ENGLISH_LANGS
 
 
 def _pmap(fn: Callable[[Any], Any], items: list[Any], workers: int) -> list[Any]:
@@ -237,7 +268,7 @@ def _is_rules_question(question: Any) -> bool:
 
 def _normalize_cruxes(
     proposed: list[dict[str, Any]], row: dict[str, Any], today: str, depth: str,
-    spec: dict[str, Any] | None = None,
+    spec: dict[str, Any] | None = None, locale: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Enforce the required roles (template fill), the crux count for ``depth`` and unique, dated queries; assign ids.
 
@@ -308,9 +339,17 @@ def _normalize_cruxes(
             q = _ensure_as_of(c["question"], today)
             seen_q.add(q.lower())
             queries = [q]
+        local: list[str] = []
+        if is_non_english(locale) and c["role"] in LOCAL_QUERY_ROLES and c.get("source") != "rules":
+            for lq in c.get("queries_local") or []:  # one local-language query per crux (no "as of" suffix)
+                lq = str(lq).strip()
+                if lq and lq.lower() not in seen_q:
+                    seen_q.add(lq.lower())
+                    local.append(lq)
+                    break
         out.append({
             "crux_id": f"c{n}", "role": c["role"], "question": c["question"],
-            "moves_p_if": c.get("moves_p_if", ""), "queries": queries,
+            "moves_p_if": c.get("moves_p_if", ""), "queries": queries, "queries_local": local,
             "component": c.get("component"), "provenance_question": prov, "source": c.get("source", "web"),
             "status": "rules" if c.get("source") == "rules" else "unanswered", "missing": "", "followed_up": False,
         })
@@ -318,9 +357,10 @@ def _normalize_cruxes(
 
 
 def _architect(
-    runner: AgentRunner, row: dict[str, Any], today: str, depth: str, scout: dict[str, Any] | None, flags: list[str]
-) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
-    """Returns ``(cruxes, compound spec or None)``."""
+    runner: AgentRunner, row: dict[str, Any], today: str, depth: str, scout: dict[str, Any] | None, flags: list[str],
+    locale: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None, dict[str, Any] | None]:
+    """Returns ``(cruxes, compound spec or None, locale)``; the scout's ``locale`` wins over the architect's own."""
     payload = {**_text_fields(row, today), "depth": depth, "scout": scout}
     playbook = playbook_for((row.get("market_data") or {}).get("category"))
     if playbook:
@@ -336,8 +376,10 @@ def _architect(
                 {"role": role, "question": q, "queries": [q], "moves_p_if": ""}
                 for role, q in zip(_LEGACY_SLOT_ROLES, out.research_queries)
             ]
+    if locale is None and out is not None:
+        locale = normalize_locale(getattr(out, "locale", None))
     # a failed architect leaves ``proposed`` empty: the templates (the old fixed slots plus horizon) fill in
-    return _normalize_cruxes(proposed, row, today, depth, spec), spec
+    return _normalize_cruxes(proposed, row, today, depth, spec, locale), spec, locale
 
 
 # ---- search ---------------------------------------------------------------------------------------------
@@ -345,11 +387,17 @@ def _architect(
 
 def _search_jobs(
     jobs: list[tuple[dict[str, Any], str]],
-    fetch: Callable[[list[str]], list[dict[str, Any]]],
+    fetch: Callable[..., list[dict[str, Any]]],
     gap: bool,
+    locale: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Search each ``(crux, query)`` in a worker thread; rows come back tagged with the crux (writes stay with the caller)."""
+    """Search each ``(crux, query)`` in a worker thread; rows come back tagged with the crux (writes stay with the caller).
+
+    A crux's ``queries_local`` entries are searched with the market ``locale`` (Brave country / search_lang).
+    """
     def one(job: tuple[dict[str, Any], str]) -> list[dict[str, Any]]:
+        if locale and job[1] in (job[0].get("queries_local") or []):
+            return fetch([job[1]], locale=locale)
         return fetch([job[1]])
 
     results = _pmap(one, jobs, CRUX_SEARCH_WORKERS)
@@ -368,6 +416,10 @@ def _initial_jobs(cruxes: list[dict[str, Any]], budget: WebBudget) -> list[tuple
     for c in cruxes:
         if c.get("source") != "rules" and budget.take(1):
             jobs.append((c, c["queries"][0]))
+    for c in cruxes:  # local-language queries next: they have their own extra budget
+        for q in c.get("queries_local") or []:
+            if budget.take(1, reserve=GAP_MAX_QUERIES):
+                jobs.append((c, q))
     for c in cruxes:
         if c.get("source") == "rules":
             continue
@@ -631,18 +683,31 @@ def build_evidence(
     state = {"source": resolve_source(vault, market_id)[0], "fallback": False}
     state_lock = threading.Lock()
 
-    def fetch(queries: list[str]) -> list[dict[str, Any]]:
+    def fetch(queries: list[str], locale: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         with state_lock:
             source = state["source"]
-        rows, used, fell = fetch_rows(vault, market_id, queries, runner, today, source)
+        if locale:
+            rows, used, fell = fetch_rows(vault, market_id, queries, runner, today, source, locale)
+        else:
+            rows, used, fell = fetch_rows(vault, market_id, queries, runner, today, source)
         if fell:
             with state_lock:
                 state["source"], state["fallback"] = used, True
         return rows
 
     scout = _scout(runner, row, today, fetch, budget, flags)
-    cruxes, compound_spec = _architect(runner, row, today, depth, scout, flags)
-    rows = _search_jobs(_initial_jobs(cruxes, budget), fetch, gap=False)
+    cruxes, compound_spec, locale = _architect(
+        runner, row, today, depth, scout, flags, normalize_locale((scout or {}).get("locale"))
+    )
+    if is_non_english(locale):
+        budget.extend(RESEARCH_LOCAL_EXTRA_WEB_CALLS)
+    jobs = _initial_jobs(cruxes, budget)
+    local_queries = sum(1 for c, q in jobs if q in (c.get("queries_local") or []))
+    rows = _search_jobs(jobs, fetch, gap=False, locale=locale)
+    log.info(
+        "[LOCALE] %s: country=%s lang=%s local_queries=%d", market_id,
+        (locale or {}).get("country"), (locale or {}).get("language"), local_queries,
+    )
     gap_rows, gap_queries = _gap_round(runner, row, today, cruxes, rows, budget, fetch, flags)
     rows = rows + gap_rows
     _classify_sources(vault, runner, market_id, rows, flags)
@@ -680,6 +745,9 @@ def build_evidence(
         "source_mix": dict(Counter(rec["quality"] for rec in lines)),
         "flags": flags,
         "web_calls": budget.used,
+        "locale_country": (locale or {}).get("country"),
+        "locale_language": (locale or {}).get("language"),
+        "local_queries": local_queries,
     }
     stored = _strip_pages(rows)
     if persist:
@@ -967,6 +1035,9 @@ def crux_fields(
         "source_mix": meta.get("source_mix") or {},
         "pipeline_flags": flags,
         "web_calls": meta.get("web_calls", 0),
+        "locale_country": meta.get("locale_country"),
+        "locale_language": meta.get("locale_language"),
+        "local_queries": meta.get("local_queries", 0),
         "judge_arm": judge_arm,
         "judge_framing": judge_framing,
     }

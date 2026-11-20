@@ -291,6 +291,7 @@ def market_row_from_gamma(raw: dict[str, Any], now: datetime | None = None) -> d
         "event_id": str(event_id) if event_id is not None else None,
         "slug": raw.get("slug") or None,
         "event_slug": (events[0].get("slug") or None) if events else None,
+        "neg_risk": bool(raw["negRisk"]) if raw.get("negRisk") is not None else None,  # mutually exclusive outcomes of one event
         "resolution_source": raw.get("resolutionSource") or (events[0].get("resolutionSource") if events else None) or None,
         "yes_token_id": tokens[yes_i],
         "no_token_id": tokens[no_i],

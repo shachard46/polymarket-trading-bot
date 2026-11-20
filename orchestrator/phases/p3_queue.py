@@ -11,7 +11,12 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from obsidian_utils import ObsidianManager
-from config.trading_constants import SHADOW_MAX_PER_TICK, TRIAGE_SHADOW_MAX_PER_TICK
+from config.trading_constants import (
+    MAX_FULL_PER_COUNTRY_PER_TICK,
+    MAX_FULL_PER_EVENT_PER_TICK,
+    SHADOW_MAX_PER_TICK,
+    TRIAGE_SHADOW_MAX_PER_TICK,
+)
 from orchestrator import evidence, gate, scraper
 from orchestrator.config import (
     full_research_budget,
@@ -32,7 +37,6 @@ from orchestrator.phases.common import (
     _write_filter_state,
     log,
 )
-from orchestrator.phases.p3_evidence import _bundle_has_entries
 from orchestrator.phases.p3_quick import _quick_stage, _triage_shadow_payload, _triage_shadow_quick
 from orchestrator.phases.research_state import (
     _attempt_cooldown_active,
@@ -43,7 +47,10 @@ from orchestrator.runner import AgentRunner, prefetch_runner, spawn_agent
 from orchestrator.scraper import market_data_pricing_error
 from orchestrator.state import InfraUnavailable, is_inactive, market_quarantine
 
-_SKIP_OUTCOMES = frozenset({"no_divergence", "sample_disagreement", "probable_misread", "no_evidence", "compound_inconsistent"})
+_SKIP_OUTCOMES = frozenset({
+    "no_divergence", "sample_disagreement", "probable_misread", "no_evidence", "compound_inconsistent",
+    "thin_evidence_disagreement",
+})
 
 
 def _qualitative_rank_key(candidate: Phase3Candidate) -> tuple[float, str]:
@@ -185,6 +192,46 @@ class _Job:
         event_id = md.get("event_id") or self.candidate.filter_record.get("event_id")
         return str(event_id) if event_id else None
 
+    @property
+    def country(self) -> str | None:
+        """Triage country (ISO-2 upper case); ``None`` when missing or ``global`` (no per-country cap)."""
+        triage = self.candidate.filter_record.get("triage")
+        country = str(triage.get("country") or "").strip() if isinstance(triage, dict) else ""
+        return country.upper() if len(country) == 2 and country.isalpha() else None
+
+
+def _apply_concentration_caps(
+    jobs: list[_Job],
+    max_per_event: int = MAX_FULL_PER_EVENT_PER_TICK,
+    max_per_country: int = MAX_FULL_PER_COUNTRY_PER_TICK,
+) -> tuple[list[_Job], list[_Job]]:
+    """Split ranked FULL ``jobs`` into (kept, deferred): per ``event_id`` and per triage country caps.
+
+    Order is the queue's rank, so the best-ranked market of an event / country is kept. Deferred markets are not
+    failed: nothing is recorded, and they stay candidates for the next tick. A job without an event id or country
+    is not capped on that axis.
+    """
+    kept: list[_Job] = []
+    deferred: list[_Job] = []
+    per_event: Counter[str] = Counter()
+    per_country: Counter[str] = Counter()
+    for job in jobs:
+        event, country = job.event_id, job.country
+        if event and per_event[event] >= max_per_event:
+            log.info("[PHASE 3] %s: skip:event_cap (event %s already has %d FULL this tick)", job.market_id[:10], event, max_per_event)
+            deferred.append(job)
+            continue
+        if country and per_country[country] >= max_per_country:
+            log.info("[PHASE 3] %s: skip:country_cap (country %s already has %d FULL this tick)", job.market_id[:10], country, max_per_country)
+            deferred.append(job)
+            continue
+        if event:
+            per_event[event] += 1
+        if country:
+            per_country[country] += 1
+        kept.append(job)
+    return kept, deferred
+
 
 def _run_full_stage(
     vault: ObsidianManager,
@@ -195,8 +242,8 @@ def _run_full_stage(
 ) -> list[dict[str, Any]]:
     """Run FULL research for ``jobs``: events in parallel, same-event markets sequentially.
 
-    Markets sharing an ``event_id`` reuse the first market's evidence bundle (the Deep
-    Researcher still runs per market). Vault writes are per-market atomic files.
+    Every market gets its own crux plan and evidence bundle (a sibling's cruxes are framed for another outcome);
+    only raw per-query web results are shared, through the query cache. Vault writes are per-market atomic files.
     """
     if not jobs:
         return []
@@ -209,8 +256,6 @@ def _run_full_stage(
 
     def run_group(group: list[_Job]) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
-        shared: list[dict[str, Any]] | None = None
-        shared_meta: dict[str, Any] | None = None
         for job in group:
             if abort.is_set():
                 break
@@ -225,17 +270,11 @@ def _run_full_stage(
                     extra = {"shadow": True, "quick": job.quick} if job.shadow else {}
                     result = p3_full._research_market(
                         vault, runner, job.row, directives,
-                        refresh=job.refresh, shared_bundle=shared, shared_meta=shared_meta,
-                        **extra,
+                        refresh=job.refresh, **extra,
                     )
             except InfraUnavailable:
                 abort.set()
                 raise
-            if shared is None:
-                leader_bundle = vault.read_research_bundle(job.market_id)
-                if _bundle_has_entries(leader_bundle):
-                    shared = leader_bundle
-                    shared_meta = vault.read_research_bundle_meta(job.market_id)
             if result is not None and not job.shadow:
                 out.append(result)
         return out
@@ -350,6 +389,9 @@ def phase3_qualitative_pipeline(
         ", ".join(f"{k}={quick_counts.get(k, 0)}" for k in
                   ("escalate", "skip", "failed", "cached_escalate", "refresh", "skip_quick_budget")),
     )
+    to_full, capped = _apply_concentration_caps(to_full)
+    if capped:
+        log.info("[PHASE 3] concentration caps: %d FULL deferred to the next tick", len(capped))
     selected = to_full[: full_research_budget()]
     if len(to_full) > len(selected):
         log.info(

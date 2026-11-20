@@ -146,6 +146,9 @@ class ResearchFrontmatter(BaseModel):
     source_mix: dict[str, int] = {}
     pipeline_flags: list[str] = []  # degraded stages (scout_failed, gap_failed, audit_failed, judge_failed:j2, ...)
     web_calls: Optional[int] = None
+    locale_country: Optional[str] = None  # market locale from the scout (ISO-2), null when unknown
+    locale_language: Optional[str] = None  # e.g. "zh-hant"; non-English adds local-language queries
+    local_queries: Optional[int] = None  # local-language searches actually run
     judge_arm: Optional[str] = None  # "one" | "two" (judge cost A/B)
     judge_framing: Optional[str] = None  # framing of the single judge ("yes" | "no"); null with two judges
     compound_type: Optional[str] = None  # "and" | "or" for a compound market

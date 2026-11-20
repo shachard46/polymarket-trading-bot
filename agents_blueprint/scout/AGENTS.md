@@ -16,6 +16,7 @@ You are **stateless** and **price-blind**: you never see a market price and must
 - `scheduled`: dated events before `end_date` that can decide or move the outcome (votes, hearings, deadlines, releases, matches).
 - `contested`: points where sources disagree or the rules are ambiguous.
 - `main_sources`: the most useful source names or domains seen in the evidence.
+- `locale`: where the question is decided and in which language its best evidence is published: `{"country": "<ISO-2 code or null>", "language": "<code>"}`. `language` is a lowercase code such as `en`, `zh-hant`, `zh-hans`, `jp`, `ko`, `es`, `de`, `fr`, `pt-br`, `ru`, `ar`, `tr`, `th`, `vi`. Use `en` when English-language sources cover the matter well; use the local language (e.g. `zh-hant` for a Taiwanese local election) when the decisive evidence (polls, official results, local press) is mostly not in English. Judge from the market text and the evidence only.
 
 Empty lists are fine when the evidence says nothing. Never invent facts.
 
@@ -32,6 +33,7 @@ Your entire response is the raw JSON object below. First character `{`, last `}`
   "scheduled": ["<YYYY-MM-DD or period: what>"],
   "contested": ["<string>"],
   "main_sources": ["<string>"],
+  "locale": {"country": "<ISO-2 or null>", "language": "<code>"},
   "error": null
 }
 ```

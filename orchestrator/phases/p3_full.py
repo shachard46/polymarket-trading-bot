@@ -45,26 +45,36 @@ def _discounted_sources(samples: list[Sample]) -> list[str]:
     return out[:6]
 
 
+def thin_evidence_disagreement(
+    crux_meta: dict[str, Any] | None, p: float, q: float | None, max_gap: float
+) -> bool:
+    """True when an ``evidence`` crux is still unanswered after the gap round's reassess and |p - q| > ``max_gap``.
+
+    A big gap to the market with the "what is the latest verified state" question unanswered is a probable
+    misread of thin information, not an edge (generalised ``probable_misread``; code decides, the judge never sees q).
+    """
+    if q is None or abs(p - q) <= max_gap:
+        return False
+    return any(
+        c.get("role") == "evidence" and c.get("status") == "unanswered" for c in (crux_meta or {}).get("cruxes") or []
+    )
+
+
 def _prepare_evidence(
     vault: ObsidianManager,
     runner: AgentRunner,
     row: dict[str, Any],
     today: str,
     refresh: bool,
-    shared_bundle: list[dict[str, Any]] | None,
-    shared_meta: dict[str, Any] | None,
     shadow: bool = False,
 ) -> bool:
     """Ensure the market has an evidence bundle (always ``True``: helper-role failures degrade, never flag).
 
-    A same-event sibling reuses the first market's bundle (and its crux table); an existing usable bundle is reused;
-    otherwise the crux evidence stage runs.
+    An existing usable bundle of THIS market is reused; otherwise the crux evidence stage runs. Never a sibling's
+    bundle: the crux plan and bundle are per market (a same-event sibling's cruxes are framed for another outcome).
     """
     market_id = row["market_id"]
-    if shared_bundle:  # same-event sibling: reuse the first market's evidence
-        vault.clear_research_bundle(market_id)
-        vault.write_research_bundle(market_id, shared_bundle, meta=shared_meta)
-    elif refresh or not _bundle_has_entries(vault.read_research_bundle(market_id)):
+    if refresh or not _bundle_has_entries(vault.read_research_bundle(market_id)):
         depth = p3_research.research_depth(row.get("market_data") or {})
         log.info("[PHASE 3] RESEARCH_DEPTH=%s for %s", depth, market_id)
         p3_research.build_evidence(vault, runner, row, today, depth)
@@ -140,8 +150,6 @@ def _research_market(
     directives: str,
     *,
     refresh: bool = False,
-    shared_bundle: list[dict[str, Any]] | None = None,
-    shared_meta: dict[str, Any] | None = None,
     shadow: bool = False,
     quick: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
@@ -155,12 +163,12 @@ def _research_market(
     """
     if not shadow:
         return _research_market_body(
-            vault, runner, row, directives, refresh, shared_bundle, shared_meta, False, quick
+            vault, runner, row, directives, refresh, False, quick
         )
     market_id = row["market_id"]
     try:
         return _research_market_body(
-            vault, runner, row, directives, refresh, shared_bundle, shared_meta, True, quick
+            vault, runner, row, directives, refresh, True, quick
         )
     except InfraUnavailable:
         raise
@@ -184,8 +192,6 @@ def _research_market_body(
     row: dict[str, Any],
     directives: str,
     refresh: bool,
-    shared_bundle: list[dict[str, Any]] | None,
-    shared_meta: dict[str, Any] | None,
     shadow: bool,
     quick: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
@@ -195,7 +201,7 @@ def _research_market_body(
     today = today_date()
 
     if not _prepare_evidence(
-        vault, runner, row, today, refresh, shared_bundle, shared_meta, shadow
+        vault, runner, row, today, refresh, shadow
     ):
         return None
     if not _bundle_has_entries(vault.read_research_bundle(market_id)):
@@ -257,6 +263,8 @@ def _research_market_body(
             would_skip = "compound_inconsistent"
         elif q is not None and abs(agg["p"] - q) > knobs["research_max_q_gap"]:
             would_skip = "probable_misread"
+        elif thin_evidence_disagreement(crux_meta, agg["p"], q, knobs["research_thin_evidence_max_gap"]):
+            would_skip = "thin_evidence_disagreement"
         quick = quick or {}
         _ledger_safe(
             vault, market_id, "shadow_research",
@@ -274,6 +282,13 @@ def _research_market_body(
         return None
     if q is not None and abs(agg["p"] - q) > knobs["research_max_q_gap"]:
         _skip_research(vault, row, "full", "probable_misread", **values)
+        return None
+    if thin_evidence_disagreement(crux_meta, agg["p"], q, knobs["research_thin_evidence_max_gap"]):
+        log.info(
+            "[PHASE 3] thin_evidence_disagreement for %s: p=%.3f q=%.3f, an evidence crux is unanswered",
+            market_id, agg["p"], q,
+        )
+        _skip_research(vault, row, "full", "thin_evidence_disagreement", **values)
         return None
 
     offer_ev = p3_research.offer_evidence(vault.read_research_bundle(market_id) or [], today, samples)

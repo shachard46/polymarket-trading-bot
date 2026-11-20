@@ -443,19 +443,21 @@ def test_full_stage_markets_run_concurrently(world, vault, monkeypatch):
     assert {r["market_id"] for r in ledger.iter_rows(vault)} <= {"a", "b"}
 
 
-def test_same_event_markets_share_one_bundle(world, vault):
+def test_same_event_markets_one_full_per_tick_each_with_own_bundle(world, vault):
     for mid in ("a", "b"):
         world.market(mid, 0.42, event_id="ev-1")
         _seed(vault, mid)
     out = phases.phase3_qualitative_pipeline(vault, runner=world.runner)
-    assert sorted(r["market_id"] for r in out) == ["a", "b"]
-    assert len(world.of("briefer")) == 1 and len(world.of("scout")) == 1
-    assert all("Title a" in q for f in world.fetches for q in f)  # only the first market searched
-    judges = world.of("deep_researcher", "judge")
-    assert sorted({p["market_id"] for p in judges}) == ["a", "b"]
-    assert len(judges) == 4  # the judges still run per market (J1 + J2 each)
-    assert judges[0]["crux_table"] and all(p["crux_table"] for p in judges)  # the sibling reuses the crux table
-    assert vault.read_research_bundle("a") == vault.read_research_bundle("b")
+    assert [r["market_id"] for r in out] == ["a"]  # event cap: one FULL per event per tick, b deferred (not failed)
+    assert not _skips(vault, "b") and not vault.is_market_inactive("b")
+    out = phases.phase3_qualitative_pipeline(vault, runner=world.runner)
+    assert [r["market_id"] for r in out] == ["b"]  # next tick
+    # the sibling got its own scout, architect and searches (a copied bundle framed another outcome)
+    assert len(world.of("briefer")) == 2 and len(world.of("scout")) == 2
+    assert {p["market_id"] for p in world.of("briefer")} == {"a", "b"}
+    assert any("Title b" in q for f in world.fetches for q in f)
+    assert vault.read_research_bundle("a") != vault.read_research_bundle("b")
+    assert vault.read_research_bundle_meta("b")["crux_meta"]["cruxes"]
 
 
 def test_infra_failure_in_a_worker_aborts_the_tick(world, vault):

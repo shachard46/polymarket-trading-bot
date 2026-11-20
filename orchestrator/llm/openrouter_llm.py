@@ -16,6 +16,26 @@ log = logging.getLogger(__name__)
 _BATCH_STATES = {"completed": "done", "failed": "failed", "expired": "failed", "cancelled": "failed"}
 
 
+PROVIDER_IGNORE_ENV = "OPENROUTER_PROVIDER_IGNORE"
+DEFAULT_PROVIDER_IGNORE = "Alibaba"  # upstream that blocks some answers with HTTP 403 "inappropriate content"
+
+
+def provider_ignore() -> list[str]:
+    """Provider names OpenRouter must not route to: comma list in ``OPENROUTER_PROVIDER_IGNORE`` (default ``Alibaba``).
+
+    Set the variable to an empty string to ignore none.
+    """
+    raw = os.environ.get(PROVIDER_IGNORE_ENV)
+    raw = DEFAULT_PROVIDER_IGNORE if raw is None else raw
+    return [p.strip() for p in raw.split(",") if p.strip()]
+
+
+def _is_content_block(exc: Exception) -> bool:
+    return (
+        isinstance(exc, HttpStatusError) and exc.status == 403 and "inappropriate content" in str(exc.body).lower()
+    )
+
+
 class OpenRouterLLM(HttpLLM):
     provider_name = "openrouter"
     api_key_env = "OPENROUTER_API_KEY"
@@ -51,7 +71,20 @@ class OpenRouterLLM(HttpLLM):
             body["response_format"] = {"type": "json_object"}
         if web:
             body["plugins"] = [{"id": "web", "max_results": self.web_max_uses}]
+        ignore = provider_ignore()
+        if ignore:  # OpenRouter provider routing: `provider.ignore` skips these upstreams for this request
+            body["provider"] = {**(body.get("provider") or {}), "ignore": ignore}
         return body
+
+    def _send(self, system: str, user: str, json_mode: bool, web: bool) -> LLMResponse:
+        try:
+            return super()._send(system, user, json_mode, web)
+        except HttpStatusError as exc:
+            if not _is_content_block(exc):
+                raise
+            # an upstream content filter can fire on one routing; one more try may land elsewhere
+            log.warning("[LLM] openrouter:%s upstream content block (%s); retrying once", self.model, exc)
+            return super()._send(system, user, json_mode, web)
 
     # ---- /batches (async, discounted; results come back unordered, matched on custom_id) ------
 

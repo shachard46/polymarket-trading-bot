@@ -29,6 +29,7 @@ AIQ_TIMEOUT_SEC = 300.0
 RESEARCH_MAX_QUICK_WIDTH = 0.20     # quick range wider than this is "uninformative" -> escalate (also escalates on confidence "low")
 RESEARCH_MAX_SAMPLE_SPREAD = 0.15   # max(p) - min(p) across samples above this -> sample_disagreement
 RESEARCH_MAX_Q_GAP = 0.40           # |p_median - q| above this -> probable_misread (paper-trading: wider)
+RESEARCH_THIN_EVIDENCE_MAX_GAP = 0.15  # an unanswered "evidence" crux plus |p - q| above this -> thin_evidence_disagreement (no trade)
 RESEARCH_REFRESH_PRICE_MOVE = 0.08  # q moved this much since research -> re-research
 RESEARCH_MIN_TTL_HOURS = 48.0       # refresh TTL = max(48h, days_to_resolution * 24h / 10)
 AIQ_CACHE_TTL_SEC = 24 * 3600       # A-IQ query cache lifetime
@@ -100,6 +101,7 @@ FILTERS = {
     "research_max_quick_width": RESEARCH_MAX_QUICK_WIDTH,
     "research_max_sample_spread": RESEARCH_MAX_SAMPLE_SPREAD,
     "research_max_q_gap": RESEARCH_MAX_Q_GAP,
+    "research_thin_evidence_max_gap": RESEARCH_THIN_EVIDENCE_MAX_GAP,  # read-only default: not an Overseer knob (not in BOUNDS)
 }
 
 # Overseer guard-rails. ONLY these knobs may appear in the directives `filters:` block; sizing
@@ -119,9 +121,18 @@ KNOB_COOLDOWN_VERSIONS = 3          # a knob changed at version V may change aga
 AUTO_REVERT_MIN_SCORED = 30         # resolved scored markets a version needs before it is judged
 AUTO_REVERT_BRIER_WORSE_BY = 0.02   # current Brier worse than previous by more than this -> revert
 
+# Concentration (Phase 3 queue): FULL research per tick is capped per event and per triage country.
+MAX_FULL_PER_EVENT_PER_TICK = 1     # one FULL research per event_id per tick (siblings are deferred, not failed)
+MAX_FULL_PER_COUNTRY_PER_TICK = 2   # per triage country (ISO-2); a missing or "global" country is uncapped
+# Event-sibling guard (Phase 4): look-back window and the sum of researched p across mutually exclusive siblings.
+EVENT_SIBLING_WINDOW_DAYS = 3
+EVENT_SIBLING_MAX_P_SUM = 1.15
+
 # Question-led FULL stage (crux_v1): scout -> architect -> per-crux search -> one gap round -> audit -> 2 judges.
 RESEARCH_PIPELINE = "crux_v1"
 RESEARCH_MAX_WEB_CALLS = 12         # search calls per market (scout + crux queries + gap follow-ups)
+RESEARCH_LOCAL_EXTRA_WEB_CALLS = 6  # extra search calls per market, only when the market locale is non-English (local-language queries)
+LOCAL_QUERY_ROLES = ("evidence", "comparator", "horizon")  # cruxes that may carry one local-language query
 MAX_GAP_ROUNDS = 1                  # gap-analyzer rounds (capped in code)
 GAP_MAX_QUERIES = 3                 # follow-up queries one gap round may add
 AUDIT_MAX_LINES = 10                # evidence lines the auditor checks per market

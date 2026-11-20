@@ -68,6 +68,7 @@ _MARKET_DATA_FIELDS: tuple[str, ...] = (
     "event_id",
     "slug",
     "event_slug",
+    "neg_risk",
     "resolution_source",
     "yes_token_id",
     "no_token_id",

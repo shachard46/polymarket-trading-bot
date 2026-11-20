@@ -203,6 +203,14 @@ def _eligible_markets(
     return eligible
 
 
+def normalize_country(raw: Any) -> str | None:
+    """Triage ``country``: ISO-2 upper case, ``"global"``, or ``None`` (missing / malformed: no per-country cap)."""
+    c = str(raw or "").strip()
+    if c.lower() == "global":
+        return "global"
+    return c.upper() if len(c) == 2 and c.isalpha() else None
+
+
 def _triage_verdict(
     vault: ObsidianManager,
     runner: AgentRunner,
@@ -248,6 +256,7 @@ def _triage_verdict(
         "reason": parsed.get("reason"),
         "manipulation_risk": risk,
         "manipulation_reason": parsed.get("manipulation_reason"),
+        "country": normalize_country(parsed.get("country")),
         "triaged_at": now.isoformat(),
     }
     if event_id:

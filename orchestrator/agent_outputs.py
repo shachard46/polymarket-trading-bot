@@ -27,6 +27,7 @@ class CruxSpec(BaseModel):
     moves_p_if: str = ""
     component: str | None = None  # compound market: id of the component this crux is about
     source: Literal["rules", "web"] = "web"  # "rules": answered by the market rules text itself (not searched)
+    queries_local: list[str] = []  # non-English market locale: one local-language query (roles evidence/comparator/horizon)
     provenance_question: str = ""  # who produced the forecast/estimate this crux relies on, their stake, track record
 
     @field_validator("question", "moves_p_if", "provenance_question")
@@ -55,6 +56,7 @@ class BrieferOutput(BaseModel):
 
     market_id: str
     cruxes: list[CruxSpec] = []
+    locale: dict[str, Any] | None = None  # {"country", "language"}: the architect's own, used only when the scout gave none
     compound: dict[str, Any] | None = None  # {"type": "and"|"or", "components": [{"id", "label"}]} for compound markets
     research_queries: list[str] = []
     error: str | None = None
@@ -86,6 +88,7 @@ class ScoutOutput(BaseModel):
     scheduled: list[str] = []
     contested: list[str] = []
     main_sources: list[str] = []
+    locale: dict[str, Any] | None = None  # {"country": ISO-2 or null, "language": e.g. "zh-hant" | "en"}
     error: str | None = None
 
 

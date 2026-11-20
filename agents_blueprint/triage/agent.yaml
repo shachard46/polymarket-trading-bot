@@ -18,4 +18,5 @@ output_schema:
   reason: string
   manipulation_risk: string  # low | medium | high (validated by Hub code)
   manipulation_reason: string
+  # optional extra key (not required, so older replies stay valid): country: ISO-2 | "global" | null
   error: "string | null"

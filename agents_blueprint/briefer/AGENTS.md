@@ -28,6 +28,10 @@ Names of candidates, actors and entities in questions and queries must come from
 
 Add `evidence` cruxes for the current state of the world (latest verifiable status, what **all** recent polls/reports/filings say, official statements). Prefer questions that pull the **aggregate** picture (every recent poll, the full vote count, the whole schedule) over a single source.
 
+## Local-language queries (non-English markets)
+
+`scout.locale` (`{"country", "language"}`, may be missing) says where the market is decided and in which language its evidence is published. When the language is **not English**, add to each crux of role `evidence`, `comparator` or `horizon` one extra field `"queries_local": ["<one query written in that language>"]`: a natural keyword query a local searcher would type (local names, local terms, local institutions), **without** an "as of" date clause, using only names that appear in the market text or the scout output. These are searched with the market's country and language, so they find local polls, official results and press that English queries miss. Omit `queries_local` (or leave it `[]`) for other roles and for English markets. If the scout gave no locale but you can tell the market is decided in a non-English-speaking place, add your own top-level `"locale": {"country": "<ISO-2 or null>", "language": "<code>"}` and the same `queries_local`.
+
 ## Compound markets
 
 Read the title and rules for a **conjunction or disjunction**: "X and Y both win", "a sweep", "all of", "both", "A or B", "either", "at least one of". When present:
@@ -60,6 +64,7 @@ Your entire response is the raw JSON object below. First character `{`, last `}`
       "moves_p_if": "<which answer pushes p up / down>",
       "component": null,
       "provenance_question": "",
+      "queries_local": [],
       "source": "web"
     }
   ],
