@@ -139,7 +139,11 @@ def build_packets(vault_arg: str | None, n: int, *, use_gamma: bool = False, bli
             "pipeline": fm.get("pipeline") or lrow.get("pipeline") or "legacy",
             "evidence_source": fm.get("evidence_source"),
             "bot": {"p": fm.get("estimated_p"), "p_low": fm.get("p_low"), "p_high": fm.get("p_high"),
-                    "samples": fm.get("samples"), "confidence": fm.get("confidence")},
+                    "samples": fm.get("samples"), "confidence": fm.get("confidence"),
+                    "confidence_level": fm.get("confidence_level"),
+                    "confidence_reasons": fm.get("confidence_reasons"),
+                    "judge_confidence_score": fm.get("judge_confidence_score"),
+                    "judge_confidence_reason": fm.get("judge_confidence_reason")},
             "cited_lines": cited_lines(vault, mid),
             "note_body": body.strip(),
         }
@@ -161,6 +165,11 @@ def render_packet_md(pk: dict) -> str:
     out += ["", "### Bot note body", "", pk["note_body"] or "(empty)", "",
             "### Bot estimate (read AFTER forming your own p)", "",
             f"- p: {b['p']}  range: [{b['p_low']}, {b['p_high']}]  samples: {b['samples']}  confidence: {b['confidence']}"]
+    if b.get("confidence_level") or b.get("judge_confidence_score") is not None:
+        out.append(
+            f"- code confidence: {b.get('confidence_level')} {b.get('confidence_reasons') or []}  "
+            f"judge score: {b.get('judge_confidence_score')} ({b.get('judge_confidence_reason') or 'no reason'})"
+        )
     if "q" in b:
         out.append(f"- market q at research: {b['q']}")
     return "\n".join(out) + "\n"

@@ -49,7 +49,7 @@ def aggregate_samples(samples: list[Sample]) -> dict[str, Any]:
     ``p`` is the mean of the flipped estimates, the range is the **union** of the ranges (so
     ``p_low <= p <= p_high``), ``samples`` lists the flipped estimates and ``spread`` is their gap (the framing
     gap; 0 with a single judge). ``chosen`` is the ``yes`` sample (J1, whose markdown is written), else the sample
-    nearest the mean. ``confidence`` is the most conservative.
+    nearest the mean. ``confidence`` and ``confidence_score`` are the most conservative (min score; reasons kept per judge).
     """
     ps: list[float] = []
     lows: list[float] = []
@@ -68,6 +68,12 @@ def aggregate_samples(samples: list[Sample]) -> dict[str, Any]:
     yes = [i for i, s in enumerate(samples) if _framing(s) == "yes"]
     chosen = yes[0] if yes else min(range(len(ps)), key=lambda i: (abs(ps[i] - p), i))
     confidence = min((s[0].confidence for s in samples), key=lambda c: _CONFIDENCE_RANK[c])
+    scores = [s[0].confidence_score for s in samples if s[0].confidence_score is not None]
+    reasons = [
+        (f"j{i + 1}: " if len(samples) > 1 else "") + s[0].confidence_reason.strip()
+        for i, s in enumerate(samples)
+        if (s[0].confidence_reason or "").strip()
+    ]
     return {
         "p": p,
         "p_low": max(0.0, min(min(lows), p)),
@@ -75,5 +81,7 @@ def aggregate_samples(samples: list[Sample]) -> dict[str, Any]:
         "samples": ps,
         "spread": max(ps) - min(ps),
         "confidence": confidence,
+        "confidence_score": min(scores) if scores else None,  # most conservative judge; null when none gave one
+        "confidence_reasons": reasons,  # per judge
         "chosen": chosen,
     }

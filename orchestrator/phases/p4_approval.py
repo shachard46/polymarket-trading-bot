@@ -153,7 +153,9 @@ def _approve_offer(vault: ObsidianManager, offer: dict[str, Any]) -> str:
         "market_data": market_data,
     }
     allocation = compute_allocation(
-        vault, row["p_value"], q, market_data, row["p_low"], row["p_high"], quotes=quotes
+        vault, row["p_value"], q, market_data, row["p_low"], row["p_high"], quotes=quotes,
+        confidence_level=row.get("confidence_level"),
+        judge_confidence_score=row.get("judge_confidence_score"),
     )
     size_usd = float(allocation.get("allocation_usd") or 0.0)
     edge = _as_float(allocation.get("edge"))

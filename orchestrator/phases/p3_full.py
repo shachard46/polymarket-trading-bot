@@ -11,6 +11,7 @@ from typing import Any
 
 from obsidian_utils import ObsidianManager
 from orchestrator import compound as compound_mod
+from orchestrator.confidence import compute_confidence
 from orchestrator import evidence, scraper
 from orchestrator.directives import extract_filter_directives
 from orchestrator.live_prompt import today_date
@@ -43,6 +44,29 @@ def _discounted_sources(samples: list[Sample]) -> list[str]:
             if d and d not in out:
                 out.append(d)
     return out[:6]
+
+
+def _confidence_fields(
+    crux_meta: dict[str, Any] | None,
+    fields: dict[str, Any],
+    agg: dict[str, Any],
+    n_samples: int,
+    ev_fallback: bool,
+) -> dict[str, Any]:
+    """The recorded confidence signals: code level + rule hits (drives sizing) and the judge score / reason.
+
+    Never reads q. The judge fields are record-only unless SIZING_CONFIDENCE_SIGNAL is "judge_score".
+    """
+    level = compute_confidence(
+        crux_meta, fields.get("source_mix"), fields.get("prior_kind"), fields.get("base_rate_n"),
+        agg["spread"] if n_samples == 2 else None, fields.get("audit_dropped"), ev_fallback,
+    )
+    reasons = agg.get("confidence_reasons") or []
+    return {
+        **level,
+        "judge_confidence_score": agg.get("confidence_score"),
+        "judge_confidence_reason": " | ".join(reasons)[:400] if reasons else None,
+    }
 
 
 def thin_evidence_disagreement(
@@ -238,6 +262,7 @@ def _research_market_body(
     pf = p3_research.prior_fields(samples)
     pflags = pf.pop("prior_flags", [])
     fields.update(pf)
+    fields.update(_confidence_fields(crux_meta, fields, agg, len(samples), ev_fallback))
     if pflags:
         fields["pipeline_flags"] = list(fields.get("pipeline_flags") or []) + [f"prior:{f}" for f in pflags]
     if comp and comp["compound_gap"] is not None:

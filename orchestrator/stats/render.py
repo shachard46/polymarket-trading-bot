@@ -16,6 +16,7 @@ from orchestrator.stats.groups import (
     brier_by_prior_kind,
     researched_by_prior_kind,
     brier_by_model,
+    confidence_signal_stats,
     brier_by_provider,
     brier_by_runner_backend,
     brier_shadow,
@@ -62,6 +63,7 @@ def compute_stats(
     out["brier_by_judge_arm"] = brier_by_judge_arm(rows)
     out["brier_by_prior_kind"] = brier_by_prior_kind(rows)
     out["researched_by_prior_kind"] = researched_by_prior_kind(rows)
+    out["confidence_signals"] = confidence_signal_stats(rows)
     out["brier_by_runner_backend"] = brier_by_runner_backend(rows)
     out["brier_by_model"] = brier_by_model(rows)
     out["brier_by_provider"] = brier_by_provider(rows)
@@ -149,6 +151,22 @@ def _render_prior_kinds(s: dict[str, Any]) -> list[str]:
     for kind in sorted(set(brier) | set(researched)):
         n, bp, d = brier.get(kind, (0, None, None))
         L.append(f"| {kind} | {researched.get(kind, 0)} | {n} | {_fmt(bp)} | {_fmt(d)} |")
+    return L
+
+
+def _render_confidence_signals(s: dict[str, Any]) -> list[str]:
+    """Three confidence signals side by side (all researched markets): which one sorts good from bad estimates."""
+    L = ["", "### Confidence signals", "",
+         "Code level drives sizing (SIZING_CONFIDENCE_SIGNAL); judge score and range width are recorded for comparison. "
+         "Lambda is fitted per bucket (n<50 shows the placeholder).", "",
+         "| signal | bucket | n researched | n resolved | Brier(p) | mean abs(p - outcome) | fitted lambda |",
+         "|---|---|---|---|---|---|---|"]
+    for e in s.get("confidence_signals", []):
+        lam = "n<50" if e["lam"] is None else _fmt(e["lam"], 2)
+        L.append(
+            f"| {e['signal']} | {e['bucket']} | {e['researched']} | {e['resolved']} | {_fmt(e['brier'])} | "
+            f"{_fmt(e['mean_abs'])} | {lam} |"
+        )
     return L
 
 
@@ -313,6 +331,7 @@ def render_stats(s: dict[str, Any]) -> str:
     L += _render_brier_by(s, "evidence source", "evidence_source", "brier_by_evidence_source")
     L += _render_judge_arms(s)
     L += _render_prior_kinds(s)
+    L += _render_confidence_signals(s)
     L += _render_brier_by(s, "runner backend", "runner_backend", "brier_by_runner_backend")
     L += _render_brier_by(s, "model", "model", "brier_by_model")
     L += _render_brier_by(s, "provider", "provider", "brier_by_provider")

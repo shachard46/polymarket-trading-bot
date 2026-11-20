@@ -5,6 +5,7 @@ Math:     docs/03_strategy_math.md
 """
 from __future__ import annotations
 
+import config.trading_constants as _tc
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from config.trading_constants import (
@@ -14,6 +15,8 @@ from config.trading_constants import (
     LIQ_FRAC,
     MIN_ORDER_USD,
     TOTAL_EXPOSURE_CAP,
+    CONFIDENCE_WEIGHTS,
+    JUDGE_SCORE_LEVELS,
     UNCERTAINTY_WIDTH,
     effective_lambda,
     effective_min_edge,
@@ -35,6 +38,8 @@ class CalculateTradeAllocationInput(BaseModel):
     open_exposure_event: float = Field(default=0.0, ge=0)
     lam: float = Field(default_factory=effective_lambda, ge=0, le=1)
     min_edge: float = Field(default_factory=effective_min_edge, ge=0, le=1)
+    confidence_level: str | None = None   # code-scored level high|medium|low (orchestrator/confidence.py)
+    confidence_score: int | None = Field(default=None, ge=1, le=10)  # judge 1-10 score
 
     @model_validator(mode="after")
     def _range(self) -> "CalculateTradeAllocationInput":
@@ -66,6 +71,8 @@ class CalculateTradeAllocationOutput(BaseModel):
     error: str | None
     lam: float | None = None       # shrink actually used
     min_edge: float | None = None  # edge gate actually used
+    confidence_signal: str | None = None  # signal that set the shrink: code_level | judge_score | width
+    confidence_weight: float | None = None  # weight applied (None under the width signal)
 
 
 def _error(message: str) -> CalculateTradeAllocationOutput:
@@ -74,6 +81,21 @@ def _error(message: str) -> CalculateTradeAllocationOutput:
         kelly_fraction=0.0, below_edge_threshold=None, binding_cap=None,
         edge_per_day=0.0, error=message,
     )
+
+
+def _confidence_signal(args: CalculateTradeAllocationInput) -> tuple[str, str | None]:
+    """(signal used, level) for the shrink. The signal is SIZING_CONFIDENCE_SIGNAL (read at call time); when its
+    field is missing (old rows, replay) the range width is used (level None)."""
+    signal = _tc.SIZING_CONFIDENCE_SIGNAL
+    if signal == "code_level":
+        if args.confidence_level in CONFIDENCE_WEIGHTS:
+            return signal, args.confidence_level
+    elif signal == "judge_score":
+        if args.confidence_score is not None:
+            return signal, next(lvl for lo, lvl in JUDGE_SCORE_LEVELS if args.confidence_score >= lo)
+    elif signal != "width":
+        raise ValueError(f"unknown SIZING_CONFIDENCE_SIGNAL {signal!r}")
+    return "width", None
 
 
 def calculate_trade_allocation(
@@ -90,6 +112,8 @@ def calculate_trade_allocation(
     lam: float | None = None,
     min_edge: float | None = None,
     q: float | None = None,
+    confidence_level: str | None = None,
+    confidence_score: int | None = None,
 ) -> CalculateTradeAllocationOutput:
     """``q`` is accepted as an alias for ``q_yes_ask``."""
     if q_yes_ask is None:
@@ -102,6 +126,7 @@ def calculate_trade_allocation(
             open_exposure_event=open_exposure_event,
             **({} if lam is None else {"lam": lam}),
             **({} if min_edge is None else {"min_edge": min_edge}),
+            confidence_level=confidence_level, confidence_score=confidence_score,
         )
     except ValidationError as exc:
         details = "; ".join(
@@ -112,8 +137,12 @@ def calculate_trade_allocation(
     try:
         qy = args.q_yes_ask
         qn = args.q_no_ask if args.q_no_ask is not None else 1.0 - qy
+        signal, level = _confidence_signal(args)
+        weight = CONFIDENCE_WEIGHTS[level] if level else None
         shrink = args.lam
-        if args.p_low is not None and args.p_high is not None:
+        if weight is not None:
+            shrink *= weight
+        elif args.p_low is not None and args.p_high is not None:
             w = args.p_high - args.p_low
             shrink *= max(0.0, 1.0 - w / UNCERTAINTY_WIDTH)
         p_adj = qy + shrink * (args.p - qy)
@@ -133,8 +162,11 @@ def calculate_trade_allocation(
                 kelly_fraction=kelly, below_edge_threshold=below, binding_cap=cap,
                 edge_per_day=edge_per_day, error=None,
                 lam=args.lam, min_edge=args.min_edge,
+                confidence_signal=signal, confidence_weight=weight,
             )
 
+        if level == "low":
+            return out(below=True, cap="low_confidence")
         if edge < args.min_edge:
             return out(below=True, cap="min_edge")
 

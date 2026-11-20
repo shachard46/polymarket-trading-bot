@@ -36,8 +36,10 @@ from orchestrator.state import (
 )
 
 _ROOT = Path(__file__).resolve().parents[2]
-# crux-pipeline fields: copied from research to the ledger, never used for sizing
+# crux-pipeline fields: copied from research to the ledger. Only confidence_level / judge_confidence_score reach sizing
+# (compute_allocation); the rest is record-only.
 _CRUX_KEYS = (
+    "confidence_level", "confidence_reasons", "judge_confidence_score", "judge_confidence_reason",
     "pipeline", "research_depth", "cruxes_total", "crux_answered", "crux_unanswered", "crux_contradicted", "crux_rules",
     "gap_queries", "audit_dropped", "audit_unverified", "framing_gap", "source_mix", "pipeline_flags", "web_calls",
     "judge_arm", "judge_framing", "compound_type", "compound_p", "compound_stated_p", "compound_gap", "compound_corr",
@@ -106,13 +108,16 @@ def compute_allocation(
     p_high: float | None = None,
     quotes: dict[str, dict[str, Any]] | None = None,
     bankroll: float | None = None,
+    confidence_level: str | None = None,
+    judge_confidence_score: int | None = None,
 ) -> dict[str, Any]:
     """Run ``calculate_trade_allocation`` in-process against bankroll + realised P&L.
 
     ``quotes`` (``{"YES": quote, "NO": quote}`` from ``polymarket_api.executable_quote``) supplies
     the real asks (``q_yes_ask`` / ``q_no_ask``) and caps the order at the chosen side's
     ``depth_usd_within_2c``; without it the mid ``q`` is the YES ask and NO is ``1 - q``.
-    ``bankroll`` is computed from the ledger when not given.
+    ``bankroll`` is computed from the ledger when not given. ``confidence_level`` / ``judge_confidence_score`` (from the
+    research row) set the shrink per ``SIZING_CONFIDENCE_SIGNAL``; missing -> the skill falls back to the range width.
     """
     try:
         days = int(float(market_data.get("days_to_resolution")))
@@ -135,6 +140,8 @@ def compute_allocation(
             open_exposure_event=_open_allocated_usd(vault, event_id) if event_id else 0.0,
             p_low=p_low,
             p_high=p_high,
+            confidence_level=confidence_level,
+            confidence_score=judge_confidence_score,
         )
         return result.model_dump() if hasattr(result, "model_dump") else dict(result)
 
@@ -257,6 +264,9 @@ def _trade_record(
         "p": row["p_value"],
         "p_low": row.get("p_low"),
         "p_high": row.get("p_high"),
+        "confidence_level": row.get("confidence_level"),
+        "confidence_reasons": row.get("confidence_reasons"),
+        "judge_confidence_score": row.get("judge_confidence_score"),
         "q_entry": q,
         "side": allocation.get("side"),
         "price": allocation.get("price"),
@@ -335,7 +345,9 @@ def _persist_trade(
             vault,
             market_id,
             "below_edge" if below else "traded",
-            reason="below_edge_threshold" if below else None,
+            reason=(
+                "low_confidence" if allocation.get("binding_cap") == "low_confidence" else "below_edge_threshold"
+            ) if below else None,
             q=q,
             p=row["p_value"],
             p_low=row.get("p_low"),
@@ -465,7 +477,9 @@ def _execute_market(
 
     p_low, p_high = row.get("p_low"), row.get("p_high")
     allocation = compute_allocation(
-        vault, row["p_value"], q, market_data, p_low, p_high, quotes=quotes, bankroll=bankroll
+        vault, row["p_value"], q, market_data, p_low, p_high, quotes=quotes, bankroll=bankroll,
+        confidence_level=row.get("confidence_level"),
+        judge_confidence_score=row.get("judge_confidence_score"),
     )
     if allocation.get("error"):
         log.warning(

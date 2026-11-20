@@ -24,6 +24,7 @@ import config.trading_constants as _tc
 def _live_sizing(monkeypatch):
     """The worked examples are the live (LAMBDA / MIN_EDGE) numbers."""
     monkeypatch.setattr(_tc, "PAPER_TRADE_MODE", False)
+    monkeypatch.setattr(_tc, "SIZING_CONFIDENCE_SIGNAL", "width")  # the range-width tests below; others override
 
 
 _BASE = dict(q_yes_ask=0.5, L=50_000.0, D=30, bankroll=1000.0)
@@ -174,3 +175,58 @@ def test_paper_trades_where_live_is_below_edge(monkeypatch):
 def test_explicit_min_edge_overrides_default():
     out = calc(p=0.42, q_yes_ask=0.29, L=50_000.0, D=30, bankroll=1000.0, min_edge=0.03)
     assert out.below_edge_threshold is False and out.min_edge == 0.03
+
+
+# --- confidence signal (conf_v1) ------------------------------------------------------------------------------
+
+
+def _signal(monkeypatch, name):
+    monkeypatch.setattr(_tc, "SIZING_CONFIDENCE_SIGNAL", name)
+
+
+@pytest.mark.parametrize("level, weight", [("high", 1.0), ("medium", 0.5)])
+def test_code_level_weights(monkeypatch, level, weight):
+    _signal(monkeypatch, "code_level")
+    out = calc(p=0.8, p_low=0.5, p_high=1.0, confidence_level=level, **_BASE)  # range width ignored
+    assert out.p_adj == pytest.approx(0.5 + 0.3 * weight * 0.3)
+    assert out.confidence_signal == "code_level" and out.confidence_weight == weight
+
+
+def test_low_level_is_no_trade_with_distinct_cap(monkeypatch):
+    _signal(monkeypatch, "code_level")
+    out = calc(p=0.95, confidence_level="low", **_BASE)
+    assert out.allocation_usd == 0.0 and out.binding_cap == "low_confidence"
+    assert out.below_edge_threshold is True and out.error is None and out.side == "YES"
+
+
+@pytest.mark.parametrize("score, level_weight", [(10, 1.0), (8, 1.0), (7, 0.5), (4, 0.5), (3, 0.0), (1, 0.0)])
+def test_judge_score_mapping(monkeypatch, score, level_weight):
+    _signal(monkeypatch, "judge_score")
+    out = calc(p=0.8, confidence_score=score, confidence_level="low", **_BASE)  # level ignored here
+    assert out.confidence_weight == level_weight
+    assert (out.binding_cap == "low_confidence") == (level_weight == 0.0)
+
+
+def test_width_signal_ignores_level(monkeypatch):
+    _signal(monkeypatch, "width")
+    out = calc(p=0.8, p_low=0.7, p_high=0.9, confidence_level="low", **_BASE)
+    assert out.p_adj == pytest.approx(0.5 + 0.3 * 0.6 * 0.3) and out.confidence_signal == "width"
+
+
+def test_missing_field_falls_back_to_width(monkeypatch):
+    _signal(monkeypatch, "code_level")
+    out = calc(p=0.8, p_low=0.7, p_high=0.9, **_BASE)  # old row: no confidence_level
+    assert out.confidence_signal == "width" and out.confidence_weight is None
+    assert out.p_adj == pytest.approx(0.5 + 0.3 * 0.6 * 0.3)
+    _signal(monkeypatch, "judge_score")
+    assert calc(p=0.8, p_low=0.7, p_high=0.9, confidence_level="high", **_BASE).confidence_signal == "width"
+
+
+def test_unknown_signal_errors(monkeypatch):
+    _signal(monkeypatch, "bogus")
+    assert calc(p=0.8, **_BASE).error
+
+
+def test_invalid_judge_score_rejected(monkeypatch):
+    _signal(monkeypatch, "judge_score")
+    assert "confidence_score" in (calc(p=0.8, confidence_score=11, **_BASE).error or "")

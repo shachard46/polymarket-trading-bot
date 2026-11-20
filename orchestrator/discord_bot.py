@@ -224,6 +224,11 @@ def render_offer(offer: dict[str, Any], now: datetime | None = None, tz: str | N
         lo, hi = _num(offer.get("p_low")), _num(offer.get("p_high"))
         if lo is not None and hi is not None:
             est += f" (range {_trim(lo * 100, 0)}–{_trim(hi * 100, 0)}%)"
+        level = offer.get("confidence_level")
+        if level:
+            reasons = offer.get("confidence_reasons") or []
+            top = f" ({_short(str(reasons[0]))})" if reasons else ""
+            est += f" · Confidence: {level}{top}"
         if q:
             est += f" · Market: {q} YES"
         if edge is not None and edge > 0:

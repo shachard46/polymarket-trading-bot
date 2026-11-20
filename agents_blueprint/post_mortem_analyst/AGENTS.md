@@ -46,6 +46,7 @@ If none of the five classes fits, you may return `failure_class: "new:<slug>"` (
 - `execution_log`: The exact trade placed (or not placed) by the Hub.
 - `resolution_data`: The ground truth of what actually happened.
 - `failure_classes`, `established_failure_tags`, `candidate_failure_tags`: the fixed list, then tags already in the registry (established = seen >= 3 times) with definitions.
+- `confidence_level`, `confidence_reasons`, `judge_confidence_score`, `judge_confidence_reason`: the code-scored evidence confidence (high/medium/low, with the rules that fired) and the judge's own 1-10 score and reason; a high-confidence miss points at a process error, a low-confidence miss at variance or thin evidence (null on older research).
 - `p`, `p_low`, `p_high`, `q_entry`, `side`, `price`, `size_usd`, `outcome_yes`, `realised_pnl_usd`, `category`, `gate_score`, `research_confidence`, `resolution_checklist`: structured decision and outcome facts (null when unavailable).
 
 ## OUTPUT SCHEMA

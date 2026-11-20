@@ -6,6 +6,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
+from config.trading_constants import CONFIDENCE_WIDTH_BUCKETS, JUDGE_SCORE_LEVELS
 from orchestrator import ledger
 from orchestrator.stats.calc import _brier_group, _brier_or_none, _num, brier
 
@@ -122,6 +123,75 @@ def researched_by_prior_kind(rows: list[dict[str, Any]]) -> dict[str, int]:
         if r.get("prior_kind"):
             out[str(r["prior_kind"])] += 1
     return dict(out)
+
+
+# ---- confidence signals (conf_v1): code level vs judge score vs range width -------------------------------------
+
+CONFIDENCE_SIGNALS = ("code level", "judge score", "range width")
+
+
+def _score_bucket(r: dict[str, Any]) -> str:
+    s = _num(r.get("judge_confidence_score"))
+    if s is None:
+        return "unknown"
+    his = [10] + [lo - 1 for lo, _ in JUDGE_SCORE_LEVELS[:-1]]  # (8,4,1) -> upper ends 10, 7, 3
+    for (lo, _), hi in zip(JUDGE_SCORE_LEVELS, his):
+        if s >= lo:
+            return f"{lo}-{hi}"
+    return "unknown"
+
+
+def _width_bucket(r: dict[str, Any]) -> str:
+    lo, hi = _num(r.get("p_low")), _num(r.get("p_high"))
+    if lo is None or hi is None:
+        return "unknown"
+    w = hi - lo
+    a, b = CONFIDENCE_WIDTH_BUCKETS
+    return f"<{a:.2f}" if w < a else (f"{a:.2f}-{b:.2f}" if w <= b else f">{b:.2f}")
+
+
+_SIGNAL_KEYS = {
+    "code level": lambda r: str(r.get("confidence_level") or "unknown"),
+    "judge score": _score_bucket,
+    "range width": _width_bucket,
+}
+_SIGNAL_ORDER = {
+    "code level": ("high", "medium", "low", "unknown"),
+    "judge score": ("1-3", "4-7", "8-10", "unknown"),
+    "range width": ("<0.20", "0.20-0.35", ">0.35", "unknown"),
+}
+
+
+def confidence_signal_stats(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Per signal bucket over ALL researched markets (latest decision row with a p, traded or not).
+
+    Each entry: signal, bucket, researched (n), resolved (n scored), brier (of p), mean_abs (mean |p - outcome|), lam
+    (fit_lambda over the bucket's triples, None below MIN_FIT_N). Empty buckets are dropped (unknown only when used).
+    """
+    res = resolutions(rows)
+    latest = {m: r for m, r in _latest_by_market(rows, None).items() if _num(r.get("p")) is not None}
+    scored = _latest_scored(rows)
+    out: list[dict[str, Any]] = []
+    for signal, key in _SIGNAL_KEYS.items():
+        researched: dict[str, int] = defaultdict(int)
+        for r in latest.values():
+            researched[key(r)] += 1
+        triples: dict[str, list[tuple[float, float, int]]] = defaultdict(list)
+        for m, r in scored.items():
+            triples[key(r)].append((_num(r["p"]), _num(r["q"]), res[m]))
+        for bucket in _SIGNAL_ORDER[signal]:
+            n_res, t = researched.get(bucket, 0), triples.get(bucket, [])
+            if not n_res and not t:
+                continue
+            ys = [y for _, _, y in t]
+            ps = [p for p, _, _ in t]
+            out.append({
+                "signal": signal, "bucket": bucket, "researched": n_res, "resolved": len(t),
+                "brier": brier(ps, ys) if t else None,
+                "mean_abs": sum(abs(p - y) for p, y in zip(ps, ys)) / len(t) if t else None,
+                "lam": _fit_lambda_triples(t),
+            })
+    return out
 
 
 def brier_by_runner_backend(rows: list[dict[str, Any]]) -> dict[str, tuple[int, float, float]]:
@@ -289,7 +359,11 @@ def failure_class_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
 
 def fit_lambda(rows: list[dict[str, Any]]) -> float | None:
     """λ in [0,1] minimising Brier of q + λ(p - q) over resolved rows; ``None`` if n < 50."""
-    triples = scored_triples(rows)
+    return _fit_lambda_triples(scored_triples(rows))
+
+
+def _fit_lambda_triples(triples: list[tuple[float, float, int]]) -> float | None:
+    """The λ fit over (p, q, outcome) triples; ``None`` if n < MIN_FIT_N."""
     if len(triples) < MIN_FIT_N:
         return None
     best, best_loss = 0.0, float("inf")

@@ -279,7 +279,7 @@ def test_full_stage_runs_two_judges_flips_j2_and_unions_ranges(world, vault):
     assert fm["p_high"] == pytest.approx(0.80)
     assert fm["q_at_research"] == 0.42 and fm["samples"] == pytest.approx([0.60, 0.70])
     assert fm["framing_gap"] == pytest.approx(0.10)
-    assert fm["pipeline"] == "crux_v1" and fm["research_depth"] == "full"
+    assert fm["pipeline"] == "crux_conf_v1" and fm["research_depth"] == "full"
     assert fm["cruxes_total"] >= 5 and fm["crux_answered"] + fm["crux_unanswered"] + fm["crux_contradicted"] == fm["cruxes_total"]
     assert fm["confidence"] == "medium" and fm["as_of"] and fm["researched_at"]
     assert fm["resolution_checklist"] and fm["key_assumptions"]
@@ -320,7 +320,7 @@ def test_framing_gap_above_the_knob_is_skipped(world, vault):
     (skip,) = _skips(vault, "m1")
     assert skip["reason"] == "sample_disagreement" and skip["research_stage"] == "full"
     assert skip["samples"] == pytest.approx([0.5, 0.75]) and skip["spread"] == pytest.approx(0.25)
-    assert skip["framing_gap"] == pytest.approx(0.25) and skip["pipeline"] == "crux_v1"
+    assert skip["framing_gap"] == pytest.approx(0.25) and skip["pipeline"] == "crux_conf_v1"
     assert vault.read_filter_log("m1")["research_state"]["outcome"] == "sample_disagreement"
 
 

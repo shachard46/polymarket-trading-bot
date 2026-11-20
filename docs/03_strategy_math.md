@@ -6,8 +6,13 @@ Inputs: $p$ (blind researcher estimate, optional $p_{low},p_{high}$), $q$ (YES a
 Tax (`TAX = 0.25`, the only tax mode: annual offset): Israel taxes 25% of NET annual capital gains, with losses offsetting gains within the calendar year. Trade maths is pre-tax and realised P&L is taxed as `TAX * max(0, net P&L per resolution year)` (see `orchestrator/stats/pnl.py`; `stats.md` reports pre-tax, tax and after-tax).
 
 ## Step 1: Shrink toward the market
-$$p_{adj}=q+\lambda\,(p-q)\cdot\max\!\Big(0,\,1-\frac{p_{high}-p_{low}}{0.5}\Big),\quad \lambda=0.3$$
-The range factor is 1 when no range is given; a range of width $\ge 0.5$ collapses $p_{adj}$ to $q$ (no trade).
+$$p_{adj}=q+\lambda\,w(c)\,(p-q),\quad \lambda=0.3$$
+$w(c)$ is the **confidence weight**, set by `SIZING_CONFIDENCE_SIGNAL` (`config/trading_constants.py`, the one-line switch):
+- `code_level` (default): `CONFIDENCE_WEIGHTS` high 1.0, medium 0.5, low 0.0 from the code-scored level (`orchestrator/confidence.py`, rule v1, evidence only, never q). Low means no trade, `binding_cap = "low_confidence"` (ledger reason `low_confidence`), distinct from `min_edge`.
+- `judge_score`: the judge's 1-10 score, 8-10 high, 4-7 medium, 1-3 low, same weights.
+- `width` (the old rule): $w=\max\!\big(0,\,1-\frac{p_{high}-p_{low}}{0.5}\big)$, 1 when no range is given; a width $\ge 0.5$ collapses $p_{adj}$ to $q$.
+
+When the active signal's field is missing (old research rows, replay) the skill falls back to the width rule. The range no longer implicitly blocks trades under `code_level`. All three signals (width, judge score, code level) are recorded on every researched market and compared by Brier / fitted lambda in `stats.md` 'Confidence signals'.
 
 ## Step 2: Side and edge
 $e_{YES}=p_{adj}-c_{YES}$, $e_{NO}=(1-p_{adj})-c_{NO}$ (with $c_{YES}=q_{yes\_ask}$, $c_{NO}=q_{no\_ask}$). Take the larger edge; require $e\ge$ `MIN_EDGE` $=0.04$ (live), else allocation 0 and `below_edge_threshold=true`.

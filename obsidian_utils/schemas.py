@@ -164,6 +164,10 @@ class ResearchFrontmatter(BaseModel):
     prior_j2: Optional[float] = None  # J2's prior converted to P(YES), when both judges ran
     prior_kind_j2: Optional[str] = None
     discounted_sources: list[str] = []  # interested / unproven sources the judge discounted
+    confidence_level: Optional[str] = None  # code-scored "high" | "medium" | "low" (orchestrator/confidence.py); drives sizing
+    confidence_reasons: list[str] = []  # rule hits behind confidence_level (e.g. "evidence_unanswered:1")
+    judge_confidence_score: Optional[int] = None  # judge 1-10 score (min over judges); record-only comparison signal
+    judge_confidence_reason: Optional[str] = None  # judge reason(s), "j1: ... | j2: ..." with two judges
     evidence_bull: list[str] = []  # verbatim audit-verified lines the judge cited for YES (offer evidence)
     evidence_bear: list[str] = []  # ... and for NO
     status: Optional[str] = None
@@ -200,6 +204,9 @@ class TradeLogPayload(BaseModel):
     p_low: Optional[float] = None
     p_high: Optional[float] = None
     q_entry: Optional[float] = None
+    confidence_level: Optional[str] = None  # code-scored level that set the sizing shrink
+    confidence_reasons: Optional[list[str]] = None
+    judge_confidence_score: Optional[int] = None
     side: Optional[Literal["YES", "NO"]] = None
     shares: Optional[float] = None
     price: Optional[float] = None

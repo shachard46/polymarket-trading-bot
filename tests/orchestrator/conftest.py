@@ -41,6 +41,15 @@ def _stub_clob_quotes(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _width_sizing(monkeypatch):
+    """Plumbing tests size by the old range-width rule: stub evidence has no official sources, so the code-scored
+    confidence level would be low (no trade). Confidence tests set SIZING_CONFIDENCE_SIGNAL themselves."""
+    import config.trading_constants as tc
+
+    monkeypatch.setattr(tc, "SIZING_CONFIDENCE_SIGNAL", "width")
+
+
+@pytest.fixture(autouse=True)
 def _no_holder_network(monkeypatch):
     """No test hits the network for holder concentration; tests that need it override."""
     monkeypatch.setattr(polymarket_api, "fetch_holder_concentration", lambda *a, **k: None)

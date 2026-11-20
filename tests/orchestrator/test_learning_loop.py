@@ -73,7 +73,7 @@ def test_legacy_seed_version_migrates_to_one(tmp_path):
     assert directive_version(legacy) == 1
     assert v.cold_start_protocol() is False
     # the legacy version migrates to 1, then the crux_v1 pipeline stamp bumps it once more (new scoring cohort)
-    assert fm_of(v)["version"] == 2 and fm_of(v)["research_pipeline"] == "crux_v1"
+    assert fm_of(v)["version"] == 2 and fm_of(v)["research_pipeline"] == "crux_conf_v1"
     assert (v.directives_history_dir() / "v1.md").read_text().count("migrated_from: 0.1-seed") == 1
     assert (v.directives_history_dir() / "v2.md").exists()
 

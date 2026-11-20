@@ -142,7 +142,7 @@ EVENT_SIBLING_WINDOW_DAYS = 3
 EVENT_SIBLING_MAX_P_SUM = 1.15
 
 # Question-led FULL stage (crux_v1): scout -> architect -> per-crux search -> one gap round -> audit -> 2 judges.
-RESEARCH_PIPELINE = "crux_v1"
+RESEARCH_PIPELINE = "crux_conf_v1"  # crux_v1 + recorded confidence signals (code level drives sizing)
 RESEARCH_MAX_WEB_CALLS = 12         # search calls per market (scout + crux queries + gap follow-ups)
 RESEARCH_LOCAL_EXTRA_WEB_CALLS = 6  # extra search calls per market, only when the market locale is non-English (local-language queries)
 LOCAL_QUERY_ROLES = ("evidence", "comparator", "horizon")  # cruxes that may carry one local-language query
@@ -174,6 +174,21 @@ BRAVE_MAX_RETRIES = 3               # retries of one Brave request after HTTP 42
 BRAVE_BACKOFF_CAP_SEC = 10.0        # longest single wait after a 429
 BRAVE_USER_AGENT = "pmbot-research/1.0"
 GEMINI_QUERY_WORKERS = 4            # gemini backend: one web_searcher call per query, this many in parallel
+
+# Confidence (conf_v1): the code-scored level is a property of the evidence (never of q); it drives sizing.
+# Rule v1 in orchestrator/confidence.py. Three signals are recorded on every researched market and compared by Brier.
+SIZING_CONFIDENCE_SIGNAL = "code_level"   # the one-line switch: "code_level" | "judge_score" | "width"
+CONFIDENCE_WEIGHTS = {"high": 1.0, "medium": 0.5, "low": 0.0}   # shrink = lambda * weight(level); low -> no trade
+JUDGE_SCORE_LEVELS = ((8, "high"), (4, "medium"), (1, "low"))   # judge 1-10 score -> level (min score, level)
+CONFIDENCE_LOW_SPREAD_MIN = 0.10          # two-judge spread above this -> low
+CONFIDENCE_LOW_OFFICIAL_SHARE_MAX = 0.20  # official+major share of source_mix below this -> low
+CONFIDENCE_HIGH_OFFICIAL_SHARE_MIN = 0.40 # high needs official+major share at least this
+CONFIDENCE_HIGH_SPREAD_MAX = 0.05         # high needs one judge or spread at most this
+CONFIDENCE_HIGH_UNANSWERED_MAX = 1        # high needs at most this many unanswered cruxes (and 0 evidence ones)
+CONFIDENCE_HIGH_BASE_RATE_N_MIN = 10      # reference_class prior needs base_rate_n at least this for high
+CONFIDENCE_HIGH_AUDIT_DROPPED_MAX = 2     # high needs at most this many audit-dropped lines
+# Record-only comparison buckets for stats (judge score, range width)
+CONFIDENCE_WIDTH_BUCKETS = (0.20, 0.35)   # width < 0.20 / 0.20-0.35 / > 0.35
 
 # Execution Safety
 PAPER_TRADE_MODE = True  # If True, execute_polymarket_trade logs the trade but does NOT hit the live API

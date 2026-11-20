@@ -217,12 +217,21 @@ class DeepResearcherComplete(BaseModel):
     components: list[ComponentP] = []  # judge mode, compound market: P(component happens) per component id
     correlation: float | None = None  # judge mode, compound market: assumed correlation between the components
     discounted_sources: list[str] = []  # judge mode: interested / unproven sources whose claims it discounted
+    confidence_score: int | None = None  # judge mode: 1-10 confidence in the estimate; missing -> null (never fails FULL)
+    confidence_reason: str | None = None  # judge mode: the one thing that most limits confidence (<= 1 line)
 
     @field_validator("estimated_p", "p_low", "p_high", "base_rate", "prior")
     @classmethod
     def _p_in_unit_interval(cls, value: float | None) -> float | None:
         if value is not None and not (0.0 <= value <= 1.0):
             raise ValueError(f"probability must be in [0, 1], got {value}")
+        return value
+
+    @field_validator("confidence_score")
+    @classmethod
+    def _score_1_to_10(cls, value: int | None) -> int | None:
+        if value is not None and not (1 <= value <= 10):
+            raise ValueError(f"confidence_score must be an integer 1-10, got {value}")
         return value
 
     @model_validator(mode="after")

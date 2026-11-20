@@ -468,7 +468,7 @@ def test_stub_runner_full_stage_ledger_and_frontmatter_shape(monkeypatch, vault)
     out = phases.phase3_qualitative_pipeline(vault, runner=spawn_agent)
     assert len(out) == 1
     fm = vault.read_market_record("0xstub", "active")
-    assert fm["pipeline"] == "crux_v1" and fm["research_depth"] == "full"
+    assert fm["pipeline"] == "crux_conf_v1" and fm["research_depth"] == "full"
     assert fm["cruxes_total"] == 5 and fm["crux_answered"] == 5 and fm["crux_unanswered"] == 0
     assert fm["gap_queries"] == 0 and fm["audit_dropped"] == 0
     assert fm["framing_gap"] == pytest.approx(0.0, abs=1e-6)
@@ -482,9 +482,9 @@ def test_stub_runner_full_stage_ledger_and_frontmatter_shape(monkeypatch, vault)
     assert fm["evidence_bear"] == []
     assert fm["judge_arm"] == "two" and fm["judge_framing"] is None
     state = vault.read_filter_log("0xstub")["research_state"]
-    assert state["pipeline"] == "crux_v1" and state["cruxes_total"] == 5
+    assert state["pipeline"] == "crux_conf_v1" and state["cruxes_total"] == 5
     # the same fields ride along to Phase 4
-    assert out[0]["pipeline"] == "crux_v1" and out[0]["crux_answered"] == 5
+    assert out[0]["pipeline"] == "crux_conf_v1" and out[0]["crux_answered"] == 5
 
 
 def test_stub_error_mode_flags_the_market(monkeypatch, vault):
@@ -515,7 +515,7 @@ def test_backtest_research_uses_given_today_and_freshness_and_leaves_no_ledger(m
     out = p3_research.backtest_research(gamma, "2026-01-15", "2025-12-16to2026-01-15")
     assert seen == {"today": "2026-01-15", "fresh": "2025-12-16to2026-01-15", "market_id": "0xback"}
     assert brave_search._FRESHNESS_OVERRIDE is None  # restored
-    assert out["pipeline"] == "crux_v1" and 0.0 <= out["p_low"] <= out["p"] <= out["p_high"] <= 1.0
+    assert out["pipeline"] == "crux_conf_v1" and 0.0 <= out["p_low"] <= out["p"] <= out["p_high"] <= 1.0
     assert out["cruxes_total"] >= 4
     assert not list(tmp_path.rglob("decisions.jsonl"))
 
@@ -529,15 +529,15 @@ def test_directives_are_stamped_and_version_bumped_once_for_the_new_pipeline(tmp
 
     fresh = ObsidianManager(vault_base=tmp_path / "fresh")
     fresh.cold_start_protocol()
-    assert "research_pipeline: crux_v1" in fresh.read_directives() and directive_version(fresh.read_directives()) == 1
+    assert "research_pipeline: crux_conf_v1" in fresh.read_directives() and directive_version(fresh.read_directives()) == 1
 
     legacy = ObsidianManager(vault_base=tmp_path / "legacy")
     legacy.cold_start_protocol()
-    text = legacy.read_directives().replace("research_pipeline: crux_v1\n", "")
+    text = legacy.read_directives().replace("research_pipeline: crux_conf_v1\n", "")
     (legacy._dirs["system"] / "active_directives.md").write_text(text)
     before = extract_filter_directives(text)
     assert legacy.cold_start_protocol() is False
     after = legacy.read_directives()
-    assert directive_version(after) == 2 and "research_pipeline: crux_v1" in after and "pipeline_note" in after
+    assert directive_version(after) == 2 and "research_pipeline: crux_conf_v1" in after and "pipeline_note" in after
     assert extract_filter_directives(after) == before  # knobs untouched
     assert legacy.cold_start_protocol() is False and directive_version(legacy.read_directives()) == 2  # idempotent
