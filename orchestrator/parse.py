@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from typing import Any, Callable, Iterable, TypeVar
 
@@ -18,6 +19,20 @@ from pydantic import BaseModel, ValidationError
 
 from orchestrator.config import MAX_FORMAT_RETRIES
 from orchestrator.schema_validation import AgentSchemaError
+
+# Models occasionally emit a degenerate numeral thousands of digits long; int() refuses (> 4300 digits) with a plain
+# ValueError that escaped the JSONDecodeError handlers. Oversized integers decode to ±inf instead, and
+# junk_payload_reason flags non-finite numbers so the runner retries the call.
+_MAX_INT_DIGITS = 1000
+
+
+def _bounded_int(text: str) -> int | float:
+    if len(text.lstrip("-")) <= _MAX_INT_DIGITS:
+        return int(text)
+    return float("-inf") if text.startswith("-") else float("inf")
+
+
+_DECODER = json.JSONDecoder(parse_int=_bounded_int)
 
 log = logging.getLogger(__name__)
 
@@ -69,17 +84,17 @@ def _parse_body_candidates(raw: str) -> dict[str, Any] | None:
     parsed: Any = None
     for candidate in candidates:
         try:
-            parsed = json.loads(candidate)
+            parsed = _DECODER.decode(candidate)
         except json.JSONDecodeError:
             try:
                 parsed = yaml.safe_load(candidate)
-            except yaml.YAMLError:
+            except (yaml.YAMLError, ValueError):
                 parsed = None
         if isinstance(parsed, dict):
             return parsed
         if isinstance(parsed, str):
             try:
-                nested = json.loads(parsed)
+                nested = _DECODER.decode(parsed)
             except json.JSONDecodeError:
                 nested = None
             if isinstance(nested, dict):
@@ -94,7 +109,7 @@ def _garbage_keys(obj: dict[str, Any]) -> bool:
 
 def _embedded_json_objects(text: str) -> list[dict[str, Any]]:
     """Every balanced JSON object in ``text`` (outermost first; objects nested in a decoded one are skipped)."""
-    decoder = json.JSONDecoder()
+    decoder = _DECODER
     out: list[dict[str, Any]] = []
     pos = text.find("{")
     while pos != -1:
@@ -196,7 +211,7 @@ def _find_embedded_json_object(text: str) -> dict[str, Any] | None:
     cleanly ignores surrounding prose and trailing characters such as a
     closing code fence.
     """
-    decoder = json.JSONDecoder()
+    decoder = _DECODER
     start = text.find("{")
     while start != -1:
         try:
@@ -324,7 +339,19 @@ def junk_payload_reason(parsed: Any) -> str | None:
     junk = [k for k in parsed if not isinstance(k, str) or not any(ch.isalnum() for ch in k)]
     if junk:
         return f"junk keys {junk!r} (keys must be the schema field names)"
+    if _has_non_finite(parsed):
+        return "non-finite number (degenerate oversized numeral)"
     return None
+
+
+def _has_non_finite(value: Any) -> bool:
+    if isinstance(value, float):
+        return not math.isfinite(value)
+    if isinstance(value, dict):
+        return any(_has_non_finite(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_has_non_finite(v) for v in value)
+    return False
 
 
 def run_agent_with_format_retries(

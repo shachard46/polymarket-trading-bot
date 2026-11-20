@@ -11,6 +11,7 @@ from orchestrator.parse import (
     coerce_deep_researcher_state_machine,
     extract_fenced_block,
     normalize_structured_output,
+    junk_payload_reason,
     parse_agent_json_or_yaml,
 )
 from orchestrator.research import parse_deep_researcher
@@ -180,3 +181,17 @@ def test_parse_accepts_empty_post_mortem_section():
 def test_parse_rejects_nonempty_post_mortem_section():
     with pytest.raises(ValueError, match="Post-Mortem"):
         parse_deep_researcher(_research_md("oops"))
+
+
+def test_oversized_integer_parses_and_is_flagged_junk():
+    # A model once emitted a 13,662-digit numeral; int() raised a plain ValueError that killed the web path.
+    raw = '{"market_id": "0xabc", "results": [{"query": "q", "count": ' + "7" * 13662 + "}]}"
+    parsed = parse_agent_json_or_yaml(raw)
+    assert parsed["results"][0]["count"] == float("inf")
+    assert "non-finite" in junk_payload_reason(parsed)
+
+
+def test_ordinary_integers_unchanged_and_not_junk():
+    parsed = parse_agent_json_or_yaml('{"n": 12345678901234567890, "x": -3}')
+    assert parsed == {"n": 12345678901234567890, "x": -3}
+    assert junk_payload_reason(parsed) is None
