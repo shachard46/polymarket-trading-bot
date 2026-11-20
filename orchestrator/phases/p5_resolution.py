@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from typing import Any
 
-from obsidian_utils import ObsidianManager, VaultWriteError
+from obsidian_utils import ObsidianManager, VaultWriteError, read_json, write_json_atomic
+from orchestrator.gate import parse_ts
 from orchestrator import failure_tags, ledger, scraper, stats
 from orchestrator.phases.agent_call import run_structured_agent
 from orchestrator.phases.common import (
@@ -40,13 +42,90 @@ def phase5_resolution_and_post_mortem(
     _resolve_ledger_markets(vault)
 
 
-def _resolve_ledger_markets(vault: ObsidianManager) -> None:
-    """Record resolutions for every unresolved ledger market (capped per tick)."""
+SWEEP_STATE_FILE = "ledger_sweep_state.json"
+_TIER_BY_STAGE = {"gate_reject": 2, "triage_reject": 1}  # everything else (traded, below_edge, ...) = 0
+
+
+def _sweep_state_path(vault: ObsidianManager):
+    return vault._dirs["system"] / SWEEP_STATE_FILE
+
+
+def _market_sweep_info(vault: ObsidianManager) -> dict[str, dict[str, Any]]:
+    """Per unresolved market: best (lowest) priority tier and end_date string from its ledger rows."""
+    info: dict[str, dict[str, Any]] = {}
+    for row in ledger.iter_rows(vault):
+        mid = row.get("market_id")
+        stage = row.get("stage")
+        if not mid or stage in ledger.NON_MARKET_STAGES or stage == ledger.POST_MORTEM_STAGE:
+            continue
+        rec = info.setdefault(mid, {"tier": 99, "end": None, "resolved": False})
+        if stage == ledger.RESOLUTION_STAGE:
+            rec["resolved"] = True
+            continue
+        rec["tier"] = min(rec["tier"], _TIER_BY_STAGE.get(stage, 0))
+        if row.get("end_date"):
+            rec["end"] = row["end_date"]
+    return {m: r for m, r in info.items() if not r["resolved"]}
+
+
+def _end_date_of(vault: ObsidianManager, market_id: str, rec: dict[str, Any]) -> datetime | None:
+    end = parse_ts(rec.get("end"))
+    if end is not None:
+        return end
+    try:
+        filt = vault.read_filter_log(market_id) or {}
+    except Exception:  # noqa: BLE001
+        return None
+    md = filt.get("market_data") if isinstance(filt.get("market_data"), dict) else {}
+    return parse_ts(filt.get("end_date") or md.get("end_date"))
+
+
+def ledger_sweep_order(
+    vault: ObsidianManager, now: datetime | None = None
+) -> tuple[list[str], dict[str, int]]:
+    """Markets worth checking now, plus counts.
+
+    Due markets (end_date passed) first: tier, then oldest end_date. Unknown end_date after them,
+    least-recently-checked first. Future-dated markets are skipped.
+    """
+    now = now or datetime.now(timezone.utc)
+    info = _market_sweep_info(vault)
+    state = read_json(_sweep_state_path(vault))
+    last = state.get("last_checked") if isinstance(state, dict) else None
+    last = last if isinstance(last, dict) else {}
+    due: list[tuple[int, datetime, str]] = []
+    unknown: list[tuple[float, str]] = []
+    future = 0
+    for mid, rec in info.items():
+        end = _end_date_of(vault, mid, rec)
+        if end is None:
+            unknown.append((_as_float(last.get(mid)) or 0.0, mid))
+        elif end > now:
+            future += 1
+        else:
+            due.append((rec["tier"], end, mid))
+    due.sort(key=lambda t: (t[0], t[1], t[2]))
+    unknown.sort()
+    order = [m for _, _, m in due] + [m for _, m in unknown]
+    return order, {
+        "unresolved": len(info), "due": len(due), "skipped_future": future, "unknown_end": len(unknown),
+    }
+
+
+def _resolve_ledger_markets(vault: ObsidianManager, now: datetime | None = None) -> None:
+    """Record resolutions for due unresolved ledger markets (capped per tick)."""
     try:
         limit = int(os.environ.get("PMBOT_LEDGER_RESOLVE_LIMIT", "100"))
     except ValueError:
         limit = 100
-    for market_id in ledger.unresolved_market_ids(vault)[: max(limit, 0)]:
+    now = now or datetime.now(timezone.utc)
+    order, counts = ledger_sweep_order(vault, now)
+    batch = order[: max(limit, 0)]
+    checked = resolved = 0
+    stamps: dict[str, float] = {}
+    for market_id in batch:
+        checked += 1
+        stamps[market_id] = now.timestamp()
         try:
             resolution = scraper.fetch_resolution(market_id)
             outcome_yes = ledger.outcome_yes_from_resolution(resolution)
@@ -58,8 +137,23 @@ def _resolve_ledger_markets(vault: ObsidianManager) -> None:
                 manipulation_risk=_filter_manipulation_risk(filt),
                 **_filter_integrity_fields(filt),
             )
+            resolved += 1
         except Exception:  # noqa: BLE001 - one bad market must not stop the sweep
             log.exception("[PHASE 5] ledger resolution failed for %s", market_id)
+    if stamps:
+        try:
+            state = read_json(_sweep_state_path(vault))
+            prev = state.get("last_checked") if isinstance(state, dict) else None
+            merged = {**(prev if isinstance(prev, dict) else {}), **stamps}
+            live = set(counts and ledger.unresolved_market_ids(vault))
+            merged = {m: t for m, t in merged.items() if m in live}
+            write_json_atomic(_sweep_state_path(vault), {"last_checked": merged})
+        except Exception:  # noqa: BLE001 - rotation state is advisory
+            log.exception("[PHASE 5] ledger sweep state write failed")
+    log.info(
+        "[PHASE 5] ledger sweep: unresolved=%d due=%d checked=%d resolved=%d skipped_future=%d unknown_end=%d",
+        counts["unresolved"], counts["due"], checked, resolved, counts["skipped_future"], counts["unknown_end"],
+    )
 
 
 def _post_mortem_failed(
