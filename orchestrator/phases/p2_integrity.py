@@ -59,15 +59,24 @@ def _day_change_from_history(history: list[tuple[int, float]] | None) -> float |
     return round(p_now - older[-1], 6) if older else None
 
 
-def _apply_integrity(
-    market: MarketRow, prior: dict[str, Any] | None, coverage: Coverage | None
-) -> None:
-    """Fetch history/trades/book, write ``integ_*`` (+ score, flags) into market_data."""
-    md = market.market_data
-    token = md.get("yes_token_id")
+def fetch_integrity_inputs(market: MarketRow) -> tuple[Any, Any, Any]:
+    """Network part of the integrity check: ``(history, trades, book)`` (pure fetch; safe to run in a worker thread)."""
+    token = market.market_data.get("yes_token_id")
     history = polymarket_api.fetch_price_history(token) if token else None
     trades = polymarket_api.fetch_trades(market.market_id)
     book = polymarket_api.fetch_book(token) if token else None
+    return history, trades, book
+
+
+def _apply_integrity(
+    market: MarketRow,
+    prior: dict[str, Any] | None,
+    coverage: Coverage | None,
+    fetched: tuple[Any, Any, Any] | None = None,
+) -> None:
+    """Fetch history/trades/book (unless ``fetched``), write ``integ_*`` (+ score, flags) into market_data."""
+    md = market.market_data
+    history, trades, book = fetched if fetched is not None else fetch_integrity_inputs(market)
     _count_signal(coverage, "price_history", history is None)
     _count_signal(coverage, "trades", trades is None)
     _count_signal(coverage, "book", book is None)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -26,6 +27,7 @@ from orchestrator.phases.p2_integrity import (  # noqa: F401  (re-exported; spli
     _apply_integrity,
     _count_gate_signals,
     _count_signal,
+    fetch_integrity_inputs,
     _day_change_from_history,
     _integrity_state,
     _new_coverage,
@@ -39,6 +41,7 @@ from orchestrator.state import market_quarantine
 _Eligible = tuple[float, MarketRow, dict[str, Any] | None]
 _Researchable = tuple[float, MarketRow, dict[str, Any] | None, dict[str, Any]]
 _MANIP_LEVELS = ("low", "medium", "high")
+_FETCH_WORKERS = 8
 
 
 def is_triage_shadow(market_id: str) -> bool:
@@ -275,10 +278,19 @@ def _rank_and_triage(
     ledger_once: Callable[..., None] | None = None,
     coverage: Coverage | None = None,
 ) -> list[_Researchable]:
-    """Stage 2: rank by gate score, cut at the gate budget, Triage the rest."""
+    """Stage 2: rank by gate score (measurement only), Triage every eligible market.
+
+    ``PMBOT_GATE_BUDGET`` > 0 is an optional emergency cap; the default 0 means no cut.
+    """
     eligible.sort(key=lambda item: (-item[0], item[1].market_id))
     budget = gate_budget()
     researchable: list[_Researchable] = []
+    in_budget = [e for rank, e in enumerate(eligible) if not budget or rank < budget]
+    fetched = (
+        _prefetch_signals(in_budget, knobs)
+        if knobs is not None and ledger_once is not None
+        else {}
+    )
 
     # Pass 1: gate rejects, holders, integrity; collect the markets that reach Triage.
     pending: list[tuple[float, MarketRow, dict[str, Any] | None, dict[str, Any], dict[str, Any]]] = []
@@ -291,9 +303,10 @@ def _rank_and_triage(
             "confidence_multiplier": sc,
             "score": sc,
             "event_id": fields["event_id"],
+            "end_date": md.get("end_date"),
             **gate.register_pass(q),
         }
-        if rank >= budget:
+        if budget and rank >= budget:
             _write_filter_state(
                 vault, market_id, prior, passed=False, trigger="over_gate_budget",
                 details="eligible; below PMBOT_GATE_BUDGET cut", **base,
@@ -302,7 +315,9 @@ def _rank_and_triage(
 
         with market_quarantine(vault, market_id, "phase2"):
             if knobs is not None and ledger_once is not None:
-                holders = polymarket_api.fetch_holder_concentration(market_id)
+                holders, integ, err = fetched[market_id]
+                if err is not None:
+                    raise err
                 _count_signal(coverage, "holders", holders is None)
                 if holders is not None:
                     md["holder_top1"] = holders.get("top1")
@@ -312,7 +327,7 @@ def _rank_and_triage(
                     if not ok:
                         _reject_gate(vault, market, prior, reason, now, ledger_once)
                         continue
-                _apply_integrity(market, prior, coverage)
+                _apply_integrity(market, prior, coverage, integ)
                 ok, reason = gate.eligibility(md, knobs)
                 if not ok:
                     _reject_gate(vault, market, prior, reason, now, ledger_once)
@@ -365,6 +380,39 @@ def _rank_and_triage(
     return researchable
 
 
+def _prefetch_signals(
+    items: list[_Eligible], knobs: dict[str, Any]
+) -> dict[str, tuple[Any, Any, BaseException | None]]:
+    """Fetch holders (+ integrity inputs unless holders already reject) for all markets concurrently.
+
+    Pure network reads, no vault/ledger writes. ``market_id -> (holders, integrity inputs | None, error | None)``;
+    an error is re-raised by the caller inside the market's quarantine.
+    """
+
+    def one(item: _Eligible) -> tuple[Any, Any, BaseException | None]:
+        market = item[1]
+        try:
+            holders = polymarket_api.fetch_holder_concentration(market.market_id)
+            if holders is not None:
+                probe = {
+                    **market.market_data,
+                    "holder_top1": holders.get("top1"),
+                    "holder_top3": holders.get("top3"),
+                    "holder_basis": holders.get("basis"),
+                }
+                if not gate.eligibility(probe, knobs)[0]:
+                    return holders, None, None  # rejected on holders: skip the integrity fetches
+            return holders, fetch_integrity_inputs(market), None
+        except Exception as exc:  # noqa: BLE001 - re-raised on the calling thread
+            return None, None, exc
+
+    if not items:
+        return {}
+    with ThreadPoolExecutor(max_workers=min(_FETCH_WORKERS, len(items))) as pool:
+        results = list(pool.map(one, items))
+    return {item[1].market_id: res for item, res in zip(items, results)}
+
+
 def _triage_batch_payloads(
     pending: list[tuple[float, MarketRow, dict[str, Any] | None, dict[str, Any], dict[str, Any]]],
     today: str,
@@ -388,17 +436,21 @@ def _triage_batch_payloads(
 
 def _promote_researchable(
     vault: ObsidianManager, researchable: list[_Researchable]
-) -> None:
-    """Stage 3: the top ``PMBOT_TRIAGE_BUDGET`` researchable markets get ``passed: true``."""
+) -> int:
+    """Stage 3: every researchable market gets ``passed: true`` (optional cap: ``PMBOT_TRIAGE_BUDGET`` > 0)."""
+    cap = triage_budget()
+    count = 0
     for idx, (sc, market, prior, base) in enumerate(researchable):
         with market_quarantine(vault, market.market_id, "phase2"):
-            promoted = idx < triage_budget()
+            promoted = not cap or idx < cap
             _write_filter_state(
                 vault, market.market_id, prior, passed=promoted,
                 trigger=None if promoted else "over_triage_budget",
                 details="researchable" if promoted else "researchable; below PMBOT_TRIAGE_BUDGET cut",
                 **base,
             )
+            count += promoted
+    return count
 
 
 def phase2_quantitative_routing(
@@ -413,10 +465,10 @@ def phase2_quantitative_routing(
     2. Arbitrage (yes+no ask < 0.98) is ledgered (paper only) and not researched.
     3. ``gate.eligibility``: failures are ledgered once per state change and
        back off (5h * 2^(n-1), retired after 6).
-    4. Eligible markets are ranked by ``gate.score``; the top
-       ``PMBOT_GATE_BUDGET`` go to Triage (verdict cached forever, once per event).
-    5. The top ``PMBOT_TRIAGE_BUDGET`` researchable markets get ``passed: true``
-       (``confidence_multiplier`` = score), which is all Phase 3 reads.
+    4. Eligible markets are ranked by ``gate.score`` (recorded only); every one goes to
+       Triage (verdict cached forever, once per event) unless ``PMBOT_GATE_BUDGET`` > 0 caps it.
+    5. Every researchable market gets ``passed: true`` (``confidence_multiplier`` = score,
+       ``end_date`` recorded), unless ``PMBOT_TRIAGE_BUDGET`` > 0 caps it. Phase 3 reads that.
     """
     log.info("[PHASE 2] Gate + triage")
     knobs = extract_filter_directives(vault.read_directives())
@@ -432,9 +484,9 @@ def phase2_quantitative_routing(
         vault, runner, eligible, today, now, event_cache, knobs, ledger_once, coverage
     )
     _record_signal_coverage(vault, coverage)
-    _promote_researchable(vault, researchable)
+    promoted_count = _promote_researchable(vault, researchable)
 
     log.info(
         "[PHASE 2] gate complete: eligible=%d triaged_researchable=%d promoted=%d",
-        len(eligible), len(researchable), min(len(researchable), triage_budget()),
+        len(eligible), len(researchable), promoted_count,
     )

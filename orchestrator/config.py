@@ -48,9 +48,9 @@ TOP_QUALITATIVE_MARKETS_ENV = "PMBOT_TOP_MARKETS"
 
 # Funnel budgets (docs/02): how many markets survive each stage per tick.
 GATE_BUDGET_ENV = "PMBOT_GATE_BUDGET"
-DEFAULT_GATE_BUDGET = 15
+DEFAULT_GATE_BUDGET = 0  # 0 = unlimited (every eligible market is triaged)
 TRIAGE_BUDGET_ENV = "PMBOT_TRIAGE_BUDGET"
-DEFAULT_TRIAGE_BUDGET = 8
+DEFAULT_TRIAGE_BUDGET = 0  # 0 = unlimited (every researchable market is promoted)
 QUICK_RESEARCH_BUDGET_ENV = "PMBOT_QUICK_RESEARCH_BUDGET"
 DEFAULT_QUICK_RESEARCH_BUDGET = 8
 FULL_RESEARCH_BUDGET_ENV = "PMBOT_FULL_RESEARCH_BUDGET"
@@ -94,12 +94,12 @@ def _int_env(name: str, default: int) -> int:
 
 
 def gate_budget() -> int:
-    """Max eligible markets sent from the gate to triage per tick (default 15)."""
+    """Max eligible markets sent from the gate to triage per tick (default 0 = unlimited; >0 caps)."""
     return _int_env(GATE_BUDGET_ENV, DEFAULT_GATE_BUDGET)
 
 
 def triage_budget() -> int:
-    """Max researchable markets promoted to Phase 3 per tick (default 8)."""
+    """Max researchable markets promoted to Phase 3 per tick (default 0 = unlimited; >0 caps)."""
     return _int_env(TRIAGE_BUDGET_ENV, DEFAULT_TRIAGE_BUDGET)
 
 

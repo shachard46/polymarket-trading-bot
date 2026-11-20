@@ -53,13 +53,16 @@ _SKIP_OUTCOMES = frozenset({
 })
 
 
-def _qualitative_rank_key(candidate: Phase3Candidate) -> tuple[float, str]:
+def _qualitative_rank_key(candidate: Phase3Candidate) -> tuple[bool, str, float, str]:
+    """Soonest resolution first (missing end_date last), then gate score, then market id."""
     ev = candidate.filter_record
+    end = ev.get("end_date")
+    end = str(end) if end else ""
     try:
         cm = float(ev.get("confidence_multiplier", 0.0))
     except (TypeError, ValueError):
         cm = 0.0
-    return (-cm, candidate.market_id)
+    return (not end, end, -cm, candidate.market_id)
 
 
 def build_phase3_queue(
@@ -75,6 +78,7 @@ def build_phase3_queue(
     """
     now = now or datetime.now(timezone.utc)
     candidates: list[Phase3Candidate] = []
+    skipped = {"cooldown": 0, "open_bet": 0, "fresh": 0}  # promoted markets not queued, by reason (logged only)
 
     for path in vault.iter_dir_files("filters", ".md"):
         market_id = path.stem
@@ -91,21 +95,28 @@ def build_phase3_queue(
                 and state.get("outcome") in _SKIP_OUTCOMES
                 and _attempt_cooldown_active(state, _as_float(record.get("last_q")), now)
             ):
+                skipped["cooldown"] += 1
                 continue
             kind: Phase3Kind = "initial"
         else:
             trade = vault.read_trade_log_dict(market_id)
             if trade is not None and _open_trade_shows_bet_not_edge_dq(trade):
+                skipped["open_bet"] += 1
                 continue
             if record.get("refresh_reason") != "price_move" and not _refresh_reason(
                 vault, market_id, fm, state, None, now
             ):
+                skipped["fresh"] += 1
                 continue
             kind = "refresh"
         candidates.append(
             Phase3Candidate(market_id=market_id, kind=kind, filter_record=record)
         )
 
+    log.info(
+        "[PHASE 3 queue] candidates=%d skip_fresh=%d skip_cooldown=%d skip_open_bet=%d",
+        len(candidates), skipped["fresh"], skipped["cooldown"], skipped["open_bet"],
+    )
     candidates.sort(key=_qualitative_rank_key)
     cap = top_qualitative_markets()
     if len(candidates) > cap:

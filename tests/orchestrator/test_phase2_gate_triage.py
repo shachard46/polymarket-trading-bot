@@ -64,6 +64,48 @@ def test_triage_payload_has_no_price(vault):
     }
 
 
+def test_default_triages_and_promotes_every_market(vault):
+    markets = [mk(f"m{i}", vol=1_000.0 * (i + 1) ** 2) for i in range(6)]
+    t = Triage()
+    phases.phase2_quantitative_routing(vault, markets, runner=t)
+    ids = [f"m{i}" for i in range(6)]
+    assert sorted(c["market_id"] for c in t.calls) == ids
+    assert all(vault.read_filter_log(m)["passed"] for m in ids)
+    assert sorted(c.market_id for c in phases.build_phase3_queue(vault)) == ids
+
+
+def test_end_date_written_to_filter_record(vault):
+    phases.phase2_quantitative_routing(
+        vault, [mk("a", end_date="2026-12-01T00:00:00+00:00"), mk("b")], runner=Triage()
+    )
+    assert vault.read_filter_log("a")["end_date"] == "2026-12-01T00:00:00+00:00"
+    assert vault.read_filter_log("b").get("end_date") is None
+
+
+def test_integrity_fetch_concurrent_preserves_results(vault, monkeypatch):
+    import threading
+
+    threads: set[int] = set()
+
+    def hist(token):
+        threads.add(threading.get_ident())
+        return None
+
+    monkeypatch.setattr(polymarket_api, "fetch_price_history", hist)
+    monkeypatch.setattr(
+        polymarket_api, "fetch_holder_concentration",
+        lambda cid: {"top1": 0.1, "top3": 0.2, "basis": "supply"},
+    )
+    markets = [mk(f"m{i}", yes_token_id=f"t{i}") for i in range(10)]
+    t = Triage()
+    phases.phase2_quantitative_routing(vault, markets, runner=t)
+    assert sorted(c["market_id"] for c in t.calls) == sorted(f"m{i}" for i in range(10))
+    for i in range(10):
+        rec = vault.read_filter_log(f"m{i}")
+        assert rec["passed"] is True
+        assert rec["score"] == rec["confidence_multiplier"] > 0
+
+
 def test_budgets_respected_and_ranked(vault, monkeypatch):
     monkeypatch.setenv("PMBOT_GATE_BUDGET", "4")
     monkeypatch.setenv("PMBOT_TRIAGE_BUDGET", "2")
@@ -306,3 +348,35 @@ def test_build_phase3_queue_sorts_and_caps(monkeypatch, vault):
 
     queue = phases.build_phase3_queue(vault)
     assert [c.market_id for c in queue] == ["high", "mid"]
+
+
+def test_build_phase3_queue_orders_by_end_date(monkeypatch, vault):
+    monkeypatch.setattr(p3_queue, "top_qualitative_markets", lambda: 10)
+    spec = {
+        "late": ("2026-12-30T00:00:00+00:00", 9.0),
+        "soon_lo": ("2026-12-01T00:00:00+00:00", 1.0),
+        "soon_hi": ("2026-12-01T00:00:00+00:00", 5.0),
+        "none": (None, 99.0),
+    }
+    for mid, (end, mult) in spec.items():
+        vault.write_filter_log(mid, {
+            "market_id": mid, "passed": True, "trigger": "stub", "confidence_multiplier": mult,
+            "details": "ok", "error": None, "end_date": end,
+        })
+    queue = phases.build_phase3_queue(vault)
+    assert [c.market_id for c in queue] == ["soon_hi", "soon_lo", "late", "none"]
+
+
+def test_build_phase3_queue_logs_skip_counter(vault, caplog):
+    import logging
+
+    vault.write_filter_log("a", {
+        "market_id": "a", "passed": True, "trigger": "stub", "confidence_multiplier": 1.0,
+        "details": "ok", "error": None,
+    })
+    with caplog.at_level(logging.INFO):
+        phases.build_phase3_queue(vault)
+    assert any(
+        "[PHASE 3 queue] candidates=1 skip_fresh=0 skip_cooldown=0 skip_open_bet=0" in r.getMessage()
+        for r in caplog.records
+    )

@@ -94,6 +94,7 @@ class FilterLogPayload(BaseModel):
     error_log: Optional[dict[str, Any]] = None
     score: Optional[float] = None
     event_id: Optional[str] = None
+    end_date: Optional[str] = None
     fail_count: int = 0
     next_check_at: Optional[str] = None
     last_q: Optional[float] = None
