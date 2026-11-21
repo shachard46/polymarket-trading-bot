@@ -489,6 +489,7 @@ def test_p3_triage_shadow_batched_equals_unbatched_and_item_failure_falls_back(t
     from orchestrator import direct_runner, runner_stubs
 
     monkeypatch.setenv("PMBOT_MODE", "live")
+    monkeypatch.setenv("PMBOT_JUDGE_MODEL_AB", "off")  # batching only covers primary-arm markets
     direct = []
     monkeypatch.setattr(
         direct_runner, "run_direct",

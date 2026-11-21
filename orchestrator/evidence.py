@@ -23,6 +23,8 @@ from config.trading_constants import (
     GEMINI_QUERY_WORKERS,
     JUDGE_MODEL_ARM_SALT,
     SHADOW_RATE,
+    SONNET_ARM_WEB_EFFORT,
+    SONNET_ARM_WEB_MAX_USES,
 )
 from orchestrator import brave_search, config
 from orchestrator.aiq_bundle import fetch_research_bundle_cached, normalize_query
@@ -83,11 +85,14 @@ def is_shadow(market_id: str) -> bool:
 
 
 JUDGE_MODEL_DEEPSEEK = "deepseek"
+JUDGE_MODEL_SONNET = "sonnet"
 JUDGE_MODEL_PRIMARY = "primary"
 
 
 def judge_model_arm(market_id: str) -> str:
-    """Judge MODEL arm: ``deepseek`` (the PMBOT_JUDGE_MODEL_ALT model) for a stable ~share of markets, else ``primary``.
+    """Judge MODEL arm: ``deepseek`` (PMBOT_JUDGE_MODEL_ALT), ``sonnet`` (PMBOT_JUDGE_MODEL_SONNET, judge + web), else ``primary``.
+
+    Bands on one uniform value: [0, alt share) deepseek, [alt share, alt + sonnet share) sonnet, the rest primary.
 
     Uniform value from a salted sha256 prefix (own salt, independent of the other arms); ``PMBOT_JUDGE_MODEL_AB=off``
     makes every market ``primary``.
@@ -96,7 +101,10 @@ def judge_model_arm(market_id: str) -> str:
         return JUDGE_MODEL_PRIMARY
     digest = hashlib.sha256((JUDGE_MODEL_ARM_SALT + ":" + str(market_id)).encode("utf-8")).hexdigest()
     u = int(digest[:8], 16) / 2**32
-    return JUDGE_MODEL_DEEPSEEK if u < config.judge_model_alt_share() else JUDGE_MODEL_PRIMARY
+    alt = config.judge_model_alt_share()
+    if u < alt:
+        return JUDGE_MODEL_DEEPSEEK
+    return JUDGE_MODEL_SONNET if u < alt + config.judge_model_sonnet_share() else JUDGE_MODEL_PRIMARY
 
 
 def intended_source(market_id: str) -> str:
@@ -168,7 +176,12 @@ def fetch_web_rows(
     Backend (``config.web_backend()``): Brave search + page fetch + ``web_extractor``, or the gemini
     ``web_searcher`` (one query per call, in parallel). A query whose Brave path errors falls back to gemini.
     ``locale`` (``{"country", "language"}``, local-language queries) is passed to Brave only.
+    Sonnet-arm markets (live) first try the web_searcher under the sonnet model (:func:`_sonnet_rows`), instead of Brave.
     """
+    sonnet = _sonnet_rows(runner, market_id, queries, today)
+    if sonnet is not None:
+        _log_pages(market_id, "sonnet", sonnet)
+        return sonnet
     if config.web_backend() == config.WEB_BACKEND_BRAVE:
         rows = (
             _brave_rows(runner, market_id, queries, today, locale) if locale
@@ -190,6 +203,41 @@ def fetch_web_rows(
         rows, backend = _gemini_rows(runner, market_id, queries, today), config.WEB_BACKEND_GEMINI
     _log_pages(market_id, backend, rows)
     return rows
+
+
+def _sonnet_rows(
+    runner: Callable[[str, dict[str, Any]], Any],
+    market_id: str,
+    queries: list[str],
+    today: str,
+) -> list[dict[str, Any]] | None:
+    """Sonnet arm (live only): per-query ``web_searcher`` calls under the sonnet override, same filter/sanitize as gemini.
+
+    None = not a sonnet-arm market, or the sonnet path errored / gave no usable rows (flagged ``web_model_fallback``):
+    the caller runs the normal backend.
+    """
+    if judge_model_arm(market_id) != JUDGE_MODEL_SONNET or config.runner_mode() != config.RUNNER_MODE_LIVE:
+        return None
+    from orchestrator import judge_model  # noqa: PLC0415 - judge_model imports this module
+    from orchestrator.llm import routing  # noqa: PLC0415
+
+    model = config.judge_model_sonnet()
+    rows: list[dict[str, Any]] = []
+    try:
+        with routing.model_override(
+            judge_model.WEB_ROLE, model, effort=SONNET_ARM_WEB_EFFORT, web_max_uses=SONNET_ARM_WEB_MAX_USES
+        ):
+            rows = _gemini_rows(runner, market_id, queries, today)
+    except InfraUnavailable:
+        raise
+    except Exception as exc:  # noqa: BLE001 - fall back to the normal path
+        log.warning("[WEB-FALLBACK] %s: sonnet web search failed (%s)", market_id, exc)
+    if rows_usable(rows):
+        judge_model.note_web(market_id, model, False)
+        return rows
+    log.warning("[WEB-FALLBACK] %s: sonnet web search gave no usable rows; using the normal web path", market_id)
+    judge_model.note_web(market_id, None, True)
+    return None
 
 
 def _failure_reasons(rows: list[dict[str, Any]]) -> str:

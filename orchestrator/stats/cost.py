@@ -14,6 +14,12 @@ def _cost(r: dict[str, Any]) -> float:
     return _num(r.get("cost_usd")) or 0.0
 
 
+def _arm_cost(r: dict[str, Any]) -> float:
+    """Cost for arm comparisons: the notional API cost of subscription (claude_code) calls, else the billed cost."""
+    n = _num(r.get("notional_cost_usd"))
+    return n if n is not None else _cost(r)
+
+
 def _day(r: dict[str, Any]) -> str:
     return str(r.get("ts") or "")[:10]
 
@@ -89,7 +95,21 @@ def judge_model_arm_cost(rows: list[dict[str, Any]], usage: list[dict[str, Any]]
         arm = arm_of.get(str(u.get("market_id")))
         if not u.get("judge_arm") or not arm:
             continue
-        cost[arm] += _cost(u)
+        cost[arm] += _arm_cost(u)
+        markets[arm].add(str(u["market_id"]))
+    return {a: (len(markets[a]), cost[a], cost[a] / len(markets[a])) for a in sorted(cost)}
+
+
+def judge_model_arm_web_cost(rows: list[dict[str, Any]], usage: list[dict[str, Any]]) -> dict[str, tuple[int, float, float | None]]:
+    """``{judge_model_arm: (n markets with web usage, web_searcher + web_extractor cost USD, cost per market)}``."""
+    arm_of = {str(r["market_id"]): str(r["judge_model_arm"]) for r in rows if r.get("judge_model_arm") and r.get("market_id")}
+    cost: dict[str, float] = defaultdict(float)
+    markets: dict[str, set[str]] = defaultdict(set)
+    for u in usage:
+        arm = arm_of.get(str(u.get("market_id")))
+        if u.get("role") not in ("web_searcher", "web_extractor") or not arm:
+            continue
+        cost[arm] += _arm_cost(u)
         markets[arm].add(str(u["market_id"]))
     return {a: (len(markets[a]), cost[a], cost[a] / len(markets[a])) for a in sorted(cost)}
 
@@ -127,6 +147,7 @@ def cost_stats(rows: list[dict[str, Any]], usage: list[dict[str, Any]], now: dat
         "brier_per_dollar": per_dollar,
         "judge_arm_cost": judge_arm_cost(usage),
         "judge_model_arm_cost": judge_model_arm_cost(rows, usage),
+        "judge_model_arm_web_cost": judge_model_arm_web_cost(rows, usage),
         "n_unknown": len(unknown),
         "missing_models": missing_models,
     }

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from orchestrator.llm.anthropic_llm import AnthropicLLM
 from orchestrator.llm.base import LLM
+from orchestrator.llm.claude_code_llm import ClaudeCodeLLM
 from orchestrator.llm.openrouter_llm import OpenRouterLLM
 
-_CLASSES: list[type[LLM]] = [AnthropicLLM, OpenRouterLLM]
+_CLASSES: list[type[LLM]] = [AnthropicLLM, ClaudeCodeLLM, OpenRouterLLM]
 try:  # Gemini lands in its own module; skip it while absent.
     from orchestrator.llm.gemini_llm import GeminiLLM
 

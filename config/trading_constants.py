@@ -163,6 +163,14 @@ SOURCE_CLASSIFIER_MAX_DOMAINS = 40  # unknown domains sent to the source_classif
 JUDGE_MODEL_AB_DEFAULT = "on"
 JUDGE_MODEL_ALT_DEFAULT = "openrouter:deepseek/deepseek-v4.1-flash"
 JUDGE_MODEL_ALT_SHARE_DEFAULT = 0.6
+# Third arm "sonnet": Claude Sonnet via the claude_code provider (Agent SDK, subscription) is BOTH the judge and the web researcher (native web_search/web_fetch).
+# Bands on the same hash value: [0, alt share) deepseek, [alt share, alt + sonnet share) sonnet, rest primary.
+# Env: PMBOT_JUDGE_MODEL_SONNET, PMBOT_JUDGE_MODEL_SONNET_SHARE (alt + sonnet share must be <= 1).
+JUDGE_MODEL_SONNET_DEFAULT = "claude_code:claude-sonnet-5-5"  # Claude Agent SDK on the Claude subscription (CLAUDE_CODE_OAUTH_TOKEN)
+JUDGE_MODEL_SONNET_SHARE_DEFAULT = 0.3
+CLAUDE_CODE_MAX_CONCURRENT = 2  # concurrent claude_code (subscription) calls, to protect the plan's rate limits
+SONNET_ARM_WEB_MAX_USES = 3  # web_search/web_fetch max_uses per web_searcher call in the sonnet arm
+SONNET_ARM_WEB_EFFORT = "medium"  # output_config effort for the sonnet arm's web_searcher calls
 JUDGE_MODEL_ARM_SALT = "judge_model_arm"  # differs from every other arm/shadow salt so the arms are independent
 JUDGE_ARM_MODES = ("ab", "one", "two")  # JUDGE_ARM_MODE: stable per-market A/B, always one judge, always two judges
 EVIDENCE_QUALITY_TIERS = ("official", "major", "aggregator", "blog", "unknown")

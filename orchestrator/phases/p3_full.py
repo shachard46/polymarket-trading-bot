@@ -267,6 +267,8 @@ def _research_market_body(
         fields["pipeline_flags"] = list(fields.get("pipeline_flags") or []) + [f"prior:{f}" for f in pflags]
     if judge_model.fell_back(market_id):  # the alt judge model failed: the primary answered; keeps the arm measurable
         fields["pipeline_flags"] = list(fields.get("pipeline_flags") or []) + [judge_model.FALLBACK_FLAG]
+    if judge_model.web_fell_back(market_id):  # the sonnet web search failed: the normal web path answered
+        fields["pipeline_flags"] = list(fields.get("pipeline_flags") or []) + [judge_model.WEB_FALLBACK_FLAG]
     if comp and comp["compound_gap"] is not None:
         log.info(
             "[PHASE 3] compound %s for %s: combined=%.3f stated=%.3f gap=%.3f corr=%.2f",

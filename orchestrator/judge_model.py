@@ -17,9 +17,14 @@ from orchestrator import config, evidence
 log = logging.getLogger(__name__)
 ROLE = "deep_researcher"
 FALLBACK_FLAG = "judge_model_fallback"
+WEB_ROLE = "web_searcher"
+WEB_FALLBACK_FLAG = "web_model_fallback"
 
 _lock = threading.Lock()
 _used: dict[str, dict[str, Any]] = {}  # market_id -> {"arm", "fallback"} of the latest judge calls
+# market_id -> {"model": "provider:model" | None, "fallback": bool} of the latest web evidence round of a sonnet-arm market.
+# Kept apart from _used: the web round runs before the judges, and :func:`reset` (start of the judges) must not clear it.
+_web: dict[str, dict[str, Any]] = {}
 
 
 def arm_for(market_id: str) -> str:
@@ -29,6 +34,36 @@ def arm_for(market_id: str) -> str:
 def reset(market_id: str) -> None:
     with _lock:
         _used.pop(str(market_id), None)
+
+
+def override_for_arm(arm: str) -> str | None:
+    """``provider:model`` the arm's judge calls are routed to (None = the models.yaml judge)."""
+    if arm == evidence.JUDGE_MODEL_DEEPSEEK:
+        return config.judge_model_alt()
+    if arm == evidence.JUDGE_MODEL_SONNET:
+        return config.judge_model_sonnet()
+    return None
+
+
+def note_web(market_id: str, model: str | None, fallback: bool) -> None:
+    """Record the web evidence round of a sonnet-arm market: the model that searched (None = the normal path) and whether it fell back."""
+    with _lock:
+        _web[str(market_id)] = {"model": model, "fallback": bool(fallback)}
+
+
+def web_fell_back(market_id: str) -> bool:
+    with _lock:
+        return bool((_web.get(str(market_id)) or {}).get("fallback"))
+
+
+def web_model(market_id: str) -> str | None:
+    """``provider:model`` that actually ran the web search of this market's latest round (None = none / not the sonnet model)."""
+    from orchestrator.config import RUNNER_MODE_LIVE, runner_mode  # noqa: PLC0415
+
+    if runner_mode() != RUNNER_MODE_LIVE:
+        return None
+    with _lock:
+        return (_web.get(str(market_id)) or {}).get("model")
 
 
 def note_call(market_id: str, arm: str, fallback: bool) -> None:
@@ -53,8 +88,9 @@ def provider_model(market_id: str, fallback: bool | None = None) -> tuple[str | 
     if fallback is None:
         fallback = fell_back(market_id)
     try:
-        if arm_for(market_id) == evidence.JUDGE_MODEL_DEEPSEEK and not fallback:
-            spec = routing.parse_model_spec(config.judge_model_alt())
+        override = override_for_arm(arm_for(market_id))
+        if override and not fallback:
+            spec = routing.parse_model_spec(override)
         else:
             spec = routing.spec_for(ROLE)
         return spec.provider, spec.model
@@ -63,9 +99,10 @@ def provider_model(market_id: str, fallback: bool | None = None) -> tuple[str | 
 
 
 def ledger_fields(market_id: str, fallback: bool | None = None) -> dict[str, Any]:
-    """``judge_model_arm`` plus (live) the provider/model actually used, for ledger rows and the research frontmatter."""
+    """``judge_model_arm`` plus (live) the judge provider/model and the web-search model actually used, for ledger rows and the research frontmatter."""
     out: dict[str, Any] = {"judge_model_arm": arm_for(market_id)}
     out["provider"], out["model"] = provider_model(market_id, fallback)
+    out["web_model"] = web_model(market_id)
     return out
 
 

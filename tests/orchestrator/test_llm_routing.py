@@ -18,6 +18,7 @@ def _fake_sdk(monkeypatch):
     import types
 
     monkeypatch.setitem(sys.modules, "anthropic", types.ModuleType("anthropic"))
+    monkeypatch.setitem(sys.modules, "claude_agent_sdk", types.ModuleType("claude_agent_sdk"))
 
 
 @pytest.fixture(autouse=True)
@@ -25,7 +26,7 @@ def _clean(monkeypatch, tmp_path):
     monkeypatch.delenv("LLM_DEFAULT", raising=False)
     for role in agents_blueprint.AGENTS:
         monkeypatch.delenv(f"LLM_ROLE_{role.upper()}", raising=False)
-    for k in ("ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY"):
+    for k in ("ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"):
         monkeypatch.setenv(k, "k")
 
 

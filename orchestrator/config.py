@@ -163,6 +163,8 @@ def judge_arm_mode() -> str:
 JUDGE_MODEL_AB_ENV = "PMBOT_JUDGE_MODEL_AB"
 JUDGE_MODEL_ALT_ENV = "PMBOT_JUDGE_MODEL_ALT"
 JUDGE_MODEL_ALT_SHARE_ENV = "PMBOT_JUDGE_MODEL_ALT_SHARE"
+JUDGE_MODEL_SONNET_ENV = "PMBOT_JUDGE_MODEL_SONNET"
+JUDGE_MODEL_SONNET_SHARE_ENV = "PMBOT_JUDGE_MODEL_SONNET_SHARE"
 
 
 def judge_model_ab_on() -> bool:
@@ -182,17 +184,41 @@ def judge_model_alt() -> str:
     return os.environ.get(JUDGE_MODEL_ALT_ENV, "").strip() or JUDGE_MODEL_ALT_DEFAULT
 
 
+def _share_env(env: str, default: float) -> float:
+    raw = os.environ.get(env, "").strip()
+    try:
+        share = float(raw) if raw else default
+    except ValueError:
+        raise ValueError(f"Invalid {env}={raw!r}; expected a number in [0, 1]") from None
+    if not 0.0 <= share <= 1.0:
+        raise ValueError(f"Invalid {env}={raw!r}; expected a number in [0, 1]")
+    return share
+
+
 def judge_model_alt_share() -> float:
     """Share of markets (0..1) judged by the alternative model (default 0.6). Out-of-range / non-numeric raises."""
     from config.trading_constants import JUDGE_MODEL_ALT_SHARE_DEFAULT  # noqa: PLC0415
 
-    raw = os.environ.get(JUDGE_MODEL_ALT_SHARE_ENV, "").strip()
-    try:
-        share = float(raw) if raw else JUDGE_MODEL_ALT_SHARE_DEFAULT
-    except ValueError:
-        raise ValueError(f"Invalid {JUDGE_MODEL_ALT_SHARE_ENV}={raw!r}; expected a number in [0, 1]") from None
-    if not 0.0 <= share <= 1.0:
-        raise ValueError(f"Invalid {JUDGE_MODEL_ALT_SHARE_ENV}={raw!r}; expected a number in [0, 1]")
+    return _share_env(JUDGE_MODEL_ALT_SHARE_ENV, JUDGE_MODEL_ALT_SHARE_DEFAULT)
+
+
+def judge_model_sonnet() -> str:
+    """``provider:model`` of the sonnet arm (judge and web researcher; default anthropic:claude-sonnet-5-5)."""
+    from config.trading_constants import JUDGE_MODEL_SONNET_DEFAULT  # noqa: PLC0415
+
+    return os.environ.get(JUDGE_MODEL_SONNET_ENV, "").strip() or JUDGE_MODEL_SONNET_DEFAULT
+
+
+def judge_model_sonnet_share() -> float:
+    """Share of markets (0..1) in the sonnet arm (default 0.2). Out-of-range, non-numeric or alt + sonnet > 1 raises."""
+    from config.trading_constants import JUDGE_MODEL_SONNET_SHARE_DEFAULT  # noqa: PLC0415
+
+    share = _share_env(JUDGE_MODEL_SONNET_SHARE_ENV, JUDGE_MODEL_SONNET_SHARE_DEFAULT)
+    if judge_model_alt_share() + share > 1.0 + 1e-9:
+        raise ValueError(
+            f"Invalid {JUDGE_MODEL_ALT_SHARE_ENV} + {JUDGE_MODEL_SONNET_SHARE_ENV} = "
+            f"{judge_model_alt_share() + share}; the shares must sum to at most 1"
+        )
     return share
 
 

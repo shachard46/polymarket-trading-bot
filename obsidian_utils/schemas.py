@@ -151,9 +151,10 @@ class ResearchFrontmatter(BaseModel):
     locale_language: Optional[str] = None  # e.g. "zh-hant"; non-English adds local-language queries
     local_queries: Optional[int] = None  # local-language searches actually run
     judge_arm: Optional[str] = None  # "one" | "two" (judge cost A/B)
-    judge_model_arm: Optional[str] = None  # "deepseek" | "primary" (judge MODEL A/B)
+    judge_model_arm: Optional[str] = None  # "deepseek" | "sonnet" | "primary" (judge MODEL A/B)
     provider: Optional[str] = None  # provider/model that actually judged (live mode; the primary after a fallback)
     model: Optional[str] = None
+    web_model: Optional[str] = None  # "provider:model" that ran the web search (sonnet arm only; null otherwise / stub)
     judge_framing: Optional[str] = None  # framing of the single judge ("yes" | "no"); null with two judges
     compound_type: Optional[str] = None  # "and" | "or" for a compound market
     compound_p: Optional[float] = None  # P(YES) combined in code from the judge's component probabilities

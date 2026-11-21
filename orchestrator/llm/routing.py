@@ -49,6 +49,7 @@ class ModelSpec(BaseModel):
     batch: bool = False
     temperature: float | None = None  # optional sampling temperature (all providers)
     reasoning: bool | None = None  # False disables thinking (OpenRouter, Gemini); unset = provider default
+    effort: str | None = None  # Anthropic output_config effort; set only by a per-call override
 
 
 class ModelsConfig(BaseModel):
@@ -89,18 +90,22 @@ def parse_model_spec(raw: str) -> ModelSpec:
     return _parse_env_spec("model override", raw)
 
 
-# Per-call model override: {role: "provider:model"} for the current context (thread). Set by :func:`model_override`
-# around one agent call (judge model A/B); same agent blueprint and prompt, only the provider/model differ.
-_overrides: contextvars.ContextVar[dict[str, str] | None] = contextvars.ContextVar("llm_model_override", default=None)
+# Per-call model override: {role: "provider:model" | {"model": "provider:model", "effort": ..., "web_max_uses": ...}} for the
+# current context (thread). Set by :func:`model_override` around one agent call (judge model A/B); same agent blueprint and
+# prompt, only the provider/model (and optional effort / web_max_uses) differ. The yaml role's temperature/reasoning are
+# NOT inherited (they are tuned for the yaml model; e.g. Sonnet 5.5 rejects a non-default temperature).
+_overrides: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar("llm_model_override", default=None)
 
 
 @contextlib.contextmanager
-def model_override(role: str, model: str | None):
+def model_override(role: str, model: str | None, *, effort: str | None = None, web_max_uses: int | None = None):
     """Route calls of ``role`` made inside the block (this thread/context) to ``provider:model``; None = no override."""
     if not model:
         yield
         return
-    token = _overrides.set({**(_overrides.get() or {}), role: model})
+    extras = {k: v for k, v in (("effort", effort), ("web_max_uses", web_max_uses)) if v is not None}
+    value: Any = {"model": model, **extras} if extras else model
+    token = _overrides.set({**(_overrides.get() or {}), role: value})
     try:
         yield
     finally:
@@ -134,6 +139,10 @@ def spec_for(role: str) -> ModelSpec:
     env_name = ROLE_ENV_PREFIX + role.upper()
     raw = os.environ.get(env_name, "").strip()
     override = (_overrides.get() or {}).get(role)
+    extras: dict[str, Any] = {}
+    if isinstance(override, dict):
+        extras = {k: v for k, v in override.items() if k != "model"}
+        override = override["model"]
     if override:
         spec = _parse_env_spec("model override", override)
     elif raw:
@@ -143,12 +152,14 @@ def spec_for(role: str) -> ModelSpec:
     else:
         raw = os.environ.get(DEFAULT_ENV, "").strip()
         spec = _parse_env_spec(DEFAULT_ENV, raw) if raw else cfg.default
+    yaml_role = cfg.roles.get(role) if not override else None  # an override never inherits temperature/reasoning
     return spec.model_copy(update={
         "max_tokens": spec.max_tokens or cfg.max_tokens,
-        "web_max_uses": spec.web_max_uses or cfg.web_max_uses,
+        "web_max_uses": extras.get("web_max_uses") or spec.web_max_uses or cfg.web_max_uses,
         "batch": cfg.roles[role].batch if role in cfg.roles else False,
-        "temperature": cfg.roles[role].temperature if role in cfg.roles else None,
-        "reasoning": cfg.roles[role].reasoning if role in cfg.roles else None,
+        "temperature": yaml_role.temperature if yaml_role else None,
+        "reasoning": yaml_role.reasoning if yaml_role else None,
+        "effort": extras.get("effort"),
     })
 
 
@@ -156,7 +167,7 @@ def llm_for(role: str) -> LLM:
     """One cached :class:`LLM` instance per distinct role spec."""
     spec = spec_for(role)
     key = (role, spec.provider, spec.model, spec.max_tokens, spec.web_max_uses, spec.batch,
-           spec.temperature, spec.reasoning)
+           spec.temperature, spec.reasoning, spec.effort)
     if key not in _instances:
         llm = PROVIDERS[spec.provider](
             model=spec.model, max_tokens=spec.max_tokens, web_max_uses=spec.web_max_uses
@@ -165,6 +176,7 @@ def llm_for(role: str) -> LLM:
         llm.batch_enabled = spec.batch
         llm.temperature = spec.temperature
         llm.reasoning = spec.reasoning
+        llm.effort = spec.effort
         _instances[key] = llm
     return _instances[key]
 
@@ -179,6 +191,11 @@ def validate() -> None:
         if not agent.get("hub_spawned", True):
             continue
         used.setdefault(spec_for(role).provider, []).append(role)
+    from orchestrator import config  # noqa: PLC0415
+
+    if config.judge_model_ab_on() and config.judge_model_sonnet_share() > 0:
+        sonnet = parse_model_spec(config.judge_model_sonnet())
+        used.setdefault(sonnet.provider, []).extend(["deep_researcher (sonnet arm)", "web_searcher (sonnet arm)"])
     for provider, roles in sorted(used.items()):
         try:
             PROVIDERS[provider].check_key()

@@ -147,18 +147,19 @@ def _render_judge_arms(s: dict[str, Any]) -> list[str]:
 
 
 def _render_judge_model_arms(s: dict[str, Any]) -> list[str]:
-    """Judge MODEL A/B (deepseek vs the models.yaml judge): researched / scored counts, Brier, fallbacks, cost per FULL market."""
+    """Judge MODEL A/B (deepseek / sonnet vs the models.yaml judge): researched / scored counts, Brier, fallbacks, cost per FULL market."""
     brier = s.get("brier_by_judge_model_arm", {})
     researched = s.get("researched_by_judge_model_arm", {})
     cost = (s.get("cost") or {}).get("judge_model_arm_cost", {})
+    web = (s.get("cost") or {}).get("judge_model_arm_web_cost", {})
     L = ["", "### Brier by judge model arm", "",
          "| judge_model_arm | n researched | n fell back to primary | n resolved | Brier(p) | Brier(p) - Brier(q) | "
-         "mean judge cost per FULL market USD |", "|---|---|---|---|---|---|---|"]
-    for arm in sorted(set(brier) | set(researched) | set(cost)):
+         "mean judge cost per FULL market USD | mean web cost per market USD |", "|---|---|---|---|---|---|---|---|"]
+    for arm in sorted(set(brier) | set(researched) | set(cost) | set(web)):
         n, bp, d = brier.get(arm, (0, None, None))
         nr, nf = researched.get(arm, (0, 0))
         per = cost.get(arm, (0, None, None))[2]
-        L.append(f"| {arm} | {nr} | {nf} | {n} | {_fmt(bp)} | {_fmt(d)} | {_fmt(per)} |")
+        L.append(f"| {arm} | {nr} | {nf} | {n} | {_fmt(bp)} | {_fmt(d)} | {_fmt(per)} | {_fmt(web.get(arm, (0, None, None))[2])} |")
     return L
 
 

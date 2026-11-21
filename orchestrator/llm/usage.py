@@ -107,6 +107,9 @@ def record(role: str, resp: LLMResponse, *, batch: bool = False) -> None:
             "batch": bool(batch),
             "cost_usd": compute_cost(resp.provider, resp.model, resp.input_tokens, resp.output_tokens, batch=batch),
         }
+        if resp.notional_cost_usd is not None:  # subscription provider (claude_code): billed 0, notional kept for the arm comparison
+            row["cost_usd"] = 0.0
+            row["notional_cost_usd"] = resp.notional_cost_usd
         path = usage_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as fh:

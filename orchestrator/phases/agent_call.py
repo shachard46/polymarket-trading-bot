@@ -154,18 +154,19 @@ def invoke_deep_researcher(
     # Judge model A/B: the market's arm may route this call to the alternative model (same blueprint and prompt).
     market_id = str(payload.get("market_id") or "")
     arm = judge_model.arm_for(market_id) if market_id else evidence.JUDGE_MODEL_PRIMARY
-    if arm != evidence.JUDGE_MODEL_DEEPSEEK:
+    override = judge_model.override_for_arm(arm)
+    if not override:
         out = _call()
         if market_id:
             judge_model.note_call(market_id, arm, False)
         return out
     try:
-        with routing.model_override(judge_model.ROLE, config.judge_model_alt()):
+        with routing.model_override(judge_model.ROLE, override):
             out = _call()
     except Exception as exc:  # noqa: BLE001 - the alt model failed after its format retries: use the primary model
         log.warning(
             "[PHASE 3] judge model %s failed for %s (%s); falling back to the primary model",
-            config.judge_model_alt(), market_id, exc,
+            override, market_id, exc,
         )
         out = _call()
         judge_model.note_call(market_id, arm, True)

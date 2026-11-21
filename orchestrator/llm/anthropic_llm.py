@@ -97,6 +97,8 @@ class AnthropicLLM(LLM):
         for continuation in range(MAX_PAUSE_CONTINUATIONS + 1):
             message = client.messages.create(**kwargs)
             seen.append(message)
+            if getattr(message, "stop_reason", None) == "refusal":
+                raise LLMError(f"anthropic:{self.model} refused the request (stop_reason=refusal)")
             i, o = _tokens(message)
             tin, tout = tin + i, tout + o
             all_text.append(_text_of(message))

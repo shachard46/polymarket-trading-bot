@@ -171,7 +171,7 @@ def _run_triage_shadows(
         # A/B routes the others per call (invoke_deep_researcher).
         [
             _triage_shadow_payload(mr, directives, today) for _rec, mr in picked
-            if judge_model.arm_for(mr["market_id"]) != evidence.JUDGE_MODEL_DEEPSEEK
+            if judge_model.arm_for(mr["market_id"]) == evidence.JUDGE_MODEL_PRIMARY
         ],
     )
     for record, market_row in picked:
