@@ -245,6 +245,7 @@ def phase3_vault(tmp_path):
     return _make_vault(base=base)
 
 
+@pytest.mark.live
 def test_phase3_live_one_market_from_db(phase3_live_env, phase3_vault):
     """Live Phase 3 on one fetched market only (no vault queue scan)."""
     _log_status("pytest test started")

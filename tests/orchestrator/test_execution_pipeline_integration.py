@@ -292,6 +292,7 @@ def phase4_vault():
     return _make_vault(base=base)
 
 
+@pytest.mark.live
 def test_phase4_live_one_pre_researched_market(phase4_live_env, phase4_vault):
     """Live Phase 4 on one pre-researched market (vault + DB, paper trade)."""
     assert PAPER_TRADE_MODE is True
