@@ -111,6 +111,22 @@ def brier_by_judge_arm(rows: list[dict[str, Any]]) -> dict[str, tuple[int, float
     return _brier_by_field(rows, "judge_arm")
 
 
+def brier_by_judge_model_arm(rows: list[dict[str, Any]]) -> dict[str, tuple[int, float, float]]:
+    """``{judge_model_arm: (n, brier_p, brier_p - brier_q)}`` over resolved scored markets (``deepseek`` vs ``primary``)."""
+    return _brier_by_field(rows, "judge_model_arm")
+
+
+def researched_by_judge_model_arm(rows: list[dict[str, Any]]) -> dict[str, tuple[int, int]]:
+    """``{judge_model_arm: (n researched markets, n that fell back to the primary model)}`` from each market's latest row."""
+    out: dict[str, list[int]] = defaultdict(lambda: [0, 0])
+    for r in _latest_by_market(rows, None).values():
+        arm = r.get("judge_model_arm")
+        if arm and r.get("pipeline"):  # FULL-stage rows only (quick rows carry the arm but no pipeline)
+            out[str(arm)][0] += 1
+            out[str(arm)][1] += "judge_model_fallback" in (r.get("pipeline_flags") or [])
+    return {k: (v[0], v[1]) for k, v in sorted(out.items())}
+
+
 def brier_by_prior_kind(rows: list[dict[str, Any]]) -> dict[str, tuple[int, float, float]]:
     """``{prior_kind: (n, brier_p, brier_p - brier_q)}`` over resolved scored markets (absent: ``unknown``)."""
     return _brier_by_field(rows, "prior_kind")

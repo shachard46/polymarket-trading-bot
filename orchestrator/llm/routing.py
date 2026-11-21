@@ -20,6 +20,8 @@ default) follow the same rule. OpenRouter sends `temperature` and `reasoning: {e
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import os
 from pathlib import Path
 from typing import Any
@@ -82,6 +84,29 @@ def _parse_env_spec(name: str, raw: str) -> ModelSpec:
     return spec
 
 
+def parse_model_spec(raw: str) -> ModelSpec:
+    """``provider:model`` string -> spec (raises :class:`LLMError` for a malformed value or unknown provider)."""
+    return _parse_env_spec("model override", raw)
+
+
+# Per-call model override: {role: "provider:model"} for the current context (thread). Set by :func:`model_override`
+# around one agent call (judge model A/B); same agent blueprint and prompt, only the provider/model differ.
+_overrides: contextvars.ContextVar[dict[str, str] | None] = contextvars.ContextVar("llm_model_override", default=None)
+
+
+@contextlib.contextmanager
+def model_override(role: str, model: str | None):
+    """Route calls of ``role`` made inside the block (this thread/context) to ``provider:model``; None = no override."""
+    if not model:
+        yield
+        return
+    token = _overrides.set({**(_overrides.get() or {}), role: model})
+    try:
+        yield
+    finally:
+        _overrides.reset(token)
+
+
 def load_config() -> ModelsConfig:
     path = Path(os.environ.get(MODELS_CONFIG_ENV, "").strip() or DEFAULT_MODELS_PATH)
     try:
@@ -108,7 +133,10 @@ def spec_for(role: str) -> ModelSpec:
     cfg = load_config()
     env_name = ROLE_ENV_PREFIX + role.upper()
     raw = os.environ.get(env_name, "").strip()
-    if raw:
+    override = (_overrides.get() or {}).get(role)
+    if override:
+        spec = _parse_env_spec("model override", override)
+    elif raw:
         spec = _parse_env_spec(env_name, raw)
     elif role in cfg.roles:
         spec = cfg.roles[role]

@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from obsidian_utils import ObsidianManager
 from config.trading_constants import RESEARCH_MAX_QUICK_WIDTH
-from orchestrator import scraper
+from orchestrator import judge_model, scraper
 from orchestrator.agent_outputs import DeepResearcherNeedsMore
 from orchestrator.config import FORCED_SYNTHESIS_OVERRIDE
 from orchestrator.directives import extract_filter_directives
@@ -77,6 +77,8 @@ def _quick_stage(
         row, directives, [], mode="quick", today=today,
         system_override=FORCED_SYNTHESIS_OVERRIDE, session_tag="quick",
     )
+    judge_model.reset(market_id)
+    judge_model.log_arm(market_id)
     try:
         out = invoke_deep_researcher(runner, dr_in)
     except ValidationError as exc:
@@ -101,6 +103,8 @@ def _quick_stage(
         "q": q, "p": out.estimated_p, "p_low": out.p_low, "p_high": out.p_high,
         "evidence_source": "none",  # the quick stage sees no evidence bundle
     }
+    if judge_model.fell_back(market_id):
+        values["pipeline_flags"] = [judge_model.FALLBACK_FLAG]
     knobs = extract_filter_directives(directives)
     if quick_decision(out.p_low, out.p_high, q, knobs["research_max_quick_width"], out.confidence) == "no_divergence":
         _skip_research(vault, row, "quick", "no_divergence", **values)
@@ -138,7 +142,7 @@ def _triage_shadow_quick(
     q = scraper.select_q(md)
     high = triage.get("manipulation_risk") == "high"
     fields = {
-        **_ledger_market_fields(md, role="deep_researcher"),
+        **_ledger_market_fields(md, role="deep_researcher", market_id=market_id),
         "reason": "manipulation_risk" if high else triage.get("reason"),
         "triage_kind": "manipulation_risk" if high else "not_researchable",
         "q": q,
@@ -146,12 +150,16 @@ def _triage_shadow_quick(
     if fields.get("category") is None:
         fields["category"] = triage.get("category")
     dr_in = _triage_shadow_payload(row, directives, today)
+    judge_model.reset(market_id)
+    judge_model.log_arm(market_id)
     error: str | None = None
     out: Any = None
     try:
         out = invoke_deep_researcher(runner, dr_in)
     except (ValueError, AgentSchemaError) as exc:  # content errors (pydantic/parse); infra propagates
         error = f"quick-stage output invalid: {exc}"
+    if judge_model.fell_back(market_id):
+        fields["pipeline_flags"] = [judge_model.FALLBACK_FLAG]
     if error is None and isinstance(out, DeepResearcherNeedsMore):
         error = "deep researcher disobeyed quick-stage override"
     if error is None and check_complete(vault, market_id, out, flag=False) is None:

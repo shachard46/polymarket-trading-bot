@@ -158,6 +158,12 @@ JUDGE_LINES_PER_CRUX = 4              # judge input: top evidence lines kept per
 COMPOUND_MAX_CORR = 0.9             # judge-assumed correlation between compound components is clamped to [0, this]
 COMPOUND_MAX_COMPONENTS = 4         # components of a compound market (AND / OR); more are ignored
 SOURCE_CLASSIFIER_MAX_DOMAINS = 40  # unknown domains sent to the source_classifier per research
+# Judge MODEL A/B (role deep_researcher): a stable share of markets is judged by an alternative model, the rest by the
+# models.yaml model. Env overrides (orchestrator/config.py): PMBOT_JUDGE_MODEL_AB on|off, PMBOT_JUDGE_MODEL_ALT, PMBOT_JUDGE_MODEL_ALT_SHARE.
+JUDGE_MODEL_AB_DEFAULT = "on"
+JUDGE_MODEL_ALT_DEFAULT = "openrouter:deepseek/deepseek-v4.1-flash"
+JUDGE_MODEL_ALT_SHARE_DEFAULT = 0.6
+JUDGE_MODEL_ARM_SALT = "judge_model_arm"  # differs from every other arm/shadow salt so the arms are independent
 JUDGE_ARM_MODES = ("ab", "one", "two")  # JUDGE_ARM_MODE: stable per-market A/B, always one judge, always two judges
 EVIDENCE_QUALITY_TIERS = ("official", "major", "aggregator", "blog", "unknown")
 

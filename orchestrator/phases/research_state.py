@@ -142,7 +142,7 @@ def _skip_research(
         reason=reason,
         research_stage=stage,
         **values,
-        **_ledger_market_fields(row.get("market_data"), role="deep_researcher"),
+        **_ledger_market_fields(row.get("market_data"), role="deep_researcher", market_id=market_id),
     )
     _record_attempt(vault, row, stage, reason, **values)
     log.info("[PHASE 3] %s research_skip %s for %s", stage, reason, market_id)

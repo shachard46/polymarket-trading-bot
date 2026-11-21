@@ -73,6 +73,27 @@ def judge_arm_cost(usage: list[dict[str, Any]]) -> dict[str, tuple[int, float, f
     }
 
 
+def judge_model_arm_cost(rows: list[dict[str, Any]], usage: list[dict[str, Any]]) -> dict[str, tuple[int, float, float | None]]:
+    """``{judge_model_arm: (n FULL-judged markets, judge cost USD, cost per market)}``.
+
+    Judge usage rows (tagged ``judge_arm``, i.e. FULL-stage judge calls only) are joined to the market's
+    ``judge_model_arm`` from the ledger rows; markets without that field are skipped.
+    """
+    arm_of: dict[str, str] = {}
+    for r in rows:
+        if r.get("judge_model_arm") and r.get("market_id"):
+            arm_of[str(r["market_id"])] = str(r["judge_model_arm"])
+    cost: dict[str, float] = defaultdict(float)
+    markets: dict[str, set[str]] = defaultdict(set)
+    for u in usage:
+        arm = arm_of.get(str(u.get("market_id")))
+        if not u.get("judge_arm") or not arm:
+            continue
+        cost[arm] += _cost(u)
+        markets[arm].add(str(u["market_id"]))
+    return {a: (len(markets[a]), cost[a], cost[a] / len(markets[a])) for a in sorted(cost)}
+
+
 def cost_stats(rows: list[dict[str, Any]], usage: list[dict[str, Any]], now: datetime | None = None) -> dict[str, Any]:
     """Cost per day / role / model / market, Brier-per-dollar by model, unknown-price counts."""
     now = now or datetime.now(tz=timezone.utc)
@@ -105,6 +126,7 @@ def cost_stats(rows: list[dict[str, Any]], usage: list[dict[str, Any]], now: dat
         "by_market": by_market,
         "brier_per_dollar": per_dollar,
         "judge_arm_cost": judge_arm_cost(usage),
+        "judge_model_arm_cost": judge_model_arm_cost(rows, usage),
         "n_unknown": len(unknown),
         "missing_models": missing_models,
     }

@@ -12,7 +12,7 @@ from typing import Any
 from obsidian_utils import ObsidianManager
 from orchestrator import compound as compound_mod
 from orchestrator.confidence import compute_confidence
-from orchestrator import evidence, scraper
+from orchestrator import evidence, judge_model, scraper
 from orchestrator.directives import extract_filter_directives
 from orchestrator.live_prompt import today_date
 from orchestrator.phases import p3_research
@@ -204,7 +204,7 @@ def _research_market(
         _ledger_safe(
             vault, market_id, "shadow_failed",
             shadow=True, reason=reason[:500], error=str(detail)[:1000] if detail else str(exc)[:1000],
-            **_ledger_market_fields(row.get("market_data"), role="deep_researcher"),
+            **_ledger_market_fields(row.get("market_data"), role="deep_researcher", market_id=market_id),
         )
         log.warning("[PHASE 3] shadow_failed for %s: %s", market_id, reason)
         return None
@@ -265,6 +265,8 @@ def _research_market_body(
     fields.update(_confidence_fields(crux_meta, fields, agg, len(samples), ev_fallback))
     if pflags:
         fields["pipeline_flags"] = list(fields.get("pipeline_flags") or []) + [f"prior:{f}" for f in pflags]
+    if judge_model.fell_back(market_id):  # the alt judge model failed: the primary answered; keeps the arm measurable
+        fields["pipeline_flags"] = list(fields.get("pipeline_flags") or []) + [judge_model.FALLBACK_FLAG]
     if comp and comp["compound_gap"] is not None:
         log.info(
             "[PHASE 3] compound %s for %s: combined=%.3f stated=%.3f gap=%.3f corr=%.2f",
@@ -295,7 +297,7 @@ def _research_market_body(
             vault, market_id, "shadow_research",
             shadow=True, would_skip=would_skip,
             quick_p=quick.get("p"), quick_p_low=quick.get("p_low"), quick_p_high=quick.get("p_high"),
-            **values, **_ledger_market_fields(md, role="deep_researcher"),
+            **values, **_ledger_market_fields(md, role="deep_researcher", market_id=market_id),
         )
         log.info("[PHASE 3] shadow_research for %s (would_skip=%s)", market_id, would_skip)
         return None
@@ -318,7 +320,8 @@ def _research_market_body(
 
     offer_ev = p3_research.offer_evidence(vault.read_research_bundle(market_id) or [], today, samples)
     if not _write_research_report(
-        vault, market_id, md, q, agg, samples, ev_source, ev_fallback, {**fields, **offer_ev}
+        vault, market_id, md, q, agg, samples, ev_source, ev_fallback,
+        {**fields, **offer_ev, **judge_model.ledger_fields(market_id)},
     ):
         return None
     _record_attempt(vault, row, "full", "researched", **values)

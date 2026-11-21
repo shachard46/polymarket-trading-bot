@@ -83,7 +83,9 @@ def _market_spread(md: dict[str, Any]) -> float | None:
     return None
 
 
-def _ledger_model_fields(role: str | None = None) -> dict[str, Any]:
+def _ledger_model_fields(
+    role: str | None = None, market_id: str | None = None, judge_fallback: bool | None = None
+) -> dict[str, Any]:
     """Runner backend plus, when the caller names the agent ``role``, the model that produced the row.
 
     Live mode adds ``provider`` and ``model`` (from ``routing.spec_for(role)``). Stub modes add neither.
@@ -91,6 +93,15 @@ def _ledger_model_fields(role: str | None = None) -> dict[str, Any]:
     mode = runner_mode()
     out: dict[str, Any] = {"runner_backend": mode}
     if not role:
+        return out
+    if role == "deep_researcher" and market_id:
+        # Judge model A/B: the arm and the provider/model that actually answered (override or primary fallback).
+        from orchestrator import judge_model  # noqa: PLC0415
+
+        out.update(judge_model.ledger_fields(market_id, judge_fallback))
+        if mode != RUNNER_MODE_LIVE:
+            out.pop("provider", None)
+            out.pop("model", None)
         return out
     if mode == RUNNER_MODE_LIVE:
         from orchestrator.llm import routing  # noqa: PLC0415 - avoid import cycle at module load
@@ -104,12 +115,13 @@ def _ledger_model_fields(role: str | None = None) -> dict[str, Any]:
 
 
 def _ledger_market_fields(
-    market_data: dict[str, Any] | None, role: str | None = None
+    market_data: dict[str, Any] | None, role: str | None = None, market_id: str | None = None,
+    judge_fallback: bool | None = None,
 ) -> dict[str, Any]:
     """Market-derived ledger fields plus the runner backend (and model/provider when ``role`` is given)."""
     md = market_data or {}
     return {
-        **_ledger_model_fields(role),
+        **_ledger_model_fields(role, market_id, judge_fallback),
         "category": md.get("category"),
         "end_date": md.get("end_date"),
         "event_id": md.get("event_id"),

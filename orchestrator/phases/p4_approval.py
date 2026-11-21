@@ -9,7 +9,7 @@ from typing import Any
 
 from config.trading_constants import effective_min_edge
 from obsidian_utils import ObsidianManager
-from orchestrator import ledger, notify, scraper
+from orchestrator import judge_model, ledger, notify, scraper
 from orchestrator.phases.common import (
     _as_float,
     _carry_filter_signals,
@@ -47,7 +47,10 @@ def _park_offer(
             for k in ("p_value", "p_low", "p_high", "evidence_source", "evidence_fallback", *_CRUX_KEYS)
             if row.get(k) is not None
         },
-        "market_fields": _ledger_market_fields(market_data, role="deep_researcher"),
+        "market_fields": _ledger_market_fields(
+            market_data, role="deep_researcher", market_id=market_id,
+            judge_fallback=judge_model.FALLBACK_FLAG in (row.get("pipeline_flags") or []),
+        ),
         "lam": allocation.get("lam"),
         "min_edge": allocation.get("min_edge"),
     }

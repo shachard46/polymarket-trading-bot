@@ -13,6 +13,8 @@ from orchestrator.stats.groups import (
     _COUNTERFACTUAL_STAGES,
     brier_by_evidence_source,
     brier_by_judge_arm,
+    brier_by_judge_model_arm,
+    researched_by_judge_model_arm,
     brier_by_prior_kind,
     researched_by_prior_kind,
     brier_by_model,
@@ -61,6 +63,8 @@ def compute_stats(
     out["calibration"] = calibration_table(triples)
     out["brier_by_evidence_source"] = brier_by_evidence_source(rows)
     out["brier_by_judge_arm"] = brier_by_judge_arm(rows)
+    out["brier_by_judge_model_arm"] = brier_by_judge_model_arm(rows)
+    out["researched_by_judge_model_arm"] = researched_by_judge_model_arm(rows)
     out["brier_by_prior_kind"] = brier_by_prior_kind(rows)
     out["researched_by_prior_kind"] = researched_by_prior_kind(rows)
     out["confidence_signals"] = confidence_signal_stats(rows)
@@ -139,6 +143,22 @@ def _render_judge_arms(s: dict[str, Any]) -> list[str]:
         n, bp, d = brier.get(arm, (0, None, None))
         nm, total, per = cost.get(arm, (0, None, None))
         L.append(f"| {arm} | {n} | {_fmt(bp)} | {_fmt(d)} | {nm} | {_fmt(total)} | {_fmt(per)} |")
+    return L
+
+
+def _render_judge_model_arms(s: dict[str, Any]) -> list[str]:
+    """Judge MODEL A/B (deepseek vs the models.yaml judge): researched / scored counts, Brier, fallbacks, cost per FULL market."""
+    brier = s.get("brier_by_judge_model_arm", {})
+    researched = s.get("researched_by_judge_model_arm", {})
+    cost = (s.get("cost") or {}).get("judge_model_arm_cost", {})
+    L = ["", "### Brier by judge model arm", "",
+         "| judge_model_arm | n researched | n fell back to primary | n resolved | Brier(p) | Brier(p) - Brier(q) | "
+         "mean judge cost per FULL market USD |", "|---|---|---|---|---|---|---|"]
+    for arm in sorted(set(brier) | set(researched) | set(cost)):
+        n, bp, d = brier.get(arm, (0, None, None))
+        nr, nf = researched.get(arm, (0, 0))
+        per = cost.get(arm, (0, None, None))[2]
+        L.append(f"| {arm} | {nr} | {nf} | {n} | {_fmt(bp)} | {_fmt(d)} | {_fmt(per)} |")
     return L
 
 
@@ -330,6 +350,7 @@ def render_stats(s: dict[str, Any]) -> str:
     L = _render_model_vs_market(s)
     L += _render_brier_by(s, "evidence source", "evidence_source", "brier_by_evidence_source")
     L += _render_judge_arms(s)
+    L += _render_judge_model_arms(s)
     L += _render_prior_kinds(s)
     L += _render_confidence_signals(s)
     L += _render_brier_by(s, "runner backend", "runner_backend", "brier_by_runner_backend")

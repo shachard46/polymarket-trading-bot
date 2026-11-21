@@ -65,6 +65,7 @@ from orchestrator.agent_outputs import (
     ScoutOutput,
     SourceClassifierOutput,
 )
+from orchestrator import judge_model
 from orchestrator.config import FORCED_SYNTHESIS_OVERRIDE, JUDGE_ARM_ONE
 from orchestrator.parse import agent_error_reason, normalize_structured_output, run_agent_with_format_retries
 from orchestrator.phases.agent_call import check_complete, invoke_deep_researcher
@@ -857,6 +858,8 @@ def run_judges(
     from orchestrator.llm import usage  # noqa: PLC0415
 
     market_id = row["market_id"]
+    judge_model.reset(market_id)
+    judge_model.log_arm(market_id)
     source_quality.bind_cache(source_quality.cache_path_for(vault))
     bundle = vault.read_research_bundle(market_id) or []
     only = select_judge_ids(bundle, crux_meta, today)

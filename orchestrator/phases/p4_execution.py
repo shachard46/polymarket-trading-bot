@@ -17,7 +17,7 @@ from config.trading_constants import (
     LIQ_FRAC,
     effective_min_edge,
 )
-from orchestrator import gate, ledger, notify, polymarket_api, scraper, stats
+from orchestrator import gate, judge_model, ledger, notify, polymarket_api, scraper, stats
 from orchestrator.config import PAPER_TRADE_MODE
 from orchestrator.phases.common import (
     _as_float,
@@ -363,7 +363,10 @@ def _persist_trade(
             **{k: row[k] for k in _CRUX_KEYS if row.get(k) is not None},
             lam=allocation.get("lam"),
             min_edge=allocation.get("min_edge"),
-            **_ledger_market_fields(market_data, role="deep_researcher"),
+            **_ledger_market_fields(
+                market_data, role="deep_researcher", market_id=market_id,
+                judge_fallback=judge_model.FALLBACK_FLAG in (row.get("pipeline_flags") or []),
+            ),
         )
 
 
@@ -443,7 +446,10 @@ def _skip_for_siblings(vault: ObsidianManager, row: dict[str, Any], q: float, wh
         p_low=row.get("p_low"), p_high=row.get("p_high"),
         evidence_source=row.get("evidence_source"), evidence_fallback=row.get("evidence_fallback"),
         **{k: row[k] for k in _CRUX_KEYS if row.get(k) is not None},
-        **_ledger_market_fields(row.get("market_data"), role="deep_researcher"),
+        **_ledger_market_fields(
+            row.get("market_data"), role="deep_researcher", market_id=market_id,
+            judge_fallback=judge_model.FALLBACK_FLAG in (row.get("pipeline_flags") or []),
+        ),
     )
 
 

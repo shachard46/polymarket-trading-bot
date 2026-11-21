@@ -17,7 +17,7 @@ from config.trading_constants import (
     SHADOW_MAX_PER_TICK,
     TRIAGE_SHADOW_MAX_PER_TICK,
 )
-from orchestrator import evidence, gate, scraper
+from orchestrator import evidence, gate, judge_model, scraper
 from orchestrator.config import (
     full_research_budget,
     quick_research_budget,
@@ -167,7 +167,12 @@ def _run_triage_shadows(
         picked.append((record, market_row))
     shadow_runner = prefetch_runner(
         runner, "deep_researcher",
-        [_triage_shadow_payload(mr, directives, today) for _rec, mr in picked],
+        # Only primary-arm markets are batched: a batch uses the role's configured model, while the judge-model
+        # A/B routes the others per call (invoke_deep_researcher).
+        [
+            _triage_shadow_payload(mr, directives, today) for _rec, mr in picked
+            if judge_model.arm_for(mr["market_id"]) != evidence.JUDGE_MODEL_DEEPSEEK
+        ],
     )
     for record, market_row in picked:
         market_id = record["market_id"]

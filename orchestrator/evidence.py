@@ -21,6 +21,7 @@ from config.trading_constants import (
     BRAVE_QUERY_WORKERS,
     EVIDENCE_STALE_DAYS,
     GEMINI_QUERY_WORKERS,
+    JUDGE_MODEL_ARM_SALT,
     SHADOW_RATE,
 )
 from orchestrator import brave_search, config
@@ -79,6 +80,23 @@ def is_shadow(market_id: str) -> bool:
     """
     digest = hashlib.sha256(("shadow:" + str(market_id)).encode("utf-8")).hexdigest()
     return int(digest[:8], 16) / 2**32 < SHADOW_RATE
+
+
+JUDGE_MODEL_DEEPSEEK = "deepseek"
+JUDGE_MODEL_PRIMARY = "primary"
+
+
+def judge_model_arm(market_id: str) -> str:
+    """Judge MODEL arm: ``deepseek`` (the PMBOT_JUDGE_MODEL_ALT model) for a stable ~share of markets, else ``primary``.
+
+    Uniform value from a salted sha256 prefix (own salt, independent of the other arms); ``PMBOT_JUDGE_MODEL_AB=off``
+    makes every market ``primary``.
+    """
+    if not config.judge_model_ab_on():
+        return JUDGE_MODEL_PRIMARY
+    digest = hashlib.sha256((JUDGE_MODEL_ARM_SALT + ":" + str(market_id)).encode("utf-8")).hexdigest()
+    u = int(digest[:8], 16) / 2**32
+    return JUDGE_MODEL_DEEPSEEK if u < config.judge_model_alt_share() else JUDGE_MODEL_PRIMARY
 
 
 def intended_source(market_id: str) -> str:
@@ -581,6 +599,7 @@ __all__ = [
     "ab_arm",
     "judge_arm",
     "judge_framing",
+    "judge_model_arm",
     "is_shadow",
     "label_lines",
     "fetch_web_bundle",

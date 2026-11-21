@@ -23,7 +23,9 @@ from orchestrator.parse import (
     preprocess_agent_text,
     run_agent_with_format_retries,
 )
+from orchestrator import config, evidence, judge_model
 from orchestrator.config import MAX_FORMAT_RETRIES
+from orchestrator.llm import routing
 from orchestrator.phases.common import log
 from orchestrator.research import parse_deep_researcher
 from orchestrator.runner import AgentRunner
@@ -140,13 +142,36 @@ def invoke_deep_researcher(
             out = out.model_copy(update={"markdown": build_research_markdown(out)})
         return out
 
-    return run_agent_with_format_retries(
-        runner,
-        "deep_researcher",
-        payload,
-        validate_fn=_validate_dr,
-        parse_response=_parse_dr_response,
-    )
+    def _call() -> DeepResearcherComplete | DeepResearcherNeedsMore:
+        return run_agent_with_format_retries(
+            runner,
+            "deep_researcher",
+            payload,
+            validate_fn=_validate_dr,
+            parse_response=_parse_dr_response,
+        )
+
+    # Judge model A/B: the market's arm may route this call to the alternative model (same blueprint and prompt).
+    market_id = str(payload.get("market_id") or "")
+    arm = judge_model.arm_for(market_id) if market_id else evidence.JUDGE_MODEL_PRIMARY
+    if arm != evidence.JUDGE_MODEL_DEEPSEEK:
+        out = _call()
+        if market_id:
+            judge_model.note_call(market_id, arm, False)
+        return out
+    try:
+        with routing.model_override(judge_model.ROLE, config.judge_model_alt()):
+            out = _call()
+    except Exception as exc:  # noqa: BLE001 - the alt model failed after its format retries: use the primary model
+        log.warning(
+            "[PHASE 3] judge model %s failed for %s (%s); falling back to the primary model",
+            config.judge_model_alt(), market_id, exc,
+        )
+        out = _call()
+        judge_model.note_call(market_id, arm, True)
+        return out
+    judge_model.note_call(market_id, arm, False)
+    return out
 
 
 def check_complete(

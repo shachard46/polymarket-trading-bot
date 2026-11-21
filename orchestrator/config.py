@@ -159,6 +159,43 @@ def judge_arm_mode() -> str:
     return mode
 
 
+# Judge model A/B: share of markets whose deep_researcher calls use an alternative model (see evidence.judge_model_arm).
+JUDGE_MODEL_AB_ENV = "PMBOT_JUDGE_MODEL_AB"
+JUDGE_MODEL_ALT_ENV = "PMBOT_JUDGE_MODEL_ALT"
+JUDGE_MODEL_ALT_SHARE_ENV = "PMBOT_JUDGE_MODEL_ALT_SHARE"
+
+
+def judge_model_ab_on() -> bool:
+    """``on`` (default) | ``off`` (every market uses the models.yaml judge); read at call time. Unknown values raise."""
+    from config.trading_constants import JUDGE_MODEL_AB_DEFAULT  # noqa: PLC0415
+
+    raw = os.environ.get(JUDGE_MODEL_AB_ENV, JUDGE_MODEL_AB_DEFAULT).strip().lower() or JUDGE_MODEL_AB_DEFAULT
+    if raw not in ("on", "off"):
+        raise ValueError(f"Invalid {JUDGE_MODEL_AB_ENV}={raw!r}; expected 'on' or 'off'")
+    return raw == "on"
+
+
+def judge_model_alt() -> str:
+    """``provider:model`` of the alternative judge (default openrouter:deepseek/deepseek-v4.1-flash)."""
+    from config.trading_constants import JUDGE_MODEL_ALT_DEFAULT  # noqa: PLC0415
+
+    return os.environ.get(JUDGE_MODEL_ALT_ENV, "").strip() or JUDGE_MODEL_ALT_DEFAULT
+
+
+def judge_model_alt_share() -> float:
+    """Share of markets (0..1) judged by the alternative model (default 0.6). Out-of-range / non-numeric raises."""
+    from config.trading_constants import JUDGE_MODEL_ALT_SHARE_DEFAULT  # noqa: PLC0415
+
+    raw = os.environ.get(JUDGE_MODEL_ALT_SHARE_ENV, "").strip()
+    try:
+        share = float(raw) if raw else JUDGE_MODEL_ALT_SHARE_DEFAULT
+    except ValueError:
+        raise ValueError(f"Invalid {JUDGE_MODEL_ALT_SHARE_ENV}={raw!r}; expected a number in [0, 1]") from None
+    if not 0.0 <= share <= 1.0:
+        raise ValueError(f"Invalid {JUDGE_MODEL_ALT_SHARE_ENV}={raw!r}; expected a number in [0, 1]")
+    return share
+
+
 # Web search backend behind the "web" evidence arm: Brave Search + page fetch + extractor, or the gemini
 # web_searcher agent. Default: brave when BRAVE_API_KEY is set (live mode only), else gemini.
 WEB_BACKEND_ENV = "PMBOT_WEB_BACKEND"
