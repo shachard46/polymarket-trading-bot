@@ -37,7 +37,7 @@ def _c(**over):
 def test_high_when_every_rule_holds():
     out = _c()
     assert out["confidence_level"] == "high" and out["confidence_reasons"] == ["all_high_rules_met"]
-    assert _c(prior_kind="structural", base_rate_n=None, spread=0.05)["confidence_level"] == "high"
+    assert _c(prior_kind="structural", base_rate_n=None, spread=tc.CONFIDENCE_HIGH_SPREAD_MAX)["confidence_level"] == "high"
 
 
 @pytest.mark.parametrize(
@@ -65,7 +65,7 @@ def test_low_rules(over, reason):
         (dict(crux_meta=_cruxes(("answered",), ("unanswered", "unanswered"))), "unanswered:2"),
         (dict(source_mix={"official": 1, "major": 2, "blog": 7}), "official_share:0.30"),
         (dict(prior_kind="judgment"), "prior:judgment"),
-        (dict(prior_kind="reference_class", base_rate_n=9), "prior:reference_class"),
+        (dict(prior_kind="reference_class", base_rate_n=tc.CONFIDENCE_HIGH_BASE_RATE_N_MIN - 1), "prior:reference_class"),
         (dict(audit_dropped=3), "audit_dropped:3"),
         (dict(spread=0.08), "judge_spread:0.08"),
     ],
@@ -76,9 +76,9 @@ def test_medium_when_a_high_rule_fails(over, reason):
 
 
 def test_boundaries():
-    assert _c(spread=0.10)["confidence_level"] == "medium"  # not > 0.10
+    assert _c(spread=tc.CONFIDENCE_LOW_SPREAD_MIN)["confidence_level"] == "medium"  # not > 0.10
     assert _c(source_mix={"official": 2, "blog": 8})["confidence_level"] == "medium"  # share exactly 0.20
-    assert _c(source_mix={"official": 4, "blog": 6}, spread=0.05)["confidence_level"] == "high"  # 0.40, 0.05
+    assert _c(source_mix={"official": 4, "blog": 6}, spread=tc.CONFIDENCE_HIGH_SPREAD_MAX)["confidence_level"] == "high"  # 0.40, 0.05
 
 
 def test_never_reads_q():
@@ -201,7 +201,7 @@ def test_phase4_code_level_drives_sizing_and_ledger(vault, monkeypatch):
         return next(r for r in ledger.iter_rows(vault) if r["market_id"] == mid)
 
     med = run("cm", "medium")
-    assert seen[-1]["confidence_signal"] == "code_level" and seen[-1]["confidence_weight"] == 0.5
+    assert seen[-1]["confidence_signal"] == "code_level" and seen[-1]["confidence_weight"] == tc.CONFIDENCE_WEIGHTS["medium"]
     assert med["stage"] == "traded" and med["confidence_level"] == "medium"
     assert vault.read_trade_log_dict("cm")["confidence_level"] == "medium"
 

@@ -10,6 +10,7 @@ import pytest
 from config.trading_constants import FILTERS
 from obsidian_utils import ObsidianManager
 from orchestrator import notify, phases
+from orchestrator.config import DEFAULT_OVERSEER_MIN_NEW_RESOLVED
 from orchestrator.phases import p4_approval
 from orchestrator.phases.p6_overseer import process_directive_votes
 from tests.orchestrator.test_learning_loop import add_resolutions, doc
@@ -38,7 +39,7 @@ def _runner(md: str):
 
 
 def _run_p6(vault, md=None):
-    add_resolutions(vault, 30)
+    add_resolutions(vault, DEFAULT_OVERSEER_MIN_NEW_RESOLVED)
     phases.phase6_macro_learning_loop(vault, runner=_runner(md or _proposal_md()))
 
 
@@ -99,7 +100,7 @@ def test_yes_after_expiry_not_applied(vault, monkeypatch):
     monkeypatch.setenv("CONCIERGE_APPROVE_DIRECTIVES", "1")
     _run_p6(vault)
     _vote(vault, "directive-v2", "yes")
-    later = datetime.now(timezone.utc) + timedelta(days=3)
+    later = datetime.now(timezone.utc) + timedelta(seconds=notify.directive_ttl_sec() + 1)
     assert process_directive_votes(vault, now=later)["expired"] == 1
     assert vault.latest_directives_version() == 1
 
@@ -107,7 +108,7 @@ def test_yes_after_expiry_not_applied(vault, monkeypatch):
 def test_unvoted_proposal_expires(vault, monkeypatch):
     monkeypatch.setenv("CONCIERGE_APPROVE_DIRECTIVES", "1")
     _run_p6(vault)
-    later = datetime.now(timezone.utc) + timedelta(days=3)
+    later = datetime.now(timezone.utc) + timedelta(seconds=notify.directive_ttl_sec() + 1)
     assert process_directive_votes(vault, now=later)["expired"] == 1
     assert not (notify.outbox_dir(vault) / "directive-v2.md").exists()
 

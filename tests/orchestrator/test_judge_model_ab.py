@@ -7,6 +7,11 @@ from typing import Any
 
 import pytest
 
+from config.trading_constants import (
+    JUDGE_MODEL_ALT_SHARE_DEFAULT,
+    JUDGE_MODEL_SONNET_SHARE_DEFAULT,
+    SONNET_ARM_WEB_MAX_USES,
+)
 from orchestrator import config, evidence, judge_model
 from orchestrator.llm import routing
 from orchestrator.phases import p3_research
@@ -44,7 +49,7 @@ def test_arm_is_independent_of_other_arms():
     from config.trading_constants import JUDGE_MODEL_ARM_SALT
     assert JUDGE_MODEL_ARM_SALT not in ("shadow", "judge_arm", "judge_framing")
     d = hashlib.sha256(("judge_model_arm:" + IDS[0]).encode()).hexdigest()
-    assert (int(d[:8], 16) / 2**32 < 0.6) == (evidence.judge_model_arm(IDS[0]) == "deepseek")
+    assert (int(d[:8], 16) / 2**32 < JUDGE_MODEL_ALT_SHARE_DEFAULT) == (evidence.judge_model_arm(IDS[0]) == "deepseek")
 
 
 def test_env_off_share_and_validation(monkeypatch):
@@ -182,17 +187,18 @@ SONNET = "claude_code:claude-sonnet-5-5"
 def test_bands_and_deepseek_identical_to_old_rule():
     from config.trading_constants import JUDGE_MODEL_ARM_SALT
 
+    sonnet_hi = JUDGE_MODEL_ALT_SHARE_DEFAULT + JUDGE_MODEL_SONNET_SHARE_DEFAULT
     for i in IDS:
         d = hashlib.sha256((JUDGE_MODEL_ARM_SALT + ":" + i).encode()).hexdigest()
         u = int(d[:8], 16) / 2**32
-        want = "deepseek" if u < 0.6 else "sonnet" if u < 0.9 else "primary"
+        want = "deepseek" if u < JUDGE_MODEL_ALT_SHARE_DEFAULT else "sonnet" if u < sonnet_hi else "primary"
         assert evidence.judge_model_arm(i) == want
-        assert (evidence.judge_model_arm(i) == "deepseek") == (u < 0.6)  # the old rule
+        assert (evidence.judge_model_arm(i) == "deepseek") == (u < JUDGE_MODEL_ALT_SHARE_DEFAULT)  # the old rule
     assert evidence.JUDGE_MODEL_SONNET == "sonnet"
 
 
 def test_sonnet_share_env_and_sum_validation(monkeypatch):
-    assert config.judge_model_sonnet() == SONNET and config.judge_model_sonnet_share() == 0.3
+    assert config.judge_model_sonnet() == SONNET and config.judge_model_sonnet_share() == JUDGE_MODEL_SONNET_SHARE_DEFAULT
     monkeypatch.setenv("PMBOT_JUDGE_MODEL_SONNET", "claude_code:other")
     assert config.judge_model_sonnet() == "claude_code:other"
     monkeypatch.setenv("PMBOT_JUDGE_MODEL_SONNET_SHARE", "0.5")  # 0.6 + 0.5 > 1
@@ -213,12 +219,12 @@ def test_override_drops_temperature_and_carries_extras(monkeypatch, tmp_path):
                    "  web_searcher: {provider: openrouter, model: w, temperature: 0, reasoning: false}\n")
     monkeypatch.setenv("LLM_MODELS_CONFIG", str(cfg))
     assert routing.spec_for("web_searcher").temperature == 0  # yaml role
-    with routing.model_override("web_searcher", SONNET, effort="medium", web_max_uses=3):
+    with routing.model_override("web_searcher", SONNET, effort="medium", web_max_uses=SONNET_ARM_WEB_MAX_USES):
         spec = routing.spec_for("web_searcher")
-        assert (spec.provider, spec.model, spec.effort, spec.web_max_uses) == ("claude_code", "claude-sonnet-5-5", "medium", 3)
+        assert (spec.provider, spec.model, spec.effort, spec.web_max_uses) == ("claude_code", "claude-sonnet-5-5", "medium", SONNET_ARM_WEB_MAX_USES)
         assert spec.temperature is None and spec.reasoning is None
         llm = routing.llm_for("web_searcher")
-        assert llm.effort == "medium" and llm.temperature is None and llm.web_max_uses == 3
+        assert llm.effort == "medium" and llm.temperature is None and llm.web_max_uses == SONNET_ARM_WEB_MAX_USES
     with routing.model_override("deep_researcher", SONNET):
         spec = routing.spec_for("deep_researcher")
         assert spec.temperature is None and spec.effort is None
@@ -264,7 +270,7 @@ def test_sonnet_web_override_used_in_live_mode_and_recorded(monkeypatch):
     seen: list = []
     rows = evidence.fetch_web_rows(_web_runner(seen), sn, ["q1", "q2"], "2026-01-01")
     assert len(rows) == 2 and all(r["research_data"] for r in rows)
-    assert seen == [{"model": SONNET, "effort": "medium", "web_max_uses": 3}] * 2
+    assert seen == [{"model": SONNET, "effort": "medium", "web_max_uses": SONNET_ARM_WEB_MAX_USES}] * 2
     assert judge_model.web_model(sn) == SONNET and not judge_model.web_fell_back(sn)
     assert _ledger_market_fields({}, role="deep_researcher", market_id=sn)["web_model"] == SONNET
     monkeypatch.setenv(config.RUNNER_MODE_ENV, "stub")

@@ -11,6 +11,8 @@ from orchestrator import config as orch_config
 from orchestrator import loop, phases, scraper
 from orchestrator.llm.base import LLMError
 from orchestrator.parse import run_agent_with_format_retries
+from orchestrator.phases.p5_resolution import MAX_POST_MORTEM_ATTEMPTS
+from orchestrator.phases.p6_overseer import PHASE6_MAX_POST_MORTEM_CHARS, PHASE6_MAX_POST_MORTEMS, PHASE6_MAX_TOTAL_CHARS
 from orchestrator.schema_validation import AgentSchemaError
 from orchestrator.scraper import MarketRow
 from orchestrator.state import (
@@ -182,7 +184,7 @@ def test_post_mortem_retries_then_flags_trade_not_post_mortem(vault, monkeypatch
     phases.phase5_resolution_and_post_mortem(vault, runner=failing)  # 3rd: cap
     assert is_inactive(vault.read_trade_log_dict("0xpm"))
     assert not is_inactive(vault.read_market_record("0xpm", "post_mortem"))
-    assert len(seen_orig) == 3
+    assert len(seen_orig) == MAX_POST_MORTEM_ATTEMPTS
 
 
 def test_post_mortem_recovers_on_retry_and_archives(vault, monkeypatch):
@@ -223,10 +225,10 @@ def test_phase6_sends_bounded_recent_post_mortems(vault, caplog, monkeypatch):
     with caplog.at_level("INFO"):
         phases.phase6_macro_learning_loop(vault, runner=runner)
     batch = captured["post_mortems"]
-    assert len(batch) <= 15
+    assert len(batch) <= PHASE6_MAX_POST_MORTEMS
     assert batch[0]["market_id"] == "pm39"  # most recent first
-    assert all(len(b["content"]) <= 5 * 1024 for b in batch)
-    assert sum(len(b["content"]) for b in batch) <= 90 * 1024
+    assert all(len(b["content"]) <= PHASE6_MAX_POST_MORTEM_CHARS for b in batch)
+    assert sum(len(b["content"]) for b in batch) <= PHASE6_MAX_TOTAL_CHARS
     assert any("dropped" in r.message for r in caplog.records)
 
 

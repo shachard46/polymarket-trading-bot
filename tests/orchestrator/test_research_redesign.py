@@ -10,6 +10,12 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from config.trading_constants import (
+    AIQ_CACHE_TTL_SEC,
+    CRUX_COUNT,
+    RESEARCH_MAX_QUICK_WIDTH,
+    RESEARCH_MIN_TTL_HOURS,
+)
 from orchestrator import config as orch_config
 from orchestrator import ledger, phases, scraper
 from orchestrator.agent_outputs import BrieferOutput, DeepResearcherComplete
@@ -223,7 +229,7 @@ def test_quick_q_outside_range_escalates(world, vault):
 def test_quick_wide_range_escalates_even_if_it_contains_q(world, vault):
     assert phases.quick_decision(0.2, 0.8, 0.5) == "escalate"
     assert phases.quick_decision(0.4, 0.7, 0.5) == "escalate"  # width 0.3 > 0.20
-    assert phases.quick_decision(0.4, 0.6, 0.5) == "no_divergence"  # width exactly 0.20
+    assert phases.quick_decision(0.5 - RESEARCH_MAX_QUICK_WIDTH / 2, 0.5 + RESEARCH_MAX_QUICK_WIDTH / 2, 0.5) == "no_divergence"  # width exactly 0.20
     assert phases.quick_decision(0.4, 0.6, 0.5, confidence="medium") == "no_divergence"
     assert phases.quick_decision(0.4, 0.6, 0.5, confidence="low") == "escalate"  # low confidence never skips
     assert phases.quick_decision(0.4, 0.5, 0.52) == "escalate"
@@ -280,7 +286,7 @@ def test_full_stage_runs_two_judges_flips_j2_and_unions_ranges(world, vault):
     assert fm["q_at_research"] == 0.42 and fm["samples"] == pytest.approx([0.60, 0.70])
     assert fm["framing_gap"] == pytest.approx(0.10)
     assert fm["pipeline"] == "crux_conf_v1" and fm["research_depth"] == "full"
-    assert fm["cruxes_total"] >= 5 and fm["crux_answered"] + fm["crux_unanswered"] + fm["crux_contradicted"] == fm["cruxes_total"]
+    assert fm["cruxes_total"] >= CRUX_COUNT["full"][0] and fm["crux_answered"] + fm["crux_unanswered"] + fm["crux_contradicted"] == fm["cruxes_total"]
     assert fm["confidence"] == "medium" and fm["as_of"] and fm["researched_at"]
     assert fm["resolution_checklist"] and fm["key_assumptions"]
 
@@ -500,9 +506,9 @@ def test_aiq_cache_hit_expiry_and_error_skip(tmp_path):
     assert fetched == [["Who wins?", "bad one"], ["bad one"]]
     assert r2[0]["query"] == "  who   WINS? " and r2[0]["research_data"] == "d:Who wins?"
     # just before / after 24h
-    fetch_research_bundle_cached(["who wins?"], path, fetch=fetch, now=1000.0 + 86399)
+    fetch_research_bundle_cached(["who wins?"], path, fetch=fetch, now=1000.0 + AIQ_CACHE_TTL_SEC - 1)
     assert len(fetched) == 2
-    fetch_research_bundle_cached(["who wins?"], path, fetch=fetch, now=1000.0 + 86401)
+    fetch_research_bundle_cached(["who wins?"], path, fetch=fetch, now=1000.0 + AIQ_CACHE_TTL_SEC + 1)
     assert fetched[-1] == ["Who wins?".lower()]
     data = json.loads(path.read_text())
     assert list(data) == ["who wins?"]  # expired + error entries pruned/never stored
@@ -547,11 +553,11 @@ def _research(vault, mid, *, q=0.42, hours_ago=1.0, days=30, **extra):
 
 
 def test_research_ttl_formula():
-    assert phases.research_ttl_hours(5) == 48
-    assert phases.research_ttl_hours(20) == 48
+    assert phases.research_ttl_hours(5) == RESEARCH_MIN_TTL_HOURS
+    assert phases.research_ttl_hours(20) == RESEARCH_MIN_TTL_HOURS
     assert phases.research_ttl_hours(30) == 72
     assert phases.research_ttl_hours(60) == 144
-    assert phases.research_ttl_hours(None) == 48
+    assert phases.research_ttl_hours(None) == RESEARCH_MIN_TTL_HOURS
 
 
 def test_refresh_ttl_trigger(vault):

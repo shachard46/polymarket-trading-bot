@@ -7,6 +7,7 @@ import logging
 
 import pytest
 
+from config.trading_constants import GAP_MAX_QUERIES
 from obsidian_utils.schemas import ResearchFrontmatter
 from orchestrator import runner as runner_mod
 from orchestrator.agent_outputs import DeepResearcherComplete
@@ -184,11 +185,11 @@ def test_comparator_followup_goes_first_and_respects_cap(fx):
 
     fx.gap = _gap_fn(lambda c: "unanswered", follow)
     _, meta, _, _ = p3_research.build_evidence(fx.vault, fx.runner, ROW, TODAY, "full")
-    assert meta["gap_queries"] == 3
+    assert meta["gap_queries"] == GAP_MAX_QUERIES
     gap_rows = [r for r in fx.vault.read_research_bundle("m1") if r.get("gap")]
-    assert gap_rows[0]["role"] == "comparator" and len(gap_rows) == 3
+    assert gap_rows[0]["role"] == "comparator" and len(gap_rows) == GAP_MAX_QUERIES
     follow_qs = [q for q in fx.queries if q.startswith("reworded")]
-    assert len(follow_qs) == 2  # lowest-priority analyzer query replaced
+    assert len(follow_qs) == GAP_MAX_QUERIES - 1  # lowest-priority analyzer query replaced
 
 
 def test_comparator_proposed_by_analyzer_is_not_duplicated(fx):

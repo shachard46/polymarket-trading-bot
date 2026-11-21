@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from config.trading_constants import GAP_MAX_QUERIES, RESEARCH_MAX_WEB_CALLS
+from config.trading_constants import AUDIT_MAX_LINES, CRUX_COUNT, GAP_MAX_QUERIES, RESEARCH_MAX_WEB_CALLS
 from orchestrator import evidence, ledger, phases, source_quality
 from orchestrator.agent_outputs import CruxSpec, DeepResearcherComplete
 from orchestrator.phases import p3_evidence, p3_research
@@ -98,7 +98,7 @@ def test_missing_required_roles_are_filled_from_templates(fx):
     _, meta, _, _ = p3_research.build_evidence(fx.vault, fx.runner, ROW, TODAY, "full")
     roles = [c["role"] for c in meta["cruxes"]]
     assert {"mechanism", "comparator", "horizon", "skeptic"} <= set(roles)
-    assert 5 <= len(roles) <= 8
+    assert CRUX_COUNT["full"][0] <= len(roles) <= CRUX_COUNT["full"][1]
     assert [c["crux_id"] for c in meta["cruxes"]] == [f"c{i}" for i in range(1, len(roles) + 1)]
     assert all("as of 2026-11-19" in q.lower() for q in fx.queries[1:])  # every crux query is dated
 
@@ -109,12 +109,12 @@ def test_crux_count_is_capped_keeping_one_of_each_required_role(fx):
     ]
     _, meta, _, _ = p3_research.build_evidence(fx.vault, fx.runner, ROW, TODAY, "full")
     roles = [c["role"] for c in meta["cruxes"]]
-    assert len(roles) == 8 and {"mechanism", "comparator", "horizon", "skeptic"} <= set(roles)
+    assert len(roles) == CRUX_COUNT["full"][1] and {"mechanism", "comparator", "horizon", "skeptic"} <= set(roles)
 
 
 def test_lite_depth_has_4_to_5_cruxes_and_no_audit(fx):
     _, meta, _, _ = p3_research.build_evidence(fx.vault, fx.runner, ROW, TODAY, "lite")
-    assert 4 <= len(meta["cruxes"]) <= 5
+    assert CRUX_COUNT["lite"][0] <= len(meta["cruxes"]) <= CRUX_COUNT["lite"][1]
     assert not fx.of("auditor") and "audit_skipped_lite" in meta["flags"]
     assert fx.of("briefer")[0]["depth"] == "lite"
 
@@ -158,11 +158,11 @@ def test_gap_round_is_capped_at_one_round_and_three_queries(fx):
     _, meta, _, _ = p3_research.build_evidence(fx.vault, fx.runner, ROW, TODAY, "full")
     assert len(fx.of("gap_analyzer")) == 2  # one search round: assess + one assess-only re-assessment
     assert [p["assess_only"] for p in fx.of("gap_analyzer")] == [False, True]
-    assert meta["gap_queries"] == GAP_MAX_QUERIES == 3
+    assert meta["gap_queries"] == GAP_MAX_QUERIES
     follow = [q for q in fx.queries if q.startswith("reworded")]
-    assert len(follow) == 3 and all("as of 2026-11-19" in q.lower() for q in follow)
+    assert len(follow) == GAP_MAX_QUERIES and all("as of 2026-11-19" in q.lower() for q in follow)
     rows = fx.vault.read_research_bundle("m1")
-    assert sum(1 for r in rows if r.get("gap")) == 3
+    assert sum(1 for r in rows if r.get("gap")) == GAP_MAX_QUERIES
     assert meta["known_unknowns"]  # cruxes that stayed unresolved go to the judge
 
 
@@ -211,11 +211,11 @@ def test_reassess_updates_followed_up_cruxes_without_web_calls(fx):
     calls = fx.of("gap_analyzer")
     assert len(calls) == 2 and calls[1]["assess_only"] is True
     followed = [c for c in meta["cruxes"] if c["followed_up"]]
-    assert len(followed) == 3 and {c["crux_id"] for c in followed} == {c["crux_id"] for c in calls[1]["cruxes"]}
+    assert len(followed) == GAP_MAX_QUERIES and {c["crux_id"] for c in followed} == {c["crux_id"] for c in calls[1]["cruxes"]}
     assert all(c["status"] == "answered" for c in followed)
     assert all(c["evidence"] for c in calls[1]["cruxes"])  # follow-up lines included
     assert not any("ignored extra" in q for q in fx.queries)
-    assert meta["gap_queries"] == 3 and "gap_reassess_failed" not in meta["flags"]
+    assert meta["gap_queries"] == GAP_MAX_QUERIES and "gap_reassess_failed" not in meta["flags"]
 
 
 def test_reassess_failure_keeps_statuses_and_flags(fx):
@@ -273,7 +273,7 @@ def test_audit_drops_unsupported_lines_and_marks_unverified(fx):
     fx.audit = audit
     rows, meta, _, _ = p3_research.build_evidence(fx.vault, fx.runner, ROW, TODAY, "full")
     items = fx.of("auditor")[0]["items"]
-    assert 0 < len(items) <= 10
+    assert 0 < len(items) <= AUDIT_MAX_LINES
     assert all(set(it) == {"id", "claim", "url", "page_text"} and it["page_text"] for it in items)
     assert meta["audit_dropped"] >= 1
     stored = fx.vault.read_research_bundle("m1")
@@ -288,7 +288,7 @@ def test_audit_drops_unsupported_lines_and_marks_unverified(fx):
 
 def test_audit_cap_is_ten_lines(fx):
     p3_research.build_evidence(fx.vault, fx.runner, ROW, TODAY, "full")
-    assert len(fx.of("auditor")[0]["items"]) <= 10
+    assert len(fx.of("auditor")[0]["items"]) <= AUDIT_MAX_LINES
 
 
 def test_gemini_style_rows_without_page_text_are_unverified_not_dropped(fx):
@@ -346,7 +346,7 @@ def test_helper_role_failure_degrades_and_is_flagged(fx, role, flag):
     fx.fail.add(role)
     _, meta, _, _ = p3_research.build_evidence(fx.vault, fx.runner, ROW, TODAY, "full")
     assert flag in meta["flags"]
-    assert len(meta["cruxes"]) >= 5  # the pipeline still produced evidence
+    assert len(meta["cruxes"]) >= CRUX_COUNT["full"][0]  # the pipeline still produced evidence
     assert fx.vault.read_research_bundle("m1")
 
 
@@ -395,8 +395,8 @@ def test_web_calls_never_exceed_the_cap(fx):
 
     fx.gap = gap
     _, meta, _, _ = p3_research.build_evidence(fx.vault, fx.runner, ROW, TODAY, "full")
-    assert len(fx.queries) <= meta["web_calls"] <= RESEARCH_MAX_WEB_CALLS == 12  # cache hits still spend budget
-    assert meta["gap_queries"] == 3  # the gap round keeps its reserve even with 16 crux queries planned
+    assert len(fx.queries) <= meta["web_calls"] <= RESEARCH_MAX_WEB_CALLS  # cache hits still spend budget
+    assert meta["gap_queries"] == GAP_MAX_QUERIES  # the gap round keeps its reserve even with 16 crux queries planned
 
 
 def test_web_budget_reserve():

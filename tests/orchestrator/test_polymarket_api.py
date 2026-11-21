@@ -15,6 +15,7 @@ from typing import Any, Callable
 import pytest
 import requests
 
+from config.trading_constants import LIQ_FRAC, MIN_ORDER_USD
 from orchestrator import polymarket_api as api
 from orchestrator import scraper
 
@@ -197,7 +198,7 @@ def test_list_candidates_filters_window_liquidity_and_non_binary_and_pages():
     assert second[1]["after_cursor"] == "c1"
     p = first[1]
     assert (p["active"], p["closed"], p["order"], p["ascending"]) == ("true", "false", "liquidityNum", "false")
-    assert p["liquidity_num_min"] == api.MIN_LIQUIDITY_USD == 100.0
+    assert p["liquidity_num_min"] == api.MIN_LIQUIDITY_USD == MIN_ORDER_USD / LIQ_FRAC
     assert p["end_date_min"] == "2026-10-29T13:00:00Z" and p["end_date_max"] == "2026-12-21T13:00:00Z"
 
 
@@ -243,7 +244,7 @@ def test_executable_quote_sorts_asks_and_sums_depth_within_2c():
     assert q["ask"] == 0.93 and q["token_id"] == YES_TOKEN
     assert q["spread"] == pytest.approx(0.01)
     book = load("clob_book_yes.json")
-    expect = sum(float(a["price"]) * float(a["size"]) for a in book["asks"] if float(a["price"]) <= 0.95 + 1e-9)
+    expect = sum(float(a["price"]) * float(a["size"]) for a in book["asks"] if float(a["price"]) <= q["ask"] + api.DEPTH_BAND + 1e-9)
     assert q["depth_usd_within_2c"] == pytest.approx(expect, rel=1e-6) and expect > 0
     assert sess.calls[-1][1] == {"token_id": YES_TOKEN}
 

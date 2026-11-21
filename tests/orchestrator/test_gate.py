@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from config.trading_constants import FILTERS, MAX_DAYS_TO_RESOLUTION, MIN_DAYS_TO_RESOLUTION
 from orchestrator import gate
 
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -66,11 +67,11 @@ def test_eligibility_reasons(over, reason):
 
 
 def test_eligibility_boundaries_inclusive():
-    assert gate.eligibility(row(days_to_resolution=7))[0]
-    assert gate.eligibility(row(days_to_resolution=60))[0]
+    assert gate.eligibility(row(days_to_resolution=MIN_DAYS_TO_RESOLUTION))[0]
+    assert gate.eligibility(row(days_to_resolution=MAX_DAYS_TO_RESOLUTION))[0]
     assert gate.eligibility(row(liquidity=100.0))[0]
-    assert gate.eligibility(row(yes_price=0.05))[0]
-    assert gate.eligibility(row(yes_price=0.95))[0]
+    assert gate.eligibility(row(yes_price=FILTERS["gate_min_q"]))[0]
+    assert gate.eligibility(row(yes_price=FILTERS["gate_max_q"]))[0]
 
 
 def test_score_prefers_low_attention_sweet_spot_and_mid_price():
@@ -93,20 +94,20 @@ def test_arbitrage_uses_real_asks_when_present():
 
 def test_backoff_schedule_and_cap():
     hours = [gate.backoff_delay(n).total_seconds() / 3600 for n in range(1, 8)]
-    assert hours == [5, 10, 20, 40, 80, 160, 168]
+    assert hours == [gate.BACKOFF_BASE_HOURS * 2**i for i in range(6)] + [gate.BACKOFF_CAP_HOURS]
     assert gate.backoff_delay(0) == timedelta(0)
 
 
 def test_failures_back_off_then_retire():
     rec: dict = {}
-    for n in range(1, 6):
+    for n in range(1, gate.MAX_FAILS):
         rec.update(gate.register_failure(rec, 0.5, NOW))
         assert rec["fail_count"] == n
         assert "status" not in rec
         assert gate.is_due(rec, NOW + gate.backoff_delay(n)) is True
         assert gate.is_due(rec, NOW + gate.backoff_delay(n) - timedelta(minutes=1)) is False
     rec.update(gate.register_failure(rec, 0.5, NOW))
-    assert rec["fail_count"] == 6 and rec["status"] == "retired"
+    assert rec["fail_count"] == gate.MAX_FAILS and rec["status"] == "retired"
     assert gate.is_retired(rec)
 
 

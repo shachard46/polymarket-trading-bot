@@ -11,6 +11,7 @@ from config.trading_constants import (
     MAX_FULL_PER_COUNTRY_PER_TICK,
     RESEARCH_LOCAL_EXTRA_WEB_CALLS,
     RESEARCH_MAX_WEB_CALLS,
+    RESEARCH_THIN_EVIDENCE_MAX_GAP,
 )
 from orchestrator import brave_search, evidence, ledger, phases
 from orchestrator.directives import extract_filter_directives
@@ -191,15 +192,15 @@ def _meta(*pairs):
 def test_thin_evidence_unit():
     thin = p3_full.thin_evidence_disagreement
     m = _meta(("evidence", "unanswered"), ("mechanism", "answered"))
-    assert thin(m, 0.45, 0.11, 0.15)
-    assert not thin(m, 0.20, 0.11, 0.15)  # within the gap
-    assert not thin(m, 0.45, None, 0.15)
-    assert not thin(_meta(("evidence", "answered"), ("skeptic", "unanswered")), 0.45, 0.11, 0.15)  # evidence cruxes only
-    assert not thin(None, 0.45, 0.11, 0.15)
+    assert thin(m, 0.45, 0.11, RESEARCH_THIN_EVIDENCE_MAX_GAP)
+    assert not thin(m, 0.20, 0.11, RESEARCH_THIN_EVIDENCE_MAX_GAP)  # within the gap
+    assert not thin(m, 0.45, None, RESEARCH_THIN_EVIDENCE_MAX_GAP)
+    assert not thin(_meta(("evidence", "answered"), ("skeptic", "unanswered")), 0.45, 0.11, RESEARCH_THIN_EVIDENCE_MAX_GAP)  # evidence cruxes only
+    assert not thin(None, 0.45, 0.11, RESEARCH_THIN_EVIDENCE_MAX_GAP)
 
 
 def test_thin_evidence_knob_default_is_015():
-    assert extract_filter_directives("")["research_thin_evidence_max_gap"] == 0.15
+    assert extract_filter_directives("")["research_thin_evidence_max_gap"] == RESEARCH_THIN_EVIDENCE_MAX_GAP
     md = "## Filter Weightings\n```yaml\nfilters:\n  research_thin_evidence_max_gap: 0.3\n```\n"
     assert extract_filter_directives(md)["research_thin_evidence_max_gap"] == 0.3
 

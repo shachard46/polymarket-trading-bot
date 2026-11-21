@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from config.trading_constants import COMPOUND_MAX_CORR
 from orchestrator import compound, evidence, playbooks, source_quality
 from orchestrator.agent_outputs import DeepResearcherComplete
 from orchestrator.llm import usage
@@ -26,7 +27,7 @@ SPEC = {"type": "and", "components": [{"id": "A", "label": "X wins"}, {"id": "B"
 def test_combine_and_or_and_correlation_bounds():
     assert compound.combine("and", [0.5, 0.4], 0.0) == pytest.approx(0.2)
     assert compound.combine("or", [0.5, 0.4], 0.0) == pytest.approx(0.7)
-    assert compound.combine("and", [0.5, 0.4], 1.0) == pytest.approx(compound.combine("and", [0.5, 0.4], 0.9))  # clamped
+    assert compound.combine("and", [0.5, 0.4], 1.0) == pytest.approx(compound.combine("and", [0.5, 0.4], COMPOUND_MAX_CORR))  # clamped
     assert compound.combine("and", [0.5, 0.4], 0.9) == pytest.approx(0.1 * 0.2 + 0.9 * 0.4)
     assert compound.combine("or", [0.5, 0.4], 0.9) == pytest.approx(0.1 * 0.7 + 0.9 * 0.5)
     assert compound.combine("and", [0.5, 0.4], -2) == pytest.approx(0.2)  # negative correlation counts as 0

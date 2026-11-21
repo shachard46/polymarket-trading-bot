@@ -157,8 +157,8 @@ def test_anthropic_pause_turn_final_text_and_cap(sdk):
     assert sdk.instances[0].calls[1]["messages"][-1] == {"role": "assistant", "content": paused.content}
     sdk.instances.clear()
     sdk.script = [_Msg([_Block("text", f"t{i}")], stop_reason="pause_turn") for i in range(5)]
-    assert AnthropicLLM("m").complete("s", "u", web=True).text == "t3"
-    assert len(sdk.instances[0].calls) == 4
+    assert AnthropicLLM("m").complete("s", "u", web=True).text == f"t{anthropic_llm.MAX_PAUSE_CONTINUATIONS}"
+    assert len(sdk.instances[0].calls) == anthropic_llm.MAX_PAUSE_CONTINUATIONS + 1
 
 
 def test_anthropic_empty_final_falls_back_to_all_text(sdk):

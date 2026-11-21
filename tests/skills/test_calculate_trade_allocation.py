@@ -69,7 +69,7 @@ def test_small_edge_trades_pre_tax():
     # p=0.70, q=0.50: p_adj 0.56, edge 0.06 >= MIN_EDGE
     out = calc(p=0.7, **_BASE)
     assert out.allocation_usd > 0 and out.binding_cap == "kelly"
-    assert out.kelly_fraction == pytest.approx(0.25 * 0.12)  # f* = p_s - (1-p_s) at b = 1
+    assert out.kelly_fraction == pytest.approx(_tc.KELLY_FRAC * 0.12)  # f* = p_s - (1-p_s) at b = 1
 
 
 def test_wide_range_shrinks_to_zero():
@@ -80,7 +80,7 @@ def test_wide_range_shrinks_to_zero():
 
 def test_narrow_range_partial_shrink():
     out = calc(p=0.8, p_low=0.7, p_high=0.9, **_BASE)  # factor 0.6
-    assert out.p_adj == pytest.approx(0.5 + 0.3 * 0.6 * 0.3, abs=1e-9)
+    assert out.p_adj == pytest.approx(0.5 + _tc.LAMBDA * 0.6 * 0.3, abs=1e-9)
 
 
 def test_lam_override():
@@ -96,22 +96,22 @@ def _big(**kw):
 
 def test_cap_f_max():
     out = _big()
-    assert out.allocation_usd == pytest.approx(100.0) and out.binding_cap == "f_max"
+    assert out.allocation_usd == pytest.approx(_tc.F_MAX * 1000.0) and out.binding_cap == "f_max"
 
 
 def test_cap_liquidity():
     out = _big(L=400.0)
-    assert out.allocation_usd == pytest.approx(20.0) and out.binding_cap == "liquidity"
+    assert out.allocation_usd == pytest.approx(_tc.LIQ_FRAC * 400.0) and out.binding_cap == "liquidity"
 
 
 def test_cap_event():
     out = _big(open_exposure_event=120.0)
-    assert out.allocation_usd == pytest.approx(30.0) and out.binding_cap == "event"
+    assert out.allocation_usd == pytest.approx(_tc.EVENT_CAP * 1000.0 - 120.0) and out.binding_cap == "event"
 
 
 def test_cap_total():
     out = _big(open_exposure_total=560.0)
-    assert out.allocation_usd == pytest.approx(40.0) and out.binding_cap == "total"
+    assert out.allocation_usd == pytest.approx(_tc.TOTAL_EXPOSURE_CAP * 1000.0 - 560.0) and out.binding_cap == "total"
 
 
 def test_exposure_exhausted_zero():
@@ -188,7 +188,7 @@ def _signal(monkeypatch, name):
 def test_code_level_weights(monkeypatch, level, weight):
     _signal(monkeypatch, "code_level")
     out = calc(p=0.8, p_low=0.5, p_high=1.0, confidence_level=level, **_BASE)  # range width ignored
-    assert out.p_adj == pytest.approx(0.5 + 0.3 * weight * 0.3)
+    assert out.p_adj == pytest.approx(0.5 + _tc.LAMBDA * weight * 0.3)
     assert out.confidence_signal == "code_level" and out.confidence_weight == weight
 
 
@@ -210,14 +210,14 @@ def test_judge_score_mapping(monkeypatch, score, level_weight):
 def test_width_signal_ignores_level(monkeypatch):
     _signal(monkeypatch, "width")
     out = calc(p=0.8, p_low=0.7, p_high=0.9, confidence_level="low", **_BASE)
-    assert out.p_adj == pytest.approx(0.5 + 0.3 * 0.6 * 0.3) and out.confidence_signal == "width"
+    assert out.p_adj == pytest.approx(0.5 + _tc.LAMBDA * 0.6 * 0.3) and out.confidence_signal == "width"
 
 
 def test_missing_field_falls_back_to_width(monkeypatch):
     _signal(monkeypatch, "code_level")
     out = calc(p=0.8, p_low=0.7, p_high=0.9, **_BASE)  # old row: no confidence_level
     assert out.confidence_signal == "width" and out.confidence_weight is None
-    assert out.p_adj == pytest.approx(0.5 + 0.3 * 0.6 * 0.3)
+    assert out.p_adj == pytest.approx(0.5 + _tc.LAMBDA * 0.6 * 0.3)
     _signal(monkeypatch, "judge_score")
     assert calc(p=0.8, p_low=0.7, p_high=0.9, confidence_level="high", **_BASE).confidence_signal == "width"
 

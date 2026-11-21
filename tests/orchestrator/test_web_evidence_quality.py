@@ -7,6 +7,7 @@ import threading
 
 import pytest
 
+from config.trading_constants import BRAVE_RESULTS_PER_QUERY
 from orchestrator import brave_search, config, evidence
 from orchestrator.llm import usage
 from orchestrator.web_filter import NOT_FOUND
@@ -122,7 +123,7 @@ def test_search_headers_params_and_429_backoff(monkeypatch):
     res = brave_search.search("hello world")
     assert [r["url"] for r in res] == ["https://a.org"] and sleeps == [2.0]
     url, kw = seen[0]
-    assert url == brave_search.BRAVE_URL and kw["params"]["q"] == "hello world" and kw["params"]["count"] == 10
+    assert url == brave_search.BRAVE_URL and kw["params"]["q"] == "hello world" and kw["params"]["count"] == BRAVE_RESULTS_PER_QUERY
     assert kw["headers"]["X-Subscription-Token"] == "k" and kw["headers"]["Accept"] == "application/json"
 
 

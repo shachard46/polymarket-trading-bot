@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from orchestrator import ledger, phases, polymarket_api
+from orchestrator.gate import MAX_FAILS
 from orchestrator.phases import common, p3_queue
 from orchestrator.scraper import MarketRow
 
@@ -193,14 +194,14 @@ def test_gate_reject_ledgered_once_with_backoff(vault):
 
 def test_retired_after_six_fails(vault):
     far = mk("far", days_to_resolution=200)
-    for _ in range(6):
+    for _ in range(MAX_FAILS):
         phases.phase2_quantitative_routing(vault, [far], runner=Triage())
         vault.patch_frontmatter(
             "far", "filters",
             {"next_check_at": (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()},
         )
     rec = vault.read_filter_log("far")
-    assert rec["status"] == "retired" and rec["fail_count"] == 6
+    assert rec["status"] == "retired" and rec["fail_count"] == MAX_FAILS
 
 
 def test_arbitrage_ledgered_not_researched(vault):

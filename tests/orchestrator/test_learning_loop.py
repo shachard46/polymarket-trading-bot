@@ -7,9 +7,10 @@ from typing import Any
 
 import pytest
 
-from config.trading_constants import BOUNDS, FILTERS
+from config.trading_constants import AUTO_REVERT_MIN_SCORED, BOUND_MAX_STEP_FRAC, BOUNDS, FILTERS
 from obsidian_utils import ObsidianManager, VaultWriteError
 from orchestrator import gate, ledger, phases, replay, scraper, stats
+from orchestrator.config import DEFAULT_OVERSEER_MIN_NEW_RESOLVED
 from orchestrator.directives import (
     DirectiveBoundsError,
     directive_version,
@@ -111,7 +112,7 @@ def test_bounds_table_has_only_gate_and_research_knobs():
         "gate_min_q", "gate_max_q", "min_days_to_resolution", "max_days_to_resolution",
         "research_max_quick_width", "research_max_sample_spread", "research_max_q_gap",
     }
-    assert all(b["max_step_frac"] == 0.15 and b["min"] < b["max"] for b in BOUNDS.values())
+    assert all(b["max_step_frac"] == BOUND_MAX_STEP_FRAC and b["min"] < b["max"] for b in BOUNDS.values())
     assert all(b["min"] <= FILTERS[k] <= b["max"] for k, b in BOUNDS.items())
 
 
@@ -201,16 +202,16 @@ class Overseer:
 
 def test_phase6_needs_min_new_resolved(vault):
     run = Overseer()
-    add_resolutions(vault, 29)
+    add_resolutions(vault, DEFAULT_OVERSEER_MIN_NEW_RESOLVED - 1)
     phases.phase6_macro_learning_loop(vault, runner=run)
-    assert run.payloads == []  # 29 < 30
+    assert run.payloads == []  # one below the minimum
     add_resolutions(vault, 1, "extra")
     phases.phase6_macro_learning_loop(vault, runner=run)
     assert len(run.payloads) == 1
     fm = fm_of(vault)
-    assert fm["last_overseer_ledger_count"] == 30 and fm["last_overseer_at"]
+    assert fm["last_overseer_ledger_count"] == DEFAULT_OVERSEER_MIN_NEW_RESOLVED and fm["last_overseer_at"]
     # counted since the LAST run, and the 24h interval also applies
-    add_resolutions(vault, 30, "more")
+    add_resolutions(vault, DEFAULT_OVERSEER_MIN_NEW_RESOLVED, "more")
     phases.phase6_macro_learning_loop(vault, runner=run)
     assert len(run.payloads) == 1
     vault.patch_directives_frontmatter({"last_overseer_at": "2020-01-01T00:00:00+00:00"})
@@ -290,8 +291,8 @@ def test_brier_by_directive_version():
 
 def test_auto_revert_restores_previous_version_and_skips_overseer(vault, caplog):
     write(vault, doc(research_max_q_gap=0.36))  # v2
-    _scored_rows(vault, 1, 30, 0.9, "good")  # Brier 0.01
-    _scored_rows(vault, 2, 30, 0.6, "bad")  # Brier 0.16
+    _scored_rows(vault, 1, AUTO_REVERT_MIN_SCORED, 0.9, "good")  # Brier 0.01
+    _scored_rows(vault, 2, AUTO_REVERT_MIN_SCORED, 0.6, "bad")  # Brier 0.16
     run = Overseer(doc(research_max_q_gap=0.40))
     with caplog.at_level("ERROR"):
         phases.phase6_macro_learning_loop(vault, runner=run)
@@ -309,11 +310,11 @@ def test_auto_revert_restores_previous_version_and_skips_overseer(vault, caplog)
 
 @pytest.mark.parametrize(
     "n_cur, p_cur",
-    [(29, 0.6), (30, 0.85)],  # too few samples; or Brier 0.0225 vs 0.01 (worse by < 0.02)
+    [(AUTO_REVERT_MIN_SCORED - 1, 0.6), (AUTO_REVERT_MIN_SCORED, 0.85)],  # too few samples; or Brier 0.0225 vs 0.01 (worse by < 0.02)
 )
 def test_no_auto_revert(vault, n_cur, p_cur):
     write(vault, doc(research_max_q_gap=0.36))
-    _scored_rows(vault, 1, 30, 0.9, "good")
+    _scored_rows(vault, 1, AUTO_REVERT_MIN_SCORED, 0.9, "good")
     _scored_rows(vault, 2, n_cur, p_cur, "cur")
     phases.phase6_macro_learning_loop(vault, runner=Overseer())
     assert ledger.current_directive_version(vault) == 2
