@@ -138,6 +138,8 @@ def invoke_deep_researcher(
             parsed,
             output_schema=None,
         )
+        if isinstance(normalized, dict) and "ask" in normalized:  # input key some models echo back; not an output field
+            normalized = {k: v for k, v in normalized.items() if k != "ask"}
         out = parse_deep_researcher_json(normalized)
         if (
             isinstance(out, DeepResearcherComplete) and payload.get("mode") == "judge"

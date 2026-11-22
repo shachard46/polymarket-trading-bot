@@ -53,3 +53,10 @@ def test_non_judge_modes_do_not_require_prior_fields():
     seen: list[dict[str, Any]] = []
     out = invoke_deep_researcher(_runner([_BASE], seen), _dr_in("quick"))
     assert len(seen) == 1 and out.prior_kind is None
+
+
+def test_judge_echoed_ask_key_is_ignored_not_rejected():
+    seen: list[dict[str, Any]] = []
+    out = invoke_deep_researcher(_runner([{**_BASE, **_PRIOR, "ask": "no"}], seen), {**_dr_in("judge"), "ask": "no"})
+    assert len(seen) == 1
+    assert out.prior_kind == "judgment"
