@@ -279,11 +279,78 @@ def test_sonnet_web_override_used_in_live_mode_and_recorded(monkeypatch):
 
 def test_sonnet_web_failure_falls_back_and_flags(monkeypatch):
     sn = _market("sonnet")
+    judge_model.reset_web(sn)
     monkeypatch.setenv(config.RUNNER_MODE_ENV, "live")
     seen: list = []
     rows = evidence.fetch_web_rows(_web_runner(seen, fail=True), sn, ["q1"], "2026-01-01")
     assert seen[0] is not None and seen[-1] is None  # sonnet tried, then the normal path
     assert judge_model.web_fell_back(sn) and judge_model.web_model(sn) is None and len(rows) == 1
+
+
+def _nf_runner(seen, *, error=None):
+    def run(role, payload):
+        seen.append((routing._overrides.get() or {}).get(role))
+        q = payload["queries"][0]
+        return {"results": [{"query": q, "research_data": "NOT_FOUND", "error": error}]}
+    return run
+
+
+def test_sonnet_clean_not_found_is_valid_without_retry_or_fallback(monkeypatch):
+    sn = _market("sonnet")
+    judge_model.reset_web(sn)
+    monkeypatch.setenv(config.RUNNER_MODE_ENV, "live")
+    seen: list = []
+    rows = evidence.fetch_web_rows(_nf_runner(seen), sn, ["q1"], "2026-01-01")
+    assert len(seen) == 1 and seen[0] is not None  # one sonnet call: no NOT_FOUND retry, no Brave/gemini fallback
+    assert rows[0]["research_data"] == "NOT_FOUND"
+    assert judge_model.web_model(sn) == SONNET and not judge_model.web_fell_back(sn)
+
+
+def test_sonnet_filter_emptied_row_falls_back(monkeypatch):
+    from orchestrator import direct_runner
+    sn = _market("sonnet")
+    judge_model.reset_web(sn)
+    monkeypatch.setenv(config.RUNNER_MODE_ENV, "live")
+    monkeypatch.setattr(direct_runner, "last_model", lambda: SONNET)
+    monkeypatch.setattr(direct_runner, "last_citations", lambda: ["https://other.example/x"])
+    seen: list = []
+
+    def run(role, payload):
+        seen.append((routing._overrides.get() or {}).get(role))
+        return {"results": [{"query": payload["queries"][0], "research_data": "- fact | https://example.com/a | 2026-01-01",
+                             "error": None}]}
+
+    evidence.fetch_web_rows(run, sn, ["q1"], "2026-01-01")  # the URL was never retrieved: the filter empties the row
+    assert seen[0] is not None and seen[-1] is None and judge_model.web_fell_back(sn)
+
+
+def test_sonnet_row_errors_still_fall_back(monkeypatch):
+    sn = _market("sonnet")
+    judge_model.reset_web(sn)
+    monkeypatch.setenv(config.RUNNER_MODE_ENV, "live")
+    seen: list = []
+    evidence.fetch_web_rows(_nf_runner(seen, error="boom"), sn, ["q1"], "2026-01-01")
+    assert seen[-1] is None and judge_model.web_fell_back(sn)
+
+
+def test_non_sonnet_arm_keeps_not_found_retry(monkeypatch):
+    ds = _market("deepseek")
+    monkeypatch.setenv(config.RUNNER_MODE_ENV, "live")
+    seen: list = []
+    evidence.fetch_web_rows(_nf_runner(seen), ds, ["q1"], "2026-01-01")
+    assert len(seen) == 2
+
+
+def test_note_web_fallback_keeps_earlier_model_and_reset_clears():
+    mid = "0xnote"
+    judge_model.reset_web(mid)
+    judge_model.note_web(mid, SONNET, False)
+    judge_model.note_web(mid, None, True)
+    assert judge_model.web_fell_back(mid)
+    judge_model._web[mid]  # noqa: B018 - state exists
+    judge_model.reset_web(mid)
+    judge_model.note_web(mid, None, True)
+    assert judge_model._web[mid]["model"] is None
 
 
 def test_non_sonnet_arm_and_stub_mode_skip_sonnet_web(monkeypatch):

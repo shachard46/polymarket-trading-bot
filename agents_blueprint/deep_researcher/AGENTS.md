@@ -73,6 +73,6 @@ Raw JSON, no fences, one `complete` object:
 1. (judge mode only) `## Base Rate Movement`.
 2. `## Bull Thesis` and 3. `## Bear Thesis`: **exactly 2-3 bullets each**, each bullet maximum information density, fact-backed from the market rules or the evidence. If the facts are overwhelmingly one-sided, the opposing thesis may be one bullet "- [No credible evidence found in verified data]".
 
-Judge mode adds to the JSON: `"prior"`, `"prior_kind"`, `"base_rate"` (+ `"base_rate_n"`, `"base_rate_source"` when not null), `"crux_verdicts"`, `"discounted_sources"` (empty list if none), `"confidence_score"`, `"confidence_reason"` and, for a compound market only, `"components"` and `"correlation"`.
+Judge mode adds to the JSON (required, in the same object as `markdown`; the Base Rate Movement text alone is not enough): `"prior"`, `"prior_kind"`, `"base_rate"` (+ `"base_rate_n"`, `"base_rate_source"` when not null), `"crux_verdicts"`, `"discounted_sources"` (empty list if none), `"confidence_score"`, `"confidence_reason"` and, for a compound market only, `"components"` and `"correlation"`.
 
 When `format_validation_error` is present, fix the JSON shape before resubmitting.

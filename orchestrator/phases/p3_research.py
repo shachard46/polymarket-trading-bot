@@ -679,6 +679,7 @@ def build_evidence(
     Helper-role failures degrade (flags in ``crux_meta['flags']``); only :class:`InfraUnavailable`` propagates.
     """
     market_id = row["market_id"]
+    judge_model.reset_web(market_id)
     flags: list[str] = []
     budget = WebBudget(RESEARCH_MAX_WEB_CALLS)
     state = {"source": resolve_source(vault, market_id)[0], "fallback": False}

@@ -11,6 +11,7 @@ import agents_blueprint  # module import (not from-import) avoids a cycle when a
 from orchestrator.agent_outputs import (
     DeepResearcherComplete,
     DeepResearcherNeedsMore,
+    _validation_error,
     parse_deep_researcher_json,
 )
 from orchestrator.parse import (
@@ -138,6 +139,15 @@ def invoke_deep_researcher(
             output_schema=None,
         )
         out = parse_deep_researcher_json(normalized)
+        if (
+            isinstance(out, DeepResearcherComplete) and payload.get("mode") == "judge"
+            and out.prior is None and out.prior_kind is None
+        ):  # some models (Sonnet) drop every judge-only field when the bundle is large: retry with the error text
+            raise _validation_error(
+                'judge mode requires the JSON keys "prior", "prior_kind", "base_rate", "crux_verdicts", '
+                '"discounted_sources", "confidence_score" and "confidence_reason" next to "markdown"',
+                ("prior",), None,
+            )
         if isinstance(out, DeepResearcherComplete):
             out = out.model_copy(update={"markdown": build_research_markdown(out)})
         return out

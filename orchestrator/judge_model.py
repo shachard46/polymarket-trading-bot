@@ -48,7 +48,15 @@ def override_for_arm(arm: str) -> str | None:
 def note_web(market_id: str, model: str | None, fallback: bool) -> None:
     """Record the web evidence round of a sonnet-arm market: the model that searched (None = the normal path) and whether it fell back."""
     with _lock:
-        _web[str(market_id)] = {"model": model, "fallback": bool(fallback)}
+        prev = (_web.get(str(market_id)) or {}).get("model")
+        # A later fallback round never erases that an earlier round of this market was searched by the model.
+        _web[str(market_id)] = {"model": model or (prev if fallback else None), "fallback": bool(fallback)}
+
+
+def reset_web(market_id: str) -> None:
+    """Forget the web round notes of a market (start of a new evidence build)."""
+    with _lock:
+        _web.pop(str(market_id), None)
 
 
 def web_fell_back(market_id: str) -> bool:

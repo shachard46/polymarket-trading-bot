@@ -55,6 +55,7 @@ def deep_researcher_complete(
         "markdown": _stub_deep_researcher_markdown(
             market_id, estimated_p=estimated_p, p_low=p_low, p_high=p_high
         ),
+        **({"prior": 0.5, "prior_kind": "judgment", "base_rate": None} if payload.get("mode") == "judge" else {}),
     }
 
 

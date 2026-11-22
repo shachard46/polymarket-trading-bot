@@ -205,6 +205,10 @@ def fetch_web_rows(
     return rows
 
 
+# Set by _sonnet_rows while it runs: _fetch_web_rows_once appends one True per call whose rows the web filter emptied.
+_filter_emptied: contextvars.ContextVar[list[bool] | None] = contextvars.ContextVar("web_filter_emptied", default=None)
+
+
 def _sonnet_rows(
     runner: Callable[[str, dict[str, Any]], Any],
     market_id: str,
@@ -223,21 +227,31 @@ def _sonnet_rows(
 
     model = config.judge_model_sonnet()
     rows: list[dict[str, Any]] = []
+    emptied: list[bool] = []
+    token = _filter_emptied.set(emptied)
     try:
         with routing.model_override(
             judge_model.WEB_ROLE, model, effort=SONNET_ARM_WEB_EFFORT, web_max_uses=SONNET_ARM_WEB_MAX_USES
         ):
-            rows = _gemini_rows(runner, market_id, queries, today)
+            rows = _gemini_rows(runner, market_id, queries, today, retry=False)  # sonnet already searched: no NOT_FOUND re-run
     except InfraUnavailable:
         raise
     except Exception as exc:  # noqa: BLE001 - fall back to the normal path
         log.warning("[WEB-FALLBACK] %s: sonnet web search failed (%s)", market_id, exc)
-    if rows_usable(rows):
+    finally:
+        _filter_emptied.reset(token)
+    # A NOT_FOUND the web filter produced (its lines were dropped) is rejected evidence, not an answer: it falls back.
+    if rows_usable(rows) or (not emptied and _clean_not_found(rows)):  # NOT_FOUND is a valid answer: Sonnet searched and found nothing
         judge_model.note_web(market_id, model, False)
         return rows
     log.warning("[WEB-FALLBACK] %s: sonnet web search gave no usable rows; using the normal web path", market_id)
     judge_model.note_web(market_id, None, True)
     return None
+
+
+def _clean_not_found(rows: list[dict[str, Any]]) -> bool:
+    """True when every row is a bare ``NOT_FOUND`` without an error (the model answered; no malformed or failed row)."""
+    return bool(rows) and all(not r.get("error") and str(r.get("research_data") or "").strip() == NOT_FOUND for r in rows)
 
 
 def _failure_reasons(rows: list[dict[str, Any]]) -> str:
@@ -289,12 +303,13 @@ def _gemini_rows(
     market_id: str,
     queries: list[str],
     today: str,
+    retry: bool = True,
 ) -> list[dict[str, Any]]:
     """Gemini backend: ONE query per ``web_searcher`` call (so each gets the full search budget), in parallel."""
     if len(queries) <= 1:
-        return _gemini_one(runner, market_id, list(queries), today)
+        return _gemini_one(runner, market_id, list(queries), today, retry)
     per_query = _run_parallel(
-        lambda q: _gemini_one(runner, market_id, [q], today), list(queries), GEMINI_QUERY_WORKERS
+        lambda q: _gemini_one(runner, market_id, [q], today, retry), list(queries), GEMINI_QUERY_WORKERS
     )
     return [rows[0] for rows in per_query]
 
@@ -304,10 +319,11 @@ def _gemini_one(
     market_id: str,
     queries: list[str],
     today: str,
+    retry: bool = True,
 ) -> list[dict[str, Any]]:
-    """One ``web_searcher`` call; if no row is usable (errors, wrong shape, only ``NOT_FOUND``) retried once."""
+    """One ``web_searcher`` call; if no row is usable (errors, wrong shape, only ``NOT_FOUND``) retried once (unless ``retry`` is off)."""
     rows = _fetch_web_rows_once(runner, market_id, queries, today)
-    if queries and not rows_usable(rows):
+    if retry and queries and not rows_usable(rows):
         log.warning("[WEB-RETRY] %s: no usable web evidence; retrying web_searcher once", market_id)
         rows = _fetch_web_rows_once(runner, market_id, queries, today)
     return rows
@@ -400,7 +416,14 @@ def _fetch_web_rows_once(
     )
     # last_model() is None when no real provider call happened (stub / injected runner): nothing to verify.
     web_call = direct_runner.last_model() is not None
+    unfiltered = rows
     rows, counts = filter_rows(rows, direct_runner.last_citations(), strict=web_call)
+    sink = _filter_emptied.get()
+    if sink is not None and any(
+        str(b.get("research_data") or "").strip() not in ("", NOT_FOUND) and str(a.get("research_data") or "") == NOT_FOUND
+        for b, a in zip(unfiltered, rows)
+    ):
+        sink.append(True)
     _record_filter(market_id, direct_runner.last_model() or "stub", counts)
     return sanitize_rows(rows)
 
