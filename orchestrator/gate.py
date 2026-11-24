@@ -239,6 +239,24 @@ def is_retired(record: Mapping[str, Any] | None) -> bool:
     return str((record or {}).get("status") or "").strip().lower() == STATUS_RETIRED
 
 
+def handled_reason(
+    vault: Any, market_id: str, now: datetime | None = None
+) -> tuple[dict[str, Any] | None, str | None]:
+    """``(prior, reason)``: why Phase 2 skips this market before gating (shared by ingest and Phase 2).
+
+    ``reason`` is ``"inactive"`` (vault flagged), ``"retired"`` or ``"backoff"`` (not due yet), else
+    ``None``. ``prior`` is the filter log record (``None`` when flagged inactive: not read).
+    """
+    if vault.is_market_inactive(market_id, dir_key="filters"):
+        return None, "inactive"
+    prior = vault.read_filter_log(market_id)
+    if is_retired(prior):
+        return prior, "retired"
+    if not is_due(prior, now):
+        return prior, "backoff"
+    return prior, None
+
+
 def is_due(record: Mapping[str, Any] | None, now: datetime | None = None) -> bool:
     """True when the market has no backoff pending (never checked, or next_check_at passed)."""
     if not record:

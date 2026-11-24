@@ -13,7 +13,7 @@ def phase1_data_ingestion(vault: ObsidianManager) -> list[MarketRow]:
     """Query Polymarket (Gamma) for open binary candidates inside the days window."""
     log.info("[PHASE 1] Data ingestion")
     target_markets = scraper.fetch_target_markets(
-        knobs=extract_filter_directives(vault.read_directives())
+        knobs=extract_filter_directives(vault.read_directives()), vault=vault
     )
     log.info(
         "[PHASE 1] target_markets count=%d ids=%r",

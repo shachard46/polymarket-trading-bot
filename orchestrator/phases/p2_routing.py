@@ -190,11 +190,10 @@ def _eligible_markets(
     eligible: list[_Eligible] = []
     for market in target_markets:
         market_id = market.market_id
-        if vault.is_market_inactive(market_id, dir_key="filters"):
+        prior, handled = gate.handled_reason(vault, market_id, now)
+        if handled == "inactive":
             log.info("[PHASE 2] skip %s: filter marked inactive", market_id)
-            continue
-        prior = vault.read_filter_log(market_id)
-        if gate.is_retired(prior) or not gate.is_due(prior, now):
+        if handled:
             continue
 
         with market_quarantine(vault, market_id, "phase2"):

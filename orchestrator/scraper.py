@@ -241,28 +241,41 @@ def _market_row_from_scraper(row: dict[str, Any]) -> MarketRow | None:
 # ---------------------------------------------------------------------------
 
 
-def fetch_target_markets(knobs: dict[str, Any] | None = None) -> list[MarketRow]:
+def fetch_target_markets(
+    knobs: dict[str, Any] | None = None, vault: Any = None
+) -> list[MarketRow]:
     """Return validated candidate rows (open binary markets inside the days window, liquid enough).
 
     ``knobs`` is the directives-derived mapping (``extract_filter_directives``) so the server-side
     window follows the Overseer-tunable ``min/max_days_to_resolution``. Limit is
     ``PMBOT_INGEST_LIMIT``. Phase 2 still applies the full deterministic gate.
+    With a ``vault``, markets Phase 2 would skip anyway (inactive, retired, backing off:
+    ``gate.handled_reason``) do not use slots either.
     """
     from orchestrator import gate  # noqa: PLC0415 - lazy: gate imports this module
 
     rejected: dict[str, int] = {}
+    now = datetime.now(timezone.utc)
+
+    def accept(row: dict[str, Any]) -> tuple[bool, str]:
+        if vault is not None:
+            _, handled = gate.handled_reason(vault, str(row.get("market_id")), now)
+            if handled:
+                return False, handled
+        return gate.eligibility(row, knobs)
+
     try:
         # Static pre-gate on the Gamma row (price band, wide spread, ... : no extra API calls) so rows
         # the gate would reject anyway do not eat the ingest slots; paging refills up to the limit.
         data = polymarket_api.list_candidates(
-            _ingest_limit(), knobs, accept=lambda r: gate.eligibility(r, knobs), rejected=rejected
+            _ingest_limit(), knobs, accept=accept, rejected=rejected
         )
     except PolymarketAPIError as exc:
         log.warning("Polymarket candidate listing failed: %s", exc)
         return []
     if rejected:
         log.info(
-            "Ingest pre-gate skipped %d rows (not ledgered; the gate would reject them): %s",
+            "Ingest pre-gate skipped %d rows (not ledgered; the gate or Phase 2 would skip them): %s",
             sum(rejected.values()), dict(sorted(rejected.items())),
         )
 

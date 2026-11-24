@@ -405,7 +405,7 @@ def test_stub_tick_end_to_end_default_ab_arm_and_stats(tmp_path, monkeypatch):
     monkeypatch.setenv("PMBOT_VAULT_PATH", str(tmp_path))
     md = {"yes_price": 0.26, "no_price": 0.74, "volume": 1_000.0, "liquidity": 20_000.0, "days_to_resolution": 30}
     rows = {"ok1": MarketRow(market_id="ok1", market_title="Will ok1?", market_description="d", market_data=md)}
-    monkeypatch.setattr(scraper, "fetch_target_markets", lambda knobs=None: list(rows.values()))
+    monkeypatch.setattr(scraper, "fetch_target_markets", lambda knobs=None, vault=None: list(rows.values()))
     monkeypatch.setattr(scraper, "fetch_market_row", lambda mid: rows.get(mid))
     monkeypatch.setattr(scraper, "fetch_resolution", lambda mid: None)
     monkeypatch.setattr(polymarket_api, "fetch_holder_concentration", lambda cid: None)

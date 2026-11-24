@@ -30,7 +30,7 @@ def test_two_stub_ticks(tmp_path, monkeypatch):
         "far": _row("far", days_to_resolution=300),
         "arb": _row("arb", yes_price=0.4, no_price=0.5),
     }
-    monkeypatch.setattr(scraper, "fetch_target_markets", lambda knobs=None: list(rows.values()))
+    monkeypatch.setattr(scraper, "fetch_target_markets", lambda knobs=None, vault=None: list(rows.values()))
     monkeypatch.setattr(scraper, "fetch_market_row", lambda mid: rows.get(mid))
     monkeypatch.setattr(scraper, "fetch_resolution", lambda mid: None)
     monkeypatch.setattr(polymarket_api, "fetch_holder_concentration", lambda cid: None)

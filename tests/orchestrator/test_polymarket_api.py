@@ -550,3 +550,44 @@ def test_list_candidates_pre_gate_refills_past_rejected_rows():
     assert [r["market_id"] for r in rows] == ["0xok0", "0xok1"]
     assert len(sess.calls) == 2  # kept paging past the rejected first page
     assert rejected == {"price_extreme": 3}
+
+
+def test_fetch_target_markets_handled_rows_do_not_use_slots(monkeypatch, tmp_path):
+    from datetime import timedelta
+
+    from obsidian_utils import ObsidianManager
+    from orchestrator import scraper
+
+    vault = ObsidianManager(vault_base=tmp_path)
+    vault.cold_start_protocol()
+    future = (datetime.now(timezone.utc) + timedelta(hours=6)).isoformat()
+    past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    for mid, fm in {
+        "0xretired": {"status": "retired", "passed": False},
+        "0xbackoff": {"next_check_at": future, "passed": False},
+        "0xdue": {"next_check_at": past, "passed": False},  # due again: still ingested
+        "0xbet": {"passed": True},  # researched / open-bet row: Phase 2 still sees it
+    }.items():
+        vault.write_filter_log(mid, {"market_id": mid, "confidence_multiplier": 0.0, "details": "t", **fm})
+    vault.write_filter_log("0xinactive", {"market_id": "0xinactive", "passed": False, "confidence_multiplier": 0.0, "details": "t"})
+    vault.patch_frontmatter("0xinactive", "filters", {"status": "inactive"})
+
+    handled = [gamma_market(conditionId=m) for m in ("0xretired", "0xbackoff", "0xinactive")]
+    keep = [gamma_market(conditionId=m) for m in ("0xdue", "0xbet", "0xnew1", "0xnew2")]
+    pages = [
+        {"markets": handled, "next_cursor": "c1"},
+        {"markets": keep[:2], "next_cursor": "c2"},
+        {"markets": keep[2:], "next_cursor": None},
+    ]
+    sess = install(_candidates_handler(pages))
+    real = api.list_candidates
+    monkeypatch.setattr(
+        api, "list_candidates",
+        lambda limit, knobs=None, accept=None, rejected=None: real(
+            limit, knobs, now=NOW, accept=accept, rejected=rejected
+        ),
+    )
+    monkeypatch.setenv("PMBOT_INGEST_LIMIT", "3")
+    rows = scraper.fetch_target_markets(vault=vault)
+    assert [r.market_id for r in rows] == ["0xdue", "0xbet", "0xnew1"]
+    assert len(sess.calls) == 3  # paged past the handled first page
